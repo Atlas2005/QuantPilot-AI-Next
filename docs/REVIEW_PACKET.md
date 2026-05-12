@@ -2,25 +2,25 @@
 
 ## Task Name
 
-Phase 3: Data Contracts and Local Fixtures.
+Phase 4A: Controlled Data-source Prototype Harness.
 
 ## Changed Files
 
-- `docs/modules/phase_3_data_contracts_fixtures/MODULE_KICKOFF_REVIEW.md`
-- `docs/modules/phase_3_data_contracts_fixtures/MODULE_CLOSURE_DRAFT.md`
-- `docs/DATA_CONTRACTS.md`
-- `src/quantpilot_core/data/__init__.py`
-- `src/quantpilot_core/data/types.py`
-- `src/quantpilot_core/data/schema.py`
-- `src/quantpilot_core/data/validation.py`
-- `src/quantpilot_core/data/csv_loader.py`
-- `src/quantpilot_core/data/fixtures.py`
-- `data/fixtures/a_share_daily_sample_valid.csv`
-- `data/fixtures/a_share_daily_sample_invalid.csv`
-- `tests/data/test_daily_bar_schema.py`
-- `tests/data/test_daily_bar_validation.py`
-- `tests/data/test_csv_loader.py`
-- `tests/smoke/test_no_forbidden_scope.py`
+- `docs/modules/phase_4a_data_source_prototype_harness/MODULE_KICKOFF_REVIEW.md`
+- `docs/modules/phase_4a_data_source_prototype_harness/MODULE_CLOSURE_DRAFT.md`
+- `docs/DATA_SOURCE_PROTOTYPE_POLICY.md`
+- `docs/DATA_SOURCE_FIELD_MAPPING.md`
+- `src/quantpilot_core/data_sources/__init__.py`
+- `src/quantpilot_core/data_sources/prototype_plan.py`
+- `src/quantpilot_core/data_sources/field_mapping.py`
+- `data/source_mapping_templates/akshare_daily_bar_mapping.template.json`
+- `data/source_mapping_templates/baostock_daily_bar_mapping.template.json`
+- `data/source_mapping_templates/tushare_daily_bar_mapping.template.json`
+- `data/source_mapping_templates/openbb_daily_bar_mapping.template.json`
+- `data/source_mapping_templates/simtradedata_daily_bar_mapping.template.json`
+- `data/open_source_candidates/candidates.json`
+- `tests/data_sources/test_prototype_plan.py`
+- `tests/data_sources/test_field_mapping.py`
 - `docs/CURRENT_PROJECT_STATE.md`
 - `docs/DECISIONS.md`
 - `docs/NEXT_CHAT_HANDOFF.md`
@@ -28,9 +28,10 @@ Phase 3: Data Contracts and Local Fixtures.
 
 ## Safety Checks
 
-- `src/` changed: Yes. Data schema, local CSV loader, fixture helper, and shape validation only.
-- `tests/` changed: Yes. Data contract and fixture tests only.
-- Data fixtures changed: Yes. Fake local CSV fixtures only.
+- `src/` changed: Yes. Manual-only prototype plan and field-mapping shape helpers only.
+- `tests/` changed: Yes. Prototype plan and field-mapping template tests only.
+- Data registry changed: Yes. SimTradeData static metadata only.
+- Mapping templates changed: Yes. Provisional static JSON templates only.
 - Dependencies changed: No.
 - Packages installed: No.
 - Market data/API used: No.
@@ -55,12 +56,10 @@ Listing 'src\\quantpilot_core'...
 Listing 'src\\quantpilot_core\\config'...
 Listing 'src\\quantpilot_core\\contracts'...
 Listing 'src\\quantpilot_core\\data'...
-Compiling 'src\\quantpilot_core\\data\\__init__.py'...
-Compiling 'src\\quantpilot_core\\data\\csv_loader.py'...
-Compiling 'src\\quantpilot_core\\data\\fixtures.py'...
-Compiling 'src\\quantpilot_core\\data\\schema.py'...
-Compiling 'src\\quantpilot_core\\data\\types.py'...
-Compiling 'src\\quantpilot_core\\data\\validation.py'...
+Listing 'src\\quantpilot_core\\data_sources'...
+Compiling 'src\\quantpilot_core\\data_sources\\__init__.py'...
+Compiling 'src\\quantpilot_core\\data_sources\\field_mapping.py'...
+Compiling 'src\\quantpilot_core\\data_sources\\prototype_plan.py'...
 Listing 'src\\quantpilot_core\\registry'...
 Listing 'src\\quantpilot_core\\safety'...
 ```
@@ -70,44 +69,48 @@ Listing 'src\\quantpilot_core\\safety'...
 Result: passed.
 
 ```text
-collected 39 items
+collected 49 items
 
-tests\\contracts\\test_contract_skeleton.py ..                             [  5%]
-tests\\contracts\\test_core_contracts.py ......                            [ 20%]
-tests\\data\\test_csv_loader.py ...                                        [ 28%]
-tests\\data\\test_daily_bar_schema.py ....                                 [ 38%]
-tests\\data\\test_daily_bar_validation.py .......                          [ 56%]
-tests\\registry\\test_candidate_registry.py .......                        [ 74%]
-tests\\registry\\test_terminal_benchmarks.py ......                        [ 89%]
-tests\\smoke\\test_imports.py .                                            [ 92%]
-tests\\smoke\\test_no_forbidden_scope.py .                                 [ 94%]
+tests\\contracts\\test_contract_skeleton.py ..                             [  4%]
+tests\\contracts\\test_core_contracts.py ......                            [ 16%]
+tests\\data\\test_csv_loader.py ...                                        [ 22%]
+tests\\data\\test_daily_bar_schema.py ....                                 [ 30%]
+tests\\data\\test_daily_bar_validation.py .......                          [ 44%]
+tests\\data_sources\\test_field_mapping.py ......                          [ 57%]
+tests\\data_sources\\test_prototype_plan.py ....                           [ 65%]
+tests\\registry\\test_candidate_registry.py .......                        [ 79%]
+tests\\registry\\test_terminal_benchmarks.py ......                        [ 91%]
+tests\\smoke\\test_imports.py .                                            [ 93%]
+tests\\smoke\\test_no_forbidden_scope.py .                                 [ 95%]
 tests\\smoke\\test_safety_flags.py ..                                      [100%]
 
-============================= 39 passed in 0.07s ==============================
+============================= 49 passed in 0.08s ==============================
 ```
 
 ## Git Status
 
 ```text
 ## main...origin/main
+ M data/open_source_candidates/candidates.json
  M docs/CURRENT_PROJECT_STATE.md
  M docs/DECISIONS.md
  M docs/NEXT_CHAT_HANDOFF.md
  M docs/REVIEW_PACKET.md
- M tests/smoke/test_no_forbidden_scope.py
-?? data/fixtures/
-?? docs/DATA_CONTRACTS.md
-?? docs/modules/phase_3_data_contracts_fixtures/
-?? src/quantpilot_core/data/
-?? tests/data/
+?? data/source_mapping_templates/
+?? docs/DATA_SOURCE_FIELD_MAPPING.md
+?? docs/DATA_SOURCE_PROTOTYPE_POLICY.md
+?? docs/modules/phase_4a_data_source_prototype_harness/
+?? src/quantpilot_core/data_sources/
+?? tests/data_sources/
 ```
 
 ## Risks
 
-- Daily OHLCV schema is provisional and may change before data-source prototypes.
-- Validation is local shape validation only; it does not check exchange calendars, real trading days, suspensions, corporate actions, or vendor adjustment correctness.
-- Fixtures are fake examples and must not be treated as market data.
+- Mapping templates are provisional and unverified against live provider outputs.
+- Phase 4A does not prove provider reliability, license safety, data quality, or A-share fit.
+- SimTradeData requires license review before cloning, copying, integration, commercial use, or derivative work.
+- Future Phase 4B manual prototypes must remain outside CI unless explicitly approved.
 
 ## Recommended Next Step
 
-ChatGPT should perform Phase 3 closure review before Phase 4 begins.
+ChatGPT should perform Phase 4A closure review before Phase 4B begins.

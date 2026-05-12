@@ -982,5 +982,28 @@
     "candidate_type": "open_source_terminal_candidate",
     "benchmark_role": "ui_dashboard_reference",
     "integration_policy": "license_review_required"
+  },
+  {
+    "name": "SimTradeData",
+    "category": "data_sources",
+    "subcategory": "open_source_data_pipeline_reference",
+    "homepage": "TBD",
+    "repository": "TBD",
+    "description": "Open-source data-pipeline style candidate for future manual review.",
+    "primary_use": "Data-pipeline architecture reference only at this stage.",
+    "current_phase_action": "record_only_in_phase_4a",
+    "evaluation_status": "not_evaluated",
+    "recommended_action": "borrow_architecture_only",
+    "license_review_status": "required_before_any_use",
+    "commercial_risk": "high",
+    "maintenance_risk": "unknown",
+    "windows_risk": "unknown",
+    "a_share_relevance": "medium",
+    "integration_risk": "high",
+    "phase_allowed": "registry_only",
+    "notes": "AGPL/commercial implications must be reviewed before cloning, copying, integrating, commercial use, or derivative work; useful as data-pipeline architecture reference only at this stage.",
+    "candidate_type": "open_source_project",
+    "benchmark_role": "not_a_benchmark",
+    "integration_policy": "license_review_required"
   }
 ]

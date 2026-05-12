@@ -6,7 +6,7 @@ QuantPilot-AI 2.0 is an open-source-first, adapter-first, contract-first, A-shar
 
 ## Current Phase
 
-Phase 3: data contracts and local fixtures, implemented by Codex and pending ChatGPT closure review.
+Phase 4A: controlled data-source prototype harness, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
@@ -20,43 +20,42 @@ Phase 1.1 candidate registry refresh was completed.
 
 Phase 2 core contracts was completed.
 
-Phase 3 created:
+Phase 3 data contracts and local fixtures was completed and pushed.
 
-- `src/quantpilot_core/data/types.py`
-- `src/quantpilot_core/data/schema.py`
-- `src/quantpilot_core/data/validation.py`
-- `src/quantpilot_core/data/csv_loader.py`
-- `src/quantpilot_core/data/fixtures.py`
-- fake local CSV fixtures under `data/fixtures/`
-- tests under `tests/data/`
-- `docs/DATA_CONTRACTS.md`
-- Phase 3 module kickoff and closure draft docs
+Phase 4A created:
+
+- manual-only prototype plan structures
+- field-mapping validation helpers
+- provisional mapping templates under `data/source_mapping_templates/`
+- SimTradeData registry/reference metadata
+- data-source prototype policy docs
+- tests for prototype plan and field-mapping safety
 
 ## Current Prohibitions
 
 - do not fetch market data
 - do not call external APIs
-- do not install new packages
-- do not import external data, quant, validation, storage, or agent frameworks
+- do not install or import external frameworks
+- do not clone or copy external projects
 - do not implement data-source adapters
-- do not run backtests
-- do not implement trading, strategy, factor, portfolio, model, broker, live order, or agent workflows
+- do not create token or secrets handling
+- do not create broker/live/order paths
+- do not implement backtesting, model training, or agent orchestration
 - do not mark anything trading-ready
 - do not claim profitability
-- do not copy old v2 source code
 
 ## Next Recommended Step
 
-ChatGPT should perform Phase 3 closure review.
+ChatGPT should perform Phase 4A closure review.
 
-Do not move to Phase 4 until approved.
+Do not move to Phase 4B until approved.
 
 ## Key Decisions
 
-- Local fixtures come before real data sources.
-- The daily OHLCV schema is provisional.
-- Validation is shape-only and does not check real market truth.
-- No external validation/storage/data framework is integrated.
+- Data-source prototypes are manual-only until approved.
+- Real data fetching is disabled in CI.
+- Field mappings are provisional until manual verification.
+- SimTradeData is registry/reference only until license review.
 - Codex is not the project architect.
 
 ## Role Split

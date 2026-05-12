@@ -63,3 +63,13 @@
 - Phase 3 creates no data-source adapters.
 - A-share daily OHLCV schema is provisional and will be refined before prototypes.
 - Phase 3 validation checks shape only and does not validate real market truth.
+
+## Phase 4A Decisions
+
+- Phase 4A creates prototype harness only.
+- Phase 4A adds no package installation.
+- Phase 4A performs no network data fetching.
+- CI must not fetch market data.
+- Data-source prototypes are manual-only until approved.
+- SimTradeData is registry/reference only until license review.
+- Field mappings are provisional until manual verification.

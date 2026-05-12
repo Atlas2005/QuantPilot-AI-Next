@@ -1,0 +1,21 @@
+{
+  "source_name": "OpenBB",
+  "template_version": "0.1.0",
+  "target_contract": "daily_bar_schema_0.1.0",
+  "is_final": false,
+  "status": "provisional",
+  "notes": "Manual-only provisional template. Field names are placeholders and must be verified during a future approved prototype without assuming this mapping is final.",
+  "field_mappings": [
+    {"source_field": "symbol_provisional", "target_field": "symbol", "required": true, "notes": "Provisional source field."},
+    {"source_field": "trade_date_provisional", "target_field": "trade_date", "required": true, "notes": "Provisional source field."},
+    {"source_field": "open_provisional", "target_field": "open", "required": true, "notes": "Provisional source field."},
+    {"source_field": "high_provisional", "target_field": "high", "required": true, "notes": "Provisional source field."},
+    {"source_field": "low_provisional", "target_field": "low", "required": true, "notes": "Provisional source field."},
+    {"source_field": "close_provisional", "target_field": "close", "required": true, "notes": "Provisional source field."},
+    {"source_field": "volume_provisional", "target_field": "volume", "required": true, "notes": "Provisional source field."},
+    {"source_field": "amount_provisional", "target_field": "amount", "required": true, "notes": "Provisional source field."},
+    {"source_field": "adjustment_provisional", "target_field": "adjustment", "required": true, "notes": "May need synthetic/default value."},
+    {"source_field": "asset_type_provisional", "target_field": "asset_type", "required": true, "notes": "May need synthetic/default value."}
+  ]
+}
+
