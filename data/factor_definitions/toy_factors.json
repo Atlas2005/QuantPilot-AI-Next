@@ -1,0 +1,19 @@
+[
+  {
+    "name": "close_to_close_momentum_1d",
+    "category": "price_momentum",
+    "direction": "higher_is_better",
+    "status": "toy",
+    "description": "Toy one-day close-to-close momentum over fake local OHLCV fixture rows.",
+    "required_fields": [
+      "symbol",
+      "trade_date",
+      "close"
+    ],
+    "lookback_window": 1,
+    "allowed_data_scope": "fake_fixture_only",
+    "alpha_claim_allowed": false,
+    "trading_ready": false,
+    "notes": "This factor is for local contract and shape testing only. It is not alpha evidence, not a strategy, and not trading-ready."
+  }
+]

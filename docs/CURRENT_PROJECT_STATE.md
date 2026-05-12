@@ -6,17 +6,19 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-Phase 6D: backtest prototype comparative review, implemented by Codex and pending ChatGPT closure review.
+Phase 7A: alpha/factor foundation, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
-Step 0A through Phase 6C-3B are completed.
+Step 0A through Phase 6D are completed.
 
-Phase 6C-3B isolated RQAlpha probe is completed and pushed.
+Phase 6D backtest comparative review is completed and pushed.
 
-Phase 6D adds comparative backtest engine evidence metadata, a standard-library comparison validator, tests, and route-planning documentation.
+Phase 7A adds factor metadata types, a toy close-to-close momentum factor, fake-fixture-only evaluation helpers, toy factor definitions, docs, and tests.
 
 The repository is still not trading-ready.
+
+No real alpha is proven.
 
 No final backtest engine is selected.
 
@@ -31,14 +33,16 @@ No broker/order/live path exists.
 - do not fetch market data
 - do not call external APIs
 - do not install or uninstall packages
-- do not add prototype framework dependencies to `pyproject.toml`
-- do not run new framework prototypes without ChatGPT approval
+- do not add external analytics dependencies to `pyproject.toml`
+- do not claim toy factor output is alpha evidence
+- do not run real backtests
+- do not implement strategy tournament
 - do not implement production backtest adapters
-- do not implement strategy, alpha/factor, portfolio, model, broker, live order, or agent workflows
+- do not implement model, broker, live order, or agent workflows
 - do not mark anything trading-ready
 - do not claim profitability
 - do not copy old v2 source code
 
 ## Next Expected Action
 
-ChatGPT should perform Phase 6D module closure review. Do not start Qlib install, adapter work, or Phase 7 until approved.
+ChatGPT should perform Phase 7A module closure review. Do not move to factor validation metrics, factor library, strategy tournament, or external analytics integration until approved.

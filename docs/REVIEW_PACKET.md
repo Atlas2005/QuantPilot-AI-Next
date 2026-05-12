@@ -2,20 +2,21 @@
 
 ## Task Name
 
-Phase 6D: Backtest Prototype Comparative Review.
+Phase 7A: Alpha / Factor Foundation.
 
 ## Changed Files
 
-- `docs/modules/phase_6d_backtest_comparative_review/MODULE_KICKOFF_REVIEW.md`
-- `docs/modules/phase_6d_backtest_comparative_review/MODULE_CLOSURE_DRAFT.md`
-- `data/backtest_engine_candidates/prototype_comparison.json`
-- `src/quantpilot_core/backtest_engines/comparison.py`
-- `src/quantpilot_core/backtest_engines/__init__.py`
-- `docs/BACKTEST_ENGINE_COMPARATIVE_REVIEW.md`
-- `docs/BACKTEST_PROTOTYPE_RESULTS.md`
-- `docs/BACKTEST_ENGINE_CANDIDATES.md`
-- `docs/BACKTEST_PROTOTYPE_ISOLATION_PLAN.md`
-- `tests/backtest_engines/test_backtest_comparison.py`
+- `docs/modules/phase_7a_alpha_factor_foundation/MODULE_KICKOFF_REVIEW.md`
+- `docs/modules/phase_7a_alpha_factor_foundation/MODULE_CLOSURE_DRAFT.md`
+- `src/quantpilot_core/factors/__init__.py`
+- `src/quantpilot_core/factors/types.py`
+- `src/quantpilot_core/factors/toy_factors.py`
+- `src/quantpilot_core/factors/evaluation.py`
+- `data/factor_definitions/toy_factors.json`
+- `docs/ALPHA_FACTOR_FOUNDATION.md`
+- `tests/factors/test_toy_factors.py`
+- `tests/factors/test_factor_evaluation.py`
+- `tests/factors/test_factor_definitions.py`
 - `docs/CURRENT_PROJECT_STATE.md`
 - `docs/DECISIONS.md`
 - `docs/NEXT_CHAT_HANDOFF.md`
@@ -23,18 +24,23 @@ Phase 6D: Backtest Prototype Comparative Review.
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only comparison loader/validator/summarizer.
-- Tests changed: Yes. Added comparison metadata tests.
-- Comparative metadata changed: Yes. Added `data/backtest_engine_candidates/prototype_comparison.json`.
+- `src/` changed: Yes. Added standard-library-only factor types, toy factor computation, and toy evaluation helpers.
+- Tests changed: Yes. Added factor tests.
+- Factor definitions changed: Yes. Added `data/factor_definitions/toy_factors.json`.
 - Dependencies changed: No.
 - Packages installed: No.
 - Packages uninstalled: No.
 - `pyproject.toml` changed: No.
 - Market data/API used: No.
+- Real alpha evidence produced: No. Toy fake-fixture shape checks only.
 - Broker/live/order submission path created: No.
 - Real backtest/model/agent implementation added: No.
 - External frameworks installed/imported in `src/`: No.
 - Final technical selections made: No.
+
+## Language / Runtime Decision
+
+Phase 7A uses Python standard library only. This is appropriate for factor contracts, local toy computation, and pytest validation. pandas, NumPy, Polars, DuckDB, Parquet, Alphalens, quantstats, empyrical, Qlib, and backtest engines remain deferred.
 
 ## Validation Commands and Results
 
@@ -44,11 +50,11 @@ Result: passed.
 
 `python -m pytest`
 
-Result: passed.
+Result: passed after one minimal test assertion fix for floating-point tolerance.
 
 ```text
-collected 103 items
-103 passed in 0.17s
+collected 111 items
+111 passed in 0.16s
 ```
 
 `git status -sb`
@@ -57,42 +63,24 @@ Result:
 
 ```text
 ## main...origin/main
- M docs/BACKTEST_ENGINE_CANDIDATES.md
- M docs/BACKTEST_PROTOTYPE_ISOLATION_PLAN.md
- M docs/BACKTEST_PROTOTYPE_RESULTS.md
  M docs/CURRENT_PROJECT_STATE.md
  M docs/DECISIONS.md
  M docs/NEXT_CHAT_HANDOFF.md
  M docs/REVIEW_PACKET.md
- M src/quantpilot_core/backtest_engines/__init__.py
-?? data/backtest_engine_candidates/prototype_comparison.json
-?? docs/BACKTEST_ENGINE_COMPARATIVE_REVIEW.md
-?? docs/modules/phase_6d_backtest_comparative_review/
-?? src/quantpilot_core/backtest_engines/comparison.py
-?? tests/backtest_engines/test_backtest_comparison.py
+?? data/factor_definitions/
+?? docs/ALPHA_FACTOR_FOUNDATION.md
+?? docs/modules/phase_7a_alpha_factor_foundation/
+?? src/quantpilot_core/factors/
+?? tests/factors/
 ```
-
-## Comparative Summary
-
-- vectorbt: toy fake-fixture success; A-share realism unproven.
-- Backtrader: toy converted-fixture success; live-trading surface risk remains high.
-- RQAlpha: isolated install/import success only; direct fake-fixture run not proven.
-- Qlib: metadata-only; not installed or run.
-
-No final engine is selected.
-
-No engine is approved for adapter work.
-
-No engine is trading-ready.
 
 ## Risks
 
-- Comparative metadata is based on limited toy/preflight evidence, not production-grade backtest proof.
-- A-share rule fit remains insufficient across all reviewed candidates.
-- RQAlpha license/commercial and data bundle risks remain unresolved.
-- Backtrader live-trading surface risk remains high.
-- Qlib has not been preflighted or prototyped yet.
+- Toy factor output is based only on fake fixture data and has no alpha, profitability, or statistical significance meaning.
+- The fixture is tiny, so rank correlation is only a shape check.
+- No transaction costs, A-share rules, liquidity, OOS, walk-forward, or paper feedback are included.
+- External analytics packages remain unevaluated for integration.
 
 ## Recommended Next Step
 
-ChatGPT should perform Phase 6D closure review and decide whether the next route is Qlib preflight, a deeper vectorbt local rule-gap prototype, data bundle/config investigation, or Phase 7 alpha/factor foundation. Do not start Qlib install, adapter work, or Phase 7 until approved.
+ChatGPT should perform Phase 7A closure review before Phase 7B factor validation metrics, Phase 7C factor library, Phase 8 strategy tournament, or any external analytics integration begins.

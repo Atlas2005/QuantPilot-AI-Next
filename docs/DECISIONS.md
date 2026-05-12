@@ -164,3 +164,12 @@
 - Qlib remains a metadata/preflight candidate.
 - Python remains appropriate for the current research/runtime layer, but language/runtime decisions will be reviewed at every major module.
 - No final backtest engine selection is made.
+
+## Phase 7A Decisions
+
+- Phase 7A starts alpha/factor foundation using fake fixtures only.
+- Python standard library is the correct runtime for this module.
+- No pandas, NumPy, Alphalens, quantstats, or empyrical are introduced.
+- Toy factor output is not alpha evidence.
+- Final backtest engine selection is not required before factor contract foundation.
+- No strategy tournament is created.
