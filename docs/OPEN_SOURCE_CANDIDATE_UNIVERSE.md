@@ -1,6 +1,12 @@
 # Open-Source Candidate Universe
 
-This file records candidate projects only. Step 0A does not install, import, integrate, or select them.
+This file records the candidate universe policy. The structured candidate registry is stored in:
+
+```text
+data/open_source_candidates/candidates.json
+```
+
+Phase 1 does not install, import, integrate, approve, or select any candidate.
 
 ## Classification System
 
@@ -71,4 +77,3 @@ Each candidate should later be classified as one of:
 ## Agent Timing Constraint
 
 Agent orchestration is late-stage. TradingAgents, LangGraph, AutoGen, CrewAI, OpenAI Agents SDK, and OpenAI Skills should not be integrated before data, contracts, validation, and backtest foundations are stable.
-

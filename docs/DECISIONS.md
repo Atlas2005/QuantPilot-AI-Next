@@ -24,3 +24,13 @@
 - Safety flags default to false.
 - The package remains not trading-ready.
 
+## Phase 1 Decisions
+
+- ChatGPT approved the Phase 1 kickoff before Codex implementation.
+- Phase 1 creates candidate registry foundation only.
+- Phase 1 makes no final technical selection.
+- Phase 1 adds no dependency installation.
+- Every candidate remains registry-only until ChatGPT-led module review.
+- External frameworks must later enter through adapters and contract tests.
+- Candidate metadata is static and stored in `data/open_source_candidates/candidates.json`.
+- Candidate validation uses Python standard library only.
