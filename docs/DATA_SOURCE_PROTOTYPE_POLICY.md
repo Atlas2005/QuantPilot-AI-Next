@@ -38,6 +38,14 @@ Real data cannot be used for alpha validation until the Phase 7E readiness gate 
 
 Raw provider data must not be committed. Provider reliability and schema mapping are required before larger use. Provider failures must be logged and must not be silently ignored.
 
+## Phase 7F Controlled Retry Probes
+
+Phase 7F allows only controlled manual provider retry probes for AkShare and Baostock.
+
+Outputs must go under `local_artifacts/provider_probes/`. Raw full datasets must not be committed, production adapters must not be created, and no provider is approved without ChatGPT closure review.
+
+Probe success does not prove alpha, approve data quality, approve a provider, or authorize larger validation.
+
 ## SimTradeData Policy
 
 SimTradeData is architecture-reference only until license review. Do not clone, copy, integrate, commercialize, or create derivative work before explicit review.

@@ -1,0 +1,27 @@
+{
+  "policy_name": "provider_probe_readiness_policy",
+  "policy_version": "0.1.0",
+  "phase": "Phase 7F",
+  "approved_data_sources": [],
+  "approved_for_adapter": false,
+  "approved_for_alpha_validation": false,
+  "raw_data_commit_allowed": false,
+  "large_fetch_allowed": false,
+  "output_directory": "local_artifacts/provider_probes/",
+  "target_providers": [
+    "AkShare",
+    "Baostock"
+  ],
+  "required_fields": [
+    "symbol",
+    "trade_date",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "amount"
+  ],
+  "max_rows_per_probe": 10,
+  "notes": "Phase 7F allows only controlled manual retry probes. A successful tiny sample does not approve a provider, adapter, alpha validation, or trading readiness."
+}

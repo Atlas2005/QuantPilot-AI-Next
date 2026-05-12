@@ -210,3 +210,12 @@
 - Raw data must not be committed.
 - OOS, walk-forward, transaction costs, A-share rules, capacity, reproducibility, and paper feedback are required before real alpha claims.
 - No strategy tournament is created.
+
+## Phase 7F Decisions
+
+- Phase 7F creates a controlled manual provider retry readiness probe layer.
+- Provider scripts are manual only and are not test dependencies.
+- Raw provider data must not be committed.
+- A successful provider probe does not approve a data source.
+- A successful provider probe does not prove alpha.
+- No strategy tournament is created.

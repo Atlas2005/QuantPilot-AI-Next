@@ -54,3 +54,9 @@ Phase 7E is the gate definition. Fetching real data before the gate is reviewed 
 - Phase 7G larger local fixture preparation
 - Phase 7H isolated external analytics prototype
 - Phase 8 strategy tournament later
+
+## Phase 7F Relationship
+
+Phase 7F is one possible controlled probe step, not full readiness approval.
+
+A successful provider retry probe only resolves a small part of provider reliability and schema mapping. Alpha validation remains blocked until the readiness gate is updated, reviewed, and explicitly approved.
