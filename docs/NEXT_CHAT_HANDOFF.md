@@ -6,7 +6,7 @@ QuantPilot-AI 2.0 is an open-source-first, adapter-first, contract-first, A-shar
 
 ## Current Phase
 
-Phase 2: core contracts, implemented by Codex and pending ChatGPT closure review.
+Phase 1.1: candidate registry refresh patch, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
@@ -14,58 +14,47 @@ Step 0A planning package was completed.
 
 Step 0B clean skeleton and minimal CI was completed.
 
-Phase 1 candidate registry was completed and pushed.
+Phase 1 candidate registry was completed.
 
-Phase 2 created:
+Phase 2 core contracts was completed and pushed.
 
-- `src/quantpilot_core/contracts/types.py`
-- updated `src/quantpilot_core/contracts/base.py`
-- `src/quantpilot_core/contracts/data_source.py`
-- `src/quantpilot_core/contracts/data_validator.py`
-- `src/quantpilot_core/contracts/market_rule.py`
-- `src/quantpilot_core/contracts/backtest_engine.py`
-- `src/quantpilot_core/contracts/factor_engine.py`
-- `src/quantpilot_core/contracts/portfolio_engine.py`
-- `src/quantpilot_core/contracts/agent_skill.py`
-- updated `src/quantpilot_core/contracts/__init__.py`
-- `tests/contracts/test_core_contracts.py`
-- updated contract and smoke tests
-- `docs/CORE_CONTRACTS.md`
-- Phase 2 module kickoff and closure draft docs
+Phase 1.1 added:
+
+- terminal/product benchmark schema fields
+- professional terminal/product benchmark records
+- open-source terminal/dashboard candidate records
+- license and commercial-risk documentation
+- terminal benchmark tests
 
 ## Current Prohibitions
 
 - do not implement trading logic
 - do not fetch market data
 - do not call external APIs
-- do not install or import quant, data-source, broker, ML, or agent frameworks
-- do not implement data adapters
-- do not run backtests
-- do not implement strategy logic
-- do not calculate factors
-- do not optimize portfolios
-- do not train models
-- do not implement agent orchestration
-- do not connect brokers
-- do not create broker/live trading/order paths
+- do not install or import external frameworks
+- do not clone or copy terminal/dashboard projects
+- do not create dashboard or terminal implementation
+- do not create broker/live/order paths
+- do not implement backtesting, model training, or agent orchestration
 - do not mark anything trading-ready
 - do not claim profitability
-- do not copy old v2 source code
+- do not make final product or terminal architecture selections
 
 ## Next Recommended Step
 
-ChatGPT should perform Phase 2 closure review.
+ChatGPT should perform Phase 1.1 closure review.
 
-Do not move to Phase 3 data contracts and local fixtures until ChatGPT approves.
+After approval: commit/push, then Phase 3 kickoff review.
+
+Do not move to Phase 3 until approved.
 
 ## Key Decisions
 
-- Core contracts are boundaries, not implementations.
-- External frameworks must later enter through adapters and contract tests.
-- No final engine or framework selection has been made.
-- Agent skill contract is a late-stage boundary only.
-- Market rule contract is a boundary before the actual A-share rule engine phase.
-- Codex is not the project architect.
+- Professional terminals are benchmarks, not dependencies.
+- Proprietary terminals are reference-only.
+- FinceptTerminal requires license review before any cloning, copying, integration, commercial use, or derivative work.
+- Terminal-like projects are not automatically safe to integrate.
+- Future module kickoff reviews must include both open-source search and professional benchmark scan.
 
 ## Role Split
 
@@ -74,8 +63,4 @@ ChatGPT is the architecture lead and strategic reviewer.
 Codex creates files, organizes docs, runs safe validation commands, and produces review packets.
 
 ChatGPT, not Codex, performs module closure review.
-
-## What Not To Do
-
-Do not install candidate frameworks, fetch data, add trading logic, add broker paths, create backtest/model/agent implementations, or make trading-readiness/profitability claims.
 

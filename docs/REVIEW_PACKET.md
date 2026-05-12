@@ -2,27 +2,19 @@
 
 ## Task Name
 
-Phase 2: Core Contracts.
+Phase 1.1: Candidate Registry Refresh Patch.
 
 ## Changed Files
 
-- `docs/modules/phase_2_core_contracts/MODULE_KICKOFF_REVIEW.md`
-- `docs/modules/phase_2_core_contracts/MODULE_CLOSURE_DRAFT.md`
-- `docs/CORE_CONTRACTS.md`
-- `src/quantpilot_core/contracts/types.py`
-- `src/quantpilot_core/contracts/base.py`
-- `src/quantpilot_core/contracts/data_source.py`
-- `src/quantpilot_core/contracts/data_validator.py`
-- `src/quantpilot_core/contracts/market_rule.py`
-- `src/quantpilot_core/contracts/backtest_engine.py`
-- `src/quantpilot_core/contracts/factor_engine.py`
-- `src/quantpilot_core/contracts/portfolio_engine.py`
-- `src/quantpilot_core/contracts/agent_skill.py`
-- `src/quantpilot_core/contracts/__init__.py`
-- `tests/contracts/test_core_contracts.py`
-- `tests/contracts/test_contract_skeleton.py`
-- `tests/smoke/test_imports.py`
-- `tests/smoke/test_no_forbidden_scope.py`
+- `src/quantpilot_core/registry/candidate.py`
+- `src/quantpilot_core/registry/candidate_loader.py`
+- `data/open_source_candidates/candidates.json`
+- `tests/registry/test_candidate_registry.py`
+- `tests/registry/test_terminal_benchmarks.py`
+- `docs/OPEN_SOURCE_CANDIDATE_REGISTRY.md`
+- `docs/OPEN_SOURCE_CANDIDATE_UNIVERSE.md`
+- `docs/modules/phase_1_1_candidate_registry_refresh/MODULE_KICKOFF_REVIEW.md`
+- `docs/modules/phase_1_1_candidate_registry_refresh/MODULE_CLOSURE_DRAFT.md`
 - `docs/CURRENT_PROJECT_STATE.md`
 - `docs/DECISIONS.md`
 - `docs/NEXT_CHAT_HANDOFF.md`
@@ -30,13 +22,14 @@ Phase 2: Core Contracts.
 
 ## Safety Checks
 
-- `src/` changed: Yes. Core contract boundaries only.
-- `tests/` changed: Yes. Contract shape and safety-boundary tests only.
+- `src/` changed: Yes. Registry metadata schema and validation only.
+- `tests/` changed: Yes. Registry and terminal benchmark tests only.
+- Data registry changed: Yes. Static candidate records only.
 - Dependencies changed: No.
 - Packages installed: No.
 - Market data/API used: No.
 - Broker/live/order path created: No.
-- Backtest/model/agent implementation added: No.
+- Backtest/model/agent/terminal/dashboard implementation added: No.
 - External frameworks installed/imported: No.
 - Final technical selections made: No.
 
@@ -54,17 +47,9 @@ Listing 'src\\quantpilot_ai_next.egg-info'...
 Listing 'src\\quantpilot_core'...
 Listing 'src\\quantpilot_core\\config'...
 Listing 'src\\quantpilot_core\\contracts'...
-Compiling 'src\\quantpilot_core\\contracts\\__init__.py'...
-Compiling 'src\\quantpilot_core\\contracts\\agent_skill.py'...
-Compiling 'src\\quantpilot_core\\contracts\\backtest_engine.py'...
-Compiling 'src\\quantpilot_core\\contracts\\base.py'...
-Compiling 'src\\quantpilot_core\\contracts\\data_source.py'...
-Compiling 'src\\quantpilot_core\\contracts\\data_validator.py'...
-Compiling 'src\\quantpilot_core\\contracts\\factor_engine.py'...
-Compiling 'src\\quantpilot_core\\contracts\\market_rule.py'...
-Compiling 'src\\quantpilot_core\\contracts\\portfolio_engine.py'...
-Compiling 'src\\quantpilot_core\\contracts\\types.py'...
 Listing 'src\\quantpilot_core\\registry'...
+Compiling 'src\\quantpilot_core\\registry\\candidate.py'...
+Compiling 'src\\quantpilot_core\\registry\\candidate_loader.py'...
 Listing 'src\\quantpilot_core\\safety'...
 ```
 
@@ -73,50 +58,44 @@ Listing 'src\\quantpilot_core\\safety'...
 Result: passed.
 
 ```text
-collected 19 items
+collected 25 items
 
-tests\\contracts\\test_contract_skeleton.py ..                             [ 10%]
-tests\\contracts\\test_core_contracts.py ......                            [ 42%]
-tests\\registry\\test_candidate_registry.py .......                        [ 78%]
-tests\\smoke\\test_imports.py .                                            [ 84%]
-tests\\smoke\\test_no_forbidden_scope.py .                                 [ 89%]
+tests\\contracts\\test_contract_skeleton.py ..                             [  8%]
+tests\\contracts\\test_core_contracts.py ......                            [ 32%]
+tests\\registry\\test_candidate_registry.py .......                        [ 60%]
+tests\\registry\\test_terminal_benchmarks.py ......                        [ 84%]
+tests\\smoke\\test_imports.py .                                            [ 88%]
+tests\\smoke\\test_no_forbidden_scope.py .                                 [ 92%]
 tests\\smoke\\test_safety_flags.py ..                                      [100%]
 
-============================= 19 passed in 0.05s ==============================
+============================= 25 passed in 0.06s ==============================
 ```
 
 ## Git Status
 
 ```text
 ## main...origin/main
+ M data/open_source_candidates/candidates.json
  M docs/CURRENT_PROJECT_STATE.md
  M docs/DECISIONS.md
  M docs/NEXT_CHAT_HANDOFF.md
+ M docs/OPEN_SOURCE_CANDIDATE_REGISTRY.md
+ M docs/OPEN_SOURCE_CANDIDATE_UNIVERSE.md
  M docs/REVIEW_PACKET.md
- M src/quantpilot_core/contracts/__init__.py
- M src/quantpilot_core/contracts/base.py
- M tests/contracts/test_contract_skeleton.py
- M tests/smoke/test_imports.py
- M tests/smoke/test_no_forbidden_scope.py
-?? docs/CORE_CONTRACTS.md
-?? docs/modules/phase_2_core_contracts/
-?? src/quantpilot_core/contracts/agent_skill.py
-?? src/quantpilot_core/contracts/backtest_engine.py
-?? src/quantpilot_core/contracts/data_source.py
-?? src/quantpilot_core/contracts/data_validator.py
-?? src/quantpilot_core/contracts/factor_engine.py
-?? src/quantpilot_core/contracts/market_rule.py
-?? src/quantpilot_core/contracts/portfolio_engine.py
-?? src/quantpilot_core/contracts/types.py
-?? tests/contracts/test_core_contracts.py
+ M src/quantpilot_core/registry/candidate.py
+ M src/quantpilot_core/registry/candidate_loader.py
+ M tests/registry/test_candidate_registry.py
+?? docs/modules/phase_1_1_candidate_registry_refresh/
+?? tests/registry/test_terminal_benchmarks.py
 ```
 
 ## Risks
 
-- Contracts are intentionally broad and may need refinement before adapters exist.
-- Agent skill and market rule contracts are boundaries only; later modules must avoid treating them as implementations.
-- Phase 2 does not validate real data, run market rules, run backtests, calculate factors, or optimize portfolios.
+- Terminal benchmark records are preliminary and reference-only.
+- Proprietary terminals must not be treated as integration targets.
+- FinceptTerminal and other terminal-like projects require explicit license review before any cloning, copying, integration, commercial use, or derivative work.
+- Registry fields do not replace future legal, commercial, or architecture review.
 
 ## Recommended Next Step
 
-ChatGPT should perform Phase 2 closure review before any Phase 3 data contract work begins.
+ChatGPT should perform Phase 1.1 closure review before Phase 3 begins.

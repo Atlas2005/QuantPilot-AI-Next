@@ -45,3 +45,12 @@
 - Agent skill contract exists only as a late-stage boundary, not an implementation.
 - Market rule contract exists only as a boundary before the actual market rule engine phase.
 - Core contracts expose descriptive metadata and scope warnings only.
+
+## Phase 1.1 Decisions
+
+- Professional terminals are product/workflow benchmarks, not dependencies.
+- Proprietary terminals are reference-only.
+- FinceptTerminal requires license review before any cloning, integration, commercial use, or derivative work.
+- The registry must include commercial/product benchmarks, not only GitHub libraries.
+- Future module kickoff reviews must include both open-source search and professional benchmark scan.
+- Phase 1.1 makes no final terminal, dashboard, or product architecture selection.

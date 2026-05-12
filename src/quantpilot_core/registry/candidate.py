@@ -33,6 +33,39 @@ PHASE_ALLOWED_VALUES = frozenset(
     }
 )
 
+CANDIDATE_TYPES = frozenset(
+    {
+        "open_source_project",
+        "commercial_product_benchmark",
+        "professional_terminal_benchmark",
+        "open_source_terminal_candidate",
+        "data_vendor_candidate",
+        "tooling_reference",
+    }
+)
+
+BENCHMARK_ROLES = frozenset(
+    {
+        "not_a_benchmark",
+        "product_workflow_reference",
+        "data_terminal_reference",
+        "analytics_terminal_reference",
+        "trading_workflow_reference",
+        "ui_dashboard_reference",
+    }
+)
+
+INTEGRATION_POLICIES = frozenset(
+    {
+        "no_integration_reference_only",
+        "registry_only",
+        "prototype_later",
+        "adapter_later",
+        "license_review_required",
+        "avoid_for_now",
+    }
+)
+
 REQUIRED_FIELDS = (
     "name",
     "category",
@@ -53,6 +86,14 @@ REQUIRED_FIELDS = (
     "phase_allowed",
     "notes",
 )
+
+OPTIONAL_FIELD_DEFAULTS = {
+    "candidate_type": "open_source_project",
+    "benchmark_role": "not_a_benchmark",
+    "integration_policy": "registry_only",
+}
+
+ALL_FIELDS = REQUIRED_FIELDS + tuple(OPTIONAL_FIELD_DEFAULTS)
 
 
 @dataclass(frozen=True)
@@ -80,8 +121,10 @@ class CandidateMetadata:
     integration_risk: str
     phase_allowed: str
     notes: str
+    candidate_type: str = "open_source_project"
+    benchmark_role: str = "not_a_benchmark"
+    integration_policy: str = "registry_only"
 
     @classmethod
     def from_mapping(cls, value: dict[str, str]) -> "CandidateMetadata":
-        return cls(**{field: value[field] for field in REQUIRED_FIELDS})
-
+        return cls(**{field: value[field] for field in ALL_FIELDS})

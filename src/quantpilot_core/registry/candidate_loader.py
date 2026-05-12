@@ -7,9 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from quantpilot_core.registry.candidate import (
+    BENCHMARK_ROLES,
+    CANDIDATE_TYPES,
     EVALUATION_STATUSES,
+    INTEGRATION_POLICIES,
     PHASE_ALLOWED_VALUES,
     RECOMMENDED_ACTIONS,
+    ALL_FIELDS,
+    OPTIONAL_FIELD_DEFAULTS,
     REQUIRED_FIELDS,
     CandidateMetadata,
 )
@@ -54,9 +59,11 @@ def _validate_candidate_mapping(item: dict[str, Any], index: int) -> dict[str, s
             f"Candidate at index {index} is missing required fields: {', '.join(missing)}"
         )
 
-    normalized: dict[str, str] = {}
-    for field in REQUIRED_FIELDS:
-        value = item[field]
+    normalized: dict[str, str] = {
+        field: default for field, default in OPTIONAL_FIELD_DEFAULTS.items()
+    }
+    for field in ALL_FIELDS:
+        value = item.get(field, normalized.get(field))
         if not isinstance(value, str):
             raise CandidateRegistryError(
                 f"Candidate at index {index} field {field!r} must be a string."
@@ -85,6 +92,24 @@ def _validate_candidate_mapping(item: dict[str, Any], index: int) -> dict[str, s
         "phase_allowed",
         index,
     )
+    _validate_enum(
+        normalized["candidate_type"],
+        CANDIDATE_TYPES,
+        "candidate_type",
+        index,
+    )
+    _validate_enum(
+        normalized["benchmark_role"],
+        BENCHMARK_ROLES,
+        "benchmark_role",
+        index,
+    )
+    _validate_enum(
+        normalized["integration_policy"],
+        INTEGRATION_POLICIES,
+        "integration_policy",
+        index,
+    )
 
     return normalized
 
@@ -96,4 +121,3 @@ def _validate_enum(value: str, allowed: frozenset[str], field: str, index: int) 
             f"Candidate at index {index} field {field!r} has invalid value "
             f"{value!r}; expected one of: {allowed_values}."
         )
-

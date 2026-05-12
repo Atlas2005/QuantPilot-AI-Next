@@ -3,7 +3,10 @@ from pathlib import Path
 
 from quantpilot_core.registry import load_candidate_registry
 from quantpilot_core.registry.candidate import (
+    BENCHMARK_ROLES,
+    CANDIDATE_TYPES,
     EVALUATION_STATUSES,
+    INTEGRATION_POLICIES,
     PHASE_ALLOWED_VALUES,
     RECOMMENDED_ACTIONS,
     REQUIRED_FIELDS,
@@ -36,6 +39,9 @@ def test_enum_values_are_valid() -> None:
         assert candidate.recommended_action in RECOMMENDED_ACTIONS
         assert candidate.evaluation_status in EVALUATION_STATUSES
         assert candidate.phase_allowed in PHASE_ALLOWED_VALUES
+        assert candidate.candidate_type in CANDIDATE_TYPES
+        assert candidate.benchmark_role in BENCHMARK_ROLES
+        assert candidate.integration_policy in INTEGRATION_POLICIES
 
 
 def test_candidate_names_are_unique() -> None:

@@ -74,6 +74,22 @@ Each candidate should later be classified as one of:
 - Warp
 - Ruflo
 
+## Professional Terminal / Product Benchmarks
+
+- Bloomberg Terminal
+- LSEG Workspace
+- FactSet
+- Wind Financial Terminal
+- iFinD
+- Choice Financial Terminal
+
+## Open-Source Financial Terminal / Dashboard Candidates
+
+- FinceptTerminal
+- OpenBB Platform / OpenBB Terminal
+
+Terminal-like projects are not automatically safe to integrate. Proprietary terminals are product/workflow benchmarks only, and open-source terminal projects require license and commercial-risk review before any cloning, copying, integration, commercialization, or derivative work.
+
 ## Agent Timing Constraint
 
 Agent orchestration is late-stage. TradingAgents, LangGraph, AutoGen, CrewAI, OpenAI Agents SDK, and OpenAI Skills should not be integrated before data, contracts, validation, and backtest foundations are stable.
