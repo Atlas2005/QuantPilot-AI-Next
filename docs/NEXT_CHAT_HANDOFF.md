@@ -6,30 +6,28 @@ QuantPilot-AI 2.0 is an open-source-first, adapter-first, contract-first, A-shar
 
 ## Current Phase
 
-Phase 6C-1.1: prototype environment isolation policy, implemented by Codex and pending ChatGPT closure review.
+Phase 6C-2: manual Backtrader local-fixture prototype, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
-Step 0A through Phase 6C-1 are completed.
+Step 0A through Phase 6C-1.1 are completed.
 
-Phase 6C-1.1 created:
+Phase 6C-2 created:
 
-- `docs/PROTOTYPE_ENVIRONMENT_ISOLATION_POLICY.md`
-- `tools/prototype_envs/README.md`
-- `tools/prototype_envs/create_prototype_env.ps1`
-- `tools/prototype_envs/create_prototype_env.sh`
-- `tests/policy/test_prototype_environment_policy.py`
-- Phase 6C-1.1 module kickoff and closure draft docs
+- `docs/modules/phase_6c_2_backtrader_manual_prototype/MODULE_KICKOFF_REVIEW.md`
+- `docs/modules/phase_6c_2_backtrader_manual_prototype/MODULE_CLOSURE_DRAFT.md`
+- `tools/manual_backtest_prototypes/backtrader_local_fixture_probe.py`
+- `tools/manual_backtest_prototypes/summarize_backtrader_probe.py`
 
-The patch requires future external-framework prototypes to use isolated `.venv-prototypes/<tool-name>/` environments instead of the main project Python environment.
+The manual Backtrader probe used only the fake Phase 3 fixture, converted it to a local Backtrader-compatible CSV under `local_artifacts/`, and ran only inside `.venv-prototypes/backtrader/`. It showed Backtrader can consume the converted local fixture shape and produce a toy event-driven result, but it did not prove A-share realism or production readiness.
 
 ## Current Prohibitions
 
 - do not fetch market data
 - do not call external APIs
-- do not install or uninstall packages without explicit approval
-- do not add prototype packages to `pyproject.toml`
-- do not run Backtrader/RQAlpha/Qlib/deeper vectorbt prototypes in the main project environment
+- do not add Backtrader or other prototype packages to `pyproject.toml`
+- do not run prototype packages outside isolated `.venv-prototypes/<tool-name>/` environments
+- do not move to RQAlpha prototype without ChatGPT approval
 - do not implement production backtest adapters
 - do not implement strategy, alpha/factor, portfolio, model, broker, live order, or agent workflows
 - do not mark anything trading-ready
@@ -37,15 +35,16 @@ The patch requires future external-framework prototypes to use isolated `.venv-p
 
 ## Next Recommended Step
 
-ChatGPT should perform Phase 6C-1.1 closure review.
+ChatGPT should perform Phase 6C-2 closure review.
 
-Do not start Backtrader/RQAlpha/Qlib prototype work until approved.
+Do not move to RQAlpha prototype or adapter implementation until approved.
 
 ## Key Decisions
 
-- Prototype environments must live under `.venv-prototypes/<tool-name>/`.
-- Prototype outputs remain under `local_artifacts/`.
-- Prototype dependencies remain out of project dependency files until a later approved adapter phase.
+- Phase 6C-2 tested Backtrader only.
+- Backtrader is not a project dependency.
+- No final backtest engine selection was made.
+- No production Backtrader adapter exists.
 - Codex is not the project architect.
 
 ## Role Split

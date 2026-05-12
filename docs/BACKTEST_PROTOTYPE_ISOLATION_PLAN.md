@@ -30,6 +30,12 @@ Detailed result summary lives in:
 docs/BACKTEST_PROTOTYPE_RESULTS.md
 ```
 
+## Phase 6C-2 Result Reference
+
+Phase 6C-2 tested Backtrader only inside `.venv-prototypes/backtrader/` because Backtrader has live-trading related capabilities. The manual local-fixture probe showed that Backtrader can consume a converted fake Phase 3 daily OHLCV fixture and produce a minimal event-driven toy result, but it did not prove A-share realism or production readiness.
+
+Backtrader, RQAlpha, Qlib, and any other external engine prototypes must continue to run outside the main project environment.
+
 ## Second Wave
 
 Qlib is second-wave because it is more ML research platform than minimal backtest adapter.

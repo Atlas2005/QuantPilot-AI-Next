@@ -127,3 +127,12 @@
 - Prototype dependencies remain out of `pyproject.toml` until a later approved adapter phase.
 - Package install and uninstall operations require explicit approval.
 - Prototype helper scripts may create environments but must not install packages or run prototypes automatically.
+
+## Phase 6C-2 Decisions
+
+- Phase 6C-2 tests Backtrader only.
+- Backtrader must run only in isolated `.venv-prototypes/backtrader/`.
+- Backtrader is not a project dependency.
+- The Backtrader prototype result does not equal engine selection.
+- No Backtrader adapter exists yet.
+- Live trading capable framework risk remains isolated from QuantPilot core.
