@@ -155,3 +155,12 @@
 - No RQAlpha adapter exists yet.
 - No broker/live/order path is allowed.
 - Fake-fixture-only RQAlpha execution was not proven in this phase.
+
+## Phase 6D Decisions
+
+- Phase 6D compares evidence before adapter selection.
+- vectorbt and Backtrader produced toy fake-fixture evidence only.
+- RQAlpha produced install/import evidence only.
+- Qlib remains a metadata/preflight candidate.
+- Python remains appropriate for the current research/runtime layer, but language/runtime decisions will be reviewed at every major module.
+- No final backtest engine selection is made.

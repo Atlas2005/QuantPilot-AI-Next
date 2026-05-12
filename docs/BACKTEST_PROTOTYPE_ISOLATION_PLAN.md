@@ -56,6 +56,10 @@ RQAlpha installed and imported in isolation, but fake-fixture-only local run sup
 
 Any future deeper RQAlpha work must remain isolated and must not create production adapters, project dependencies, broker/live/order paths, or final engine-selection claims.
 
+## Phase 6D Comparative Review
+
+Phase 6D comparison confirms that future prototypes must remain isolated. High-risk or live-capable frameworks remain outside QuantPilot core, no framework prototype may enter CI, and no framework may become a project dependency without later adapter-phase approval.
+
 ## Second Wave
 
 Qlib is second-wave because it is more ML research platform than minimal backtest adapter.

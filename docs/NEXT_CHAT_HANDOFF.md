@@ -6,28 +6,30 @@ QuantPilot-AI 2.0 is an open-source-first, adapter-first, contract-first, A-shar
 
 ## Current Phase
 
-Phase 6C-3B: isolated RQAlpha prototype probe, implemented by Codex and pending ChatGPT closure review.
+Phase 6D: backtest prototype comparative review, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
-Step 0A through Phase 6C-3A are completed.
+Step 0A through Phase 6C-3B are completed.
 
-Phase 6C-3B created:
+Phase 6D created:
 
-- `docs/modules/phase_6c_3b_rqalpha_isolated_prototype/MODULE_KICKOFF_REVIEW.md`
-- `docs/modules/phase_6c_3b_rqalpha_isolated_prototype/MODULE_CLOSURE_DRAFT.md`
-- `tools/manual_backtest_prototypes/rqalpha_local_fixture_probe.py`
-- `tools/manual_backtest_prototypes/summarize_rqalpha_probe.py`
+- `docs/modules/phase_6d_backtest_comparative_review/MODULE_KICKOFF_REVIEW.md`
+- `docs/modules/phase_6d_backtest_comparative_review/MODULE_CLOSURE_DRAFT.md`
+- `data/backtest_engine_candidates/prototype_comparison.json`
+- `src/quantpilot_core/backtest_engines/comparison.py`
+- `docs/BACKTEST_ENGINE_COMPARATIVE_REVIEW.md`
+- `tests/backtest_engines/test_backtest_comparison.py`
 
-RQAlpha was installed and imported only inside `.venv-prototypes/rqalpha/`. The probe did not run a backtest because fake-fixture-only execution was not proven without RQAlpha data bundle/config setup.
+The comparison records vectorbt and Backtrader as toy fake-fixture successes, RQAlpha as isolated install/import evidence only, and Qlib as metadata-only.
 
 ## Current Prohibitions
 
 - do not fetch market data
 - do not call external APIs
-- do not add RQAlpha or other prototype packages to `pyproject.toml`
-- do not run prototype packages outside isolated `.venv-prototypes/<tool-name>/` environments
-- do not commercialize, vendor, copy, or integrate RQAlpha before license review
+- do not install packages
+- do not add prototype packages to `pyproject.toml`
+- do not start Qlib install without ChatGPT approval
 - do not implement production backtest adapters
 - do not implement strategy, alpha/factor, portfolio, model, broker, live order, or agent workflows
 - do not mark anything trading-ready
@@ -35,17 +37,16 @@ RQAlpha was installed and imported only inside `.venv-prototypes/rqalpha/`. The 
 
 ## Next Recommended Step
 
-ChatGPT should perform Phase 6C-3B closure review.
+ChatGPT should perform Phase 6D closure review.
 
-Do not move to adapter implementation or final engine selection until approved.
+Do not start Qlib install, adapter work, or Phase 7 until approved.
 
 ## Key Decisions
 
-- Phase 6C-3B tested RQAlpha only.
-- RQAlpha is not a project dependency.
 - No final backtest engine selection was made.
-- No production RQAlpha adapter exists.
-- RQAlpha license/commercial risk remains unresolved.
+- No engine is approved for adapter work.
+- No engine is trading-ready.
+- Python remains appropriate for current research/runtime work, with language/runtime review at each major module.
 - Codex is not the project architect.
 
 ## Role Split

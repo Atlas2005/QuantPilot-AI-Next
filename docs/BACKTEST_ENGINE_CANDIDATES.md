@@ -14,6 +14,12 @@ Detailed prototype isolation plans live in:
 data/backtest_engine_candidates/prototype_plans.json
 ```
 
+Comparative Phase 6 evidence lives in:
+
+```text
+data/backtest_engine_candidates/prototype_comparison.json
+```
+
 ## Candidates
 
 - Qlib: AI/ML research platform candidate; prototype later, not selected.
@@ -26,3 +32,18 @@ data/backtest_engine_candidates/prototype_plans.json
 - NautilusTrader: advanced trading engine candidate; likely too heavy for early stage.
 - backtesting.py: simple baseline candidate only.
 - bt: simple portfolio/backtest baseline candidate only.
+
+## Comparative Status
+
+| Engine | Current Evidence | Candidate Status |
+| --- | --- | --- |
+| vectorbt | Toy fake-fixture success | Candidate only; not approved for adapter |
+| Backtrader | Toy converted-fixture success | Candidate only; live-trading surfaces isolated |
+| RQAlpha | Isolated install/import success only | Candidate only; license/data bundle risks unresolved |
+| Qlib | Metadata only | Second-wave/preflight candidate |
+
+No engine is approved for adapter work.
+
+No engine is trading-ready.
+
+No final engine selection has been made.

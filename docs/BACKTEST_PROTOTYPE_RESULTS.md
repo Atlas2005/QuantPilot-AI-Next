@@ -188,3 +188,12 @@ RQAlpha remains research/prototype-only. Do not commercialize, vendor, copy sour
 ## RQAlpha Recommendation
 
 RQAlpha may deserve a deeper prototype only if ChatGPT approves a data-bundle/config review. Any future work must remain isolated in `.venv-prototypes/rqalpha/`, use fake fixtures unless explicitly approved otherwise, and avoid adapter or engine-selection decisions.
+
+## Phase 6D: Comparative Summary
+
+- vectorbt: toy success; A-share realism remains unproven.
+- Backtrader: toy success; live-trading surface risk remains high.
+- RQAlpha: isolated install/import success; direct fake fixture run was not proven.
+- Qlib: not run; ML research candidate only.
+
+No final backtest engine has been selected.
