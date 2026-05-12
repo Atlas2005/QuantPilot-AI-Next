@@ -6,21 +6,23 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-Phase 6A: backtest engine evaluation foundation, implemented by Codex and pending ChatGPT closure review.
+Phase 6B: backtest prototype isolation plan, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
-Step 0A through Phase 5 are completed.
+Step 0A through Phase 6A are completed.
 
-Phase 5 A-share market rule foundation is completed and pushed.
+Phase 6A backtest engine evaluation foundation is completed and pushed.
 
-Phase 6A adds static backtest engine candidate metadata, standard-library validation helpers, summary helpers, and metadata-level tests.
+Phase 6B adds static prototype isolation plans, manual prototype documentation, and a fake Phase 3 fixture snapshot helper for future isolated experiments.
 
 The repository is still not trading-ready.
 
 No backtest engine is selected.
 
 No external backtest framework is installed.
+
+No real backtest was run.
 
 No broker/order/live path exists.
 
@@ -43,5 +45,5 @@ No broker/order/live path exists.
 
 ## Next Expected Action
 
-ChatGPT should perform Phase 6A module closure review. Do not move to Phase 6B until approved.
+ChatGPT should perform Phase 6B module closure review. Do not move to Phase 6C until approved.
 

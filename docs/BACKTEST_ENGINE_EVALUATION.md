@@ -38,3 +38,8 @@ Phase 6A does not install, import, run, prototype, or select any engine. It crea
 
 Phase 6B may propose controlled manual prototypes for a short list of candidates after ChatGPT review. Any future integration must go through adapters and contract tests.
 
+## Phase 6B Prototype Isolation
+
+Phase 6B defines manual-only prototype isolation plans in `data/backtest_engine_candidates/prototype_plans.json`.
+
+Future Phase 6C runs should use isolated environments, avoid CI execution, keep raw outputs under `local_artifacts/`, and avoid broker/live/order paths.

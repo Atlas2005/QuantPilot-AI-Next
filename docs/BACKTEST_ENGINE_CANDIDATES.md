@@ -8,6 +8,12 @@ Candidate metadata lives in:
 data/backtest_engine_candidates/backtest_engines.json
 ```
 
+Detailed prototype isolation plans live in:
+
+```text
+data/backtest_engine_candidates/prototype_plans.json
+```
+
 ## Candidates
 
 - Qlib: AI/ML research platform candidate; prototype later, not selected.
@@ -20,4 +26,3 @@ data/backtest_engine_candidates/backtest_engines.json
 - NautilusTrader: advanced trading engine candidate; likely too heavy for early stage.
 - backtesting.py: simple baseline candidate only.
 - bt: simple portfolio/backtest baseline candidate only.
-

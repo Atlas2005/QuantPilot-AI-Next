@@ -1,0 +1,271 @@
+[
+  {
+    "engine_name": "vectorbt",
+    "priority": "first_wave",
+    "run_mode": "isolated_environment_required",
+    "requires_external_package": true,
+    "requires_network": false,
+    "requires_market_data": false,
+    "requires_live_trading_isolation": false,
+    "requires_license_review": false,
+    "expected_input_contract": "Phase 3 fake local daily OHLCV fixture",
+    "expected_output_artifact": "local_artifacts/backtest_prototypes/vectorbt_summary.json",
+    "a_share_rule_fit_questions": [
+      "Can local daily OHLCV fixture shape be consumed without provider data?",
+      "Can T+1 constraints be represented outside the engine?",
+      "Can limit-up/down constraints be represented or filtered externally?"
+    ],
+    "prototype_success_criteria": [
+      "Can consume local fixture shape.",
+      "Can express basic entry/exit style research.",
+      "Limitations against T+1 and limit-up/down are documented."
+    ],
+    "risks": [
+      "Vectorized research may not naturally model event-driven A-share constraints.",
+      "Prototype evidence is required before adapter review."
+    ],
+    "notes": "First-wave isolated prototype candidate only. No framework installation in Phase 6B."
+  },
+  {
+    "engine_name": "Backtrader",
+    "priority": "first_wave",
+    "run_mode": "isolated_environment_required",
+    "requires_external_package": true,
+    "requires_network": false,
+    "requires_market_data": false,
+    "requires_live_trading_isolation": true,
+    "requires_license_review": false,
+    "expected_input_contract": "Phase 3 fake local daily OHLCV fixture",
+    "expected_output_artifact": "local_artifacts/backtest_prototypes/backtrader_summary.json",
+    "a_share_rule_fit_questions": [
+      "Can local fixture rows be fed without provider or broker modules?",
+      "Can broker/live components remain isolated?",
+      "Can A-share rule gaps be documented without production integration?"
+    ],
+    "prototype_success_criteria": [
+      "Can run local fixture without broker/live components.",
+      "Can keep broker/live modules isolated.",
+      "Can document A-share rule gaps."
+    ],
+    "risks": [
+      "Live-trading related capabilities must not enter core.",
+      "A-share realism may require external guards."
+    ],
+    "notes": "First-wave isolated prototype candidate only. No framework installation in Phase 6B."
+  },
+  {
+    "engine_name": "RQAlpha",
+    "priority": "first_wave",
+    "run_mode": "isolated_environment_required",
+    "requires_external_package": true,
+    "requires_network": false,
+    "requires_market_data": false,
+    "requires_live_trading_isolation": false,
+    "requires_license_review": true,
+    "expected_input_contract": "Phase 3 fake local daily OHLCV fixture",
+    "expected_output_artifact": "local_artifacts/backtest_prototypes/rqalpha_summary.json",
+    "a_share_rule_fit_questions": [
+      "Can China-market relevance be evaluated with fake local fixtures?",
+      "What license and maintenance risks block early use?",
+      "Can output be compared to Phase 5 market-rule expectations?"
+    ],
+    "prototype_success_criteria": [
+      "Can evaluate China-market relevance without production integration.",
+      "License and maintenance risks are documented.",
+      "No adapter or dependency decision is made."
+    ],
+    "risks": [
+      "License review required.",
+      "Maintenance and compatibility must be checked later."
+    ],
+    "notes": "First-wave isolated prototype candidate only. License review required before use."
+  },
+  {
+    "engine_name": "Qlib",
+    "priority": "second_wave",
+    "run_mode": "isolated_environment_required",
+    "requires_external_package": true,
+    "requires_network": false,
+    "requires_market_data": false,
+    "requires_live_trading_isolation": false,
+    "requires_license_review": false,
+    "expected_input_contract": "Phase 3 fake local daily OHLCV fixture",
+    "expected_output_artifact": "local_artifacts/backtest_prototypes/qlib_summary.json",
+    "a_share_rule_fit_questions": [
+      "Can AI/ML research workflow be assessed separately from data workflow?",
+      "Can local fixture input avoid Qlib-specific data assumptions?",
+      "Is this too heavy for early backtest core?"
+    ],
+    "prototype_success_criteria": [
+      "AI/ML research workflow suitability can be assessed later.",
+      "Data workflow constraints are documented.",
+      "Not used as early backtest core."
+    ],
+    "risks": [
+      "More ML research platform than minimal backtest adapter.",
+      "May impose data workflow complexity."
+    ],
+    "notes": "Second-wave candidate because it is more ML research platform than minimal backtest adapter."
+  },
+  {
+    "engine_name": "backtesting.py",
+    "priority": "second_wave",
+    "run_mode": "isolated_environment_required",
+    "requires_external_package": true,
+    "requires_network": false,
+    "requires_market_data": false,
+    "requires_live_trading_isolation": false,
+    "requires_license_review": false,
+    "expected_input_contract": "Phase 3 fake local daily OHLCV fixture",
+    "expected_output_artifact": "local_artifacts/backtest_prototypes/backtesting_py_summary.json",
+    "a_share_rule_fit_questions": [
+      "Can simple local fixtures be consumed?",
+      "Can A-share market rule gaps be documented?",
+      "Is the engine sufficient only as a lightweight baseline?"
+    ],
+    "prototype_success_criteria": [
+      "Can act as lightweight baseline prototype only.",
+      "A-share limitations are documented.",
+      "No production role is implied."
+    ],
+    "risks": [
+      "Likely insufficient for realistic A-share research without external guards."
+    ],
+    "notes": "Second-wave lightweight baseline prototype only."
+  },
+  {
+    "engine_name": "bt",
+    "priority": "second_wave",
+    "run_mode": "isolated_environment_required",
+    "requires_external_package": true,
+    "requires_network": false,
+    "requires_market_data": false,
+    "requires_live_trading_isolation": false,
+    "requires_license_review": false,
+    "expected_input_contract": "Phase 3 fake local daily OHLCV fixture",
+    "expected_output_artifact": "local_artifacts/backtest_prototypes/bt_summary.json",
+    "a_share_rule_fit_questions": [
+      "Can simple portfolio/backtest baseline be represented?",
+      "Can A-share market-rule gaps be documented?",
+      "Is this only useful as a baseline comparator?"
+    ],
+    "prototype_success_criteria": [
+      "Can act as simple portfolio/backtest baseline only.",
+      "A-share limitations are documented.",
+      "No production role is implied."
+    ],
+    "risks": [
+      "Likely insufficient for realistic A-share trading constraints."
+    ],
+    "notes": "Second-wave lightweight baseline prototype only."
+  },
+  {
+    "engine_name": "Zipline-reloaded",
+    "priority": "second_wave",
+    "run_mode": "isolated_environment_required",
+    "requires_external_package": true,
+    "requires_network": false,
+    "requires_market_data": false,
+    "requires_live_trading_isolation": false,
+    "requires_license_review": true,
+    "expected_input_contract": "Phase 3 fake local daily OHLCV fixture",
+    "expected_output_artifact": "local_artifacts/backtest_prototypes/zipline_reloaded_summary.json",
+    "a_share_rule_fit_questions": [
+      "Can local fixture input avoid bundle/data assumptions?",
+      "Can maintenance and compatibility risks be bounded?",
+      "Can A-share rule gaps be documented?"
+    ],
+    "prototype_success_criteria": [
+      "Maintenance and compatibility risks are documented.",
+      "License review status is documented.",
+      "No adapter or production role is implied."
+    ],
+    "risks": [
+      "License review required.",
+      "Maintenance and compatibility review required."
+    ],
+    "notes": "Second-wave candidate requiring license, maintenance, and compatibility review."
+  },
+  {
+    "engine_name": "LEAN",
+    "priority": "deferred",
+    "run_mode": "metadata_only",
+    "requires_external_package": true,
+    "requires_network": false,
+    "requires_market_data": false,
+    "requires_live_trading_isolation": true,
+    "requires_license_review": true,
+    "expected_input_contract": "Phase 3 fake local daily OHLCV fixture",
+    "expected_output_artifact": "local_artifacts/backtest_prototypes/lean_summary.json",
+    "a_share_rule_fit_questions": [
+      "Is C# full trading engine complexity justified?",
+      "Can live-trading capabilities remain isolated?",
+      "Is architecture reference more appropriate than integration?"
+    ],
+    "prototype_success_criteria": [
+      "Architecture reference value is documented.",
+      "Live-trading isolation requirements are documented.",
+      "No integration is implied."
+    ],
+    "risks": [
+      "Full trading engine complexity.",
+      "Live trading capability must remain isolated.",
+      "Likely architecture reference before integration."
+    ],
+    "notes": "Deferred C# / full trading engine candidate; likely architecture reference before integration."
+  },
+  {
+    "engine_name": "vn.py / VeighNa",
+    "priority": "deferred",
+    "run_mode": "metadata_only",
+    "requires_external_package": true,
+    "requires_network": false,
+    "requires_market_data": false,
+    "requires_live_trading_isolation": true,
+    "requires_license_review": true,
+    "expected_input_contract": "Phase 3 fake local daily OHLCV fixture",
+    "expected_output_artifact": "local_artifacts/backtest_prototypes/vnpy_summary.json",
+    "a_share_rule_fit_questions": [
+      "Is trading system architecture reference useful?",
+      "Can live/broker modules remain fully isolated?",
+      "Is early-stage integration too risky?"
+    ],
+    "prototype_success_criteria": [
+      "Architecture reference value is documented.",
+      "Live-trading isolation requirements are documented.",
+      "No integration is implied."
+    ],
+    "risks": [
+      "Full trading system scope.",
+      "Broker/live components must remain isolated."
+    ],
+    "notes": "Deferred trading system architecture reference."
+  },
+  {
+    "engine_name": "NautilusTrader",
+    "priority": "deferred",
+    "run_mode": "metadata_only",
+    "requires_external_package": true,
+    "requires_network": false,
+    "requires_market_data": false,
+    "requires_live_trading_isolation": true,
+    "requires_license_review": true,
+    "expected_input_contract": "Phase 3 fake local daily OHLCV fixture",
+    "expected_output_artifact": "local_artifacts/backtest_prototypes/nautilus_summary.json",
+    "a_share_rule_fit_questions": [
+      "Is advanced engine complexity justified?",
+      "Can live-trading capability remain isolated?",
+      "Is this too heavy for early-stage A-share research core?"
+    ],
+    "prototype_success_criteria": [
+      "Architecture reference value is documented.",
+      "Complexity and live-trading isolation risks are documented.",
+      "No integration is implied."
+    ],
+    "risks": [
+      "Powerful engine likely too heavy for early stage.",
+      "Live trading capability must remain isolated."
+    ],
+    "notes": "Deferred powerful engine candidate, likely too heavy for early-stage A-share research core."
+  }
+]

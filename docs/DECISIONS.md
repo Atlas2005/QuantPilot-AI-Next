@@ -101,3 +101,12 @@
 - Live-trading-capable engines must be isolated from early core.
 - Future engine integration must happen through adapters and contract tests.
 - Phase 6A does not run prototypes or backtests.
+
+## Phase 6B Decisions
+
+- Phase 6B creates prototype isolation plan only.
+- First-wave prototype order is vectorbt, Backtrader, RQAlpha.
+- Qlib is second-wave because it is more ML research platform than minimal backtest adapter.
+- LEAN, vn.py / VeighNa, and NautilusTrader are deferred because live-trading and full-platform risks must remain isolated.
+- No framework is installed or selected in Phase 6B.
+- Phase 6B does not run backtests.

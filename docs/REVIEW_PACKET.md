@@ -2,19 +2,23 @@
 
 ## Task Name
 
-Phase 6A: Backtest Engine Evaluation Foundation.
+Phase 6B: Backtest Prototype Isolation Plan.
 
 ## Changed Files
 
-- `docs/modules/phase_6a_backtest_engine_evaluation/MODULE_KICKOFF_REVIEW.md`
-- `docs/modules/phase_6a_backtest_engine_evaluation/MODULE_CLOSURE_DRAFT.md`
+- `docs/modules/phase_6b_backtest_prototype_isolation/MODULE_KICKOFF_REVIEW.md`
+- `docs/modules/phase_6b_backtest_prototype_isolation/MODULE_CLOSURE_DRAFT.md`
+- `docs/BACKTEST_PROTOTYPE_ISOLATION_PLAN.md`
 - `docs/BACKTEST_ENGINE_EVALUATION.md`
 - `docs/BACKTEST_ENGINE_CANDIDATES.md`
+- `src/quantpilot_core/backtest_engines/prototype_plan.py`
+- `src/quantpilot_core/backtest_engines/prototype_loader.py`
 - `src/quantpilot_core/backtest_engines/__init__.py`
-- `src/quantpilot_core/backtest_engines/types.py`
-- `src/quantpilot_core/backtest_engines/evaluation.py`
-- `data/backtest_engine_candidates/backtest_engines.json`
-- `tests/backtest_engines/test_backtest_engine_candidates.py`
+- `data/backtest_engine_candidates/prototype_plans.json`
+- `tools/manual_backtest_prototypes/README.md`
+- `tools/manual_backtest_prototypes/export_phase3_fixture_snapshot.py`
+- `tests/backtest_engines/test_backtest_prototype_plans.py`
+- `tests/backtest_engines/test_fixture_snapshot_export.py`
 - `docs/CURRENT_PROJECT_STATE.md`
 - `docs/DECISIONS.md`
 - `docs/NEXT_CHAT_HANDOFF.md`
@@ -22,14 +26,14 @@ Phase 6A: Backtest Engine Evaluation Foundation.
 
 ## Safety Checks
 
-- `src/` changed: Yes. Backtest engine metadata evaluation helpers only.
-- `tests/` changed: Yes. Metadata validation tests only.
-- Backtest candidate registry changed: Yes. Added static candidate JSON.
+- `src/` changed: Yes. Prototype plan metadata loader and validators only.
+- `tools/` changed: Yes. Manual prototype docs and fake fixture snapshot helper only.
+- Prototype plans changed: Yes. Added static prototype plan JSON.
 - Dependencies changed: No.
 - Packages installed: No.
 - Market data/API used: No.
 - Broker/live/order submission path created: No.
-- Backtest/model/agent implementation added: No.
+- Real backtest/model/agent implementation added: No.
 - External frameworks installed/imported: No.
 - Final technical selections made: No.
 
@@ -46,9 +50,6 @@ Listing 'src'...
 Listing 'src\\quantpilot_ai_next.egg-info'...
 Listing 'src\\quantpilot_core'...
 Listing 'src\\quantpilot_core\\backtest_engines'...
-Compiling 'src\\quantpilot_core\\backtest_engines\\__init__.py'...
-Compiling 'src\\quantpilot_core\\backtest_engines\\evaluation.py'...
-Compiling 'src\\quantpilot_core\\backtest_engines\\types.py'...
 Listing 'src\\quantpilot_core\\config'...
 Listing 'src\\quantpilot_core\\contracts'...
 Listing 'src\\quantpilot_core\\data'...
@@ -63,50 +64,57 @@ Listing 'src\\quantpilot_core\\safety'...
 Result: passed.
 
 ```text
-collected 76 items
+collected 90 items
 
-tests\\backtest_engines\\test_backtest_engine_candidates.py ..........     [ 13%]
-tests\\contracts\\test_contract_skeleton.py ..                             [ 15%]
-tests\\contracts\\test_core_contracts.py ......                            [ 23%]
-tests\\data\\test_csv_loader.py ...                                        [ 27%]
-tests\\data\\test_daily_bar_schema.py ....                                 [ 32%]
-tests\\data\\test_daily_bar_validation.py .......                          [ 42%]
-tests\\data_sources\\test_field_mapping.py ......                          [ 50%]
-tests\\data_sources\\test_prototype_plan.py ....                           [ 55%]
-tests\\market_rules\\test_a_share_market_rules.py ...........              [ 69%]
-tests\\market_rules\\test_market_rule_profile.py ......                    [ 77%]
-tests\\registry\\test_candidate_registry.py .......                        [ 86%]
-tests\\registry\\test_terminal_benchmarks.py ......                        [ 94%]
+tests\\backtest_engines\\test_backtest_engine_candidates.py ..........     [ 11%]
+tests\\backtest_engines\\test_backtest_prototype_plans.py ...........      [ 23%]
+tests\\backtest_engines\\test_fixture_snapshot_export.py ...               [ 26%]
+tests\\contracts\\test_contract_skeleton.py ..                             [ 28%]
+tests\\contracts\\test_core_contracts.py ......                            [ 35%]
+tests\\data\\test_csv_loader.py ...                                        [ 38%]
+tests\\data\\test_daily_bar_schema.py ....                                 [ 43%]
+tests\\data\\test_daily_bar_validation.py .......                          [ 51%]
+tests\\data_sources\\test_field_mapping.py ......                          [ 57%]
+tests\\data_sources\\test_prototype_plan.py ....                           [ 62%]
+tests\\market_rules\\test_a_share_market_rules.py ...........              [ 74%]
+tests\\market_rules\\test_market_rule_profile.py ......                    [ 81%]
+tests\\registry\\test_candidate_registry.py .......                        [ 88%]
+tests\\registry\\test_terminal_benchmarks.py ......                        [ 95%]
 tests\\smoke\\test_imports.py .                                            [ 96%]
 tests\\smoke\\test_no_forbidden_scope.py .                                 [ 97%]
 tests\\smoke\\test_safety_flags.py ..                                      [100%]
 
-============================= 76 passed in 0.12s ==============================
+============================= 90 passed in 0.14s ==============================
 ```
 
 ## Git Status
 
 ```text
 ## main...origin/main
+ M docs/BACKTEST_ENGINE_CANDIDATES.md
+ M docs/BACKTEST_ENGINE_EVALUATION.md
  M docs/CURRENT_PROJECT_STATE.md
  M docs/DECISIONS.md
  M docs/NEXT_CHAT_HANDOFF.md
  M docs/REVIEW_PACKET.md
-?? data/backtest_engine_candidates/
-?? docs/BACKTEST_ENGINE_CANDIDATES.md
-?? docs/BACKTEST_ENGINE_EVALUATION.md
-?? docs/modules/phase_6a_backtest_engine_evaluation/
-?? src/quantpilot_core/backtest_engines/
-?? tests/backtest_engines/
+ M src/quantpilot_core/backtest_engines/__init__.py
+?? data/backtest_engine_candidates/prototype_plans.json
+?? docs/BACKTEST_PROTOTYPE_ISOLATION_PLAN.md
+?? docs/modules/phase_6b_backtest_prototype_isolation/
+?? src/quantpilot_core/backtest_engines/prototype_loader.py
+?? src/quantpilot_core/backtest_engines/prototype_plan.py
+?? tests/backtest_engines/test_backtest_prototype_plans.py
+?? tests/backtest_engines/test_fixture_snapshot_export.py
+?? tools/manual_backtest_prototypes/
 ```
 
 ## Risks
 
-- Candidate metadata is preliminary and does not replace hands-on prototype evidence.
-- License, maintenance, Windows, dependency, and A-share fit risks need future refresh.
-- Live-trading-capable engines must remain isolated from early core.
-- Phase 6A does not prove any engine can support realistic A-share backtesting.
+- Prototype plans are not evidence from actual engine runs.
+- Future Phase 6C prototypes must remain isolated and manual-only.
+- Live-trading-capable frameworks must not create broker/live/order paths.
+- Fake fixture compatibility does not prove realistic A-share backtest readiness.
 
 ## Recommended Next Step
 
-ChatGPT should perform Phase 6A closure review before Phase 6B begins.
+ChatGPT should perform Phase 6B closure review before Phase 6C begins.
