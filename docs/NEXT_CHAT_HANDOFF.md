@@ -6,22 +6,21 @@ QuantPilot-AI 2.0 is an open-source-first, adapter-first, contract-first, A-shar
 
 ## Current Phase
 
-Phase 5: A-share market rule foundation, implemented by Codex and pending ChatGPT closure review.
+Phase 6A: backtest engine evaluation foundation, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
-Step 0A through Phase 4B are completed.
+Step 0A through Phase 5 are completed.
 
-Phase 5 created:
+Phase 6A created:
 
-- `src/quantpilot_core/market_rules/types.py`
-- `src/quantpilot_core/market_rules/profile.py`
-- `src/quantpilot_core/market_rules/a_share.py`
-- `data/market_rule_profiles/a_share_basic_v0_1.json`
-- market rule profile tests
-- A-share rule behavior tests
-- `docs/A_SHARE_MARKET_RULES.md`
-- Phase 5 module kickoff and closure draft docs
+- `src/quantpilot_core/backtest_engines/types.py`
+- `src/quantpilot_core/backtest_engines/evaluation.py`
+- `data/backtest_engine_candidates/backtest_engines.json`
+- metadata-level tests for backtest candidates
+- `docs/BACKTEST_ENGINE_EVALUATION.md`
+- `docs/BACKTEST_ENGINE_CANDIDATES.md`
+- Phase 6A module kickoff and closure draft docs
 
 ## Current Prohibitions
 
@@ -29,24 +28,23 @@ Phase 5 created:
 - do not call external APIs
 - do not install packages
 - do not import external frameworks
-- do not implement broker, live trading, or real order submission paths
-- do not run backtests
-- do not implement strategy, alpha/factor, portfolio, model, or agent workflows
+- do not implement backtesting
+- do not implement strategy, alpha/factor, portfolio, model, broker, live order, or agent workflows
 - do not mark anything trading-ready
 - do not claim profitability
 
 ## Next Recommended Step
 
-ChatGPT should perform Phase 5 closure review.
+ChatGPT should perform Phase 6A closure review.
 
-Do not move to Phase 6 until approved.
+Do not move to Phase 6B until approved.
 
 ## Key Decisions
 
-- Market rule profiles are configurable and source-versioned.
-- Current profile values are provisional and manual-review-required.
-- Official SSE/SZSE/BSE rules must be refreshed before real use.
-- Fee, slippage, corporate action, and special-case handling remains deferred.
+- Backtest engine selection remains open-source-first, adapter-first, contract-first, A-share-first, and evidence-gated.
+- No framework was installed or selected.
+- Live-trading-capable engines are high-risk and must remain isolated from early core.
+- Future integration must happen through adapters and contract tests.
 - Codex is not the project architect.
 
 ## Role Split

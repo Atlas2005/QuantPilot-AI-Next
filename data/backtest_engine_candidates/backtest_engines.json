@@ -1,0 +1,123 @@
+[
+  {
+    "name": "Qlib",
+    "category": "ml_research_platform",
+    "integration_policy": "prototype_later",
+    "readiness_status": "metadata_reviewed",
+    "license_risk": "medium",
+    "live_trading_risk": "medium",
+    "a_share_fit_risk": "medium",
+    "windows_risk": "medium",
+    "dependency_risk": "high",
+    "notes": "Good AI/ML research candidate, not selected as production engine. Requires prototype and adapter boundary review."
+  },
+  {
+    "name": "LEAN",
+    "category": "full_trading_platform",
+    "integration_policy": "borrow_architecture_only",
+    "readiness_status": "metadata_reviewed",
+    "license_risk": "medium",
+    "live_trading_risk": "high",
+    "a_share_fit_risk": "high",
+    "windows_risk": "medium",
+    "dependency_risk": "high",
+    "notes": "Powerful engine but live trading capability must remain isolated. Architecture reference only in Phase 6A."
+  },
+  {
+    "name": "vectorbt",
+    "category": "vectorized_research",
+    "integration_policy": "prototype_later",
+    "readiness_status": "metadata_reviewed",
+    "license_risk": "medium",
+    "live_trading_risk": "medium",
+    "a_share_fit_risk": "medium",
+    "windows_risk": "medium",
+    "dependency_risk": "medium",
+    "notes": "Fast research candidate, must evaluate A-share market rule fit before any adapter review."
+  },
+  {
+    "name": "Backtrader",
+    "category": "event_driven",
+    "integration_policy": "prototype_later",
+    "readiness_status": "metadata_reviewed",
+    "license_risk": "medium",
+    "live_trading_risk": "high",
+    "a_share_fit_risk": "medium",
+    "windows_risk": "medium",
+    "dependency_risk": "medium",
+    "notes": "Event-driven backtesting candidate with live trading and broker-related capabilities, must isolate."
+  },
+  {
+    "name": "RQAlpha",
+    "category": "a_share_oriented",
+    "integration_policy": "prototype_later",
+    "readiness_status": "metadata_reviewed",
+    "license_risk": "medium",
+    "live_trading_risk": "medium",
+    "a_share_fit_risk": "medium",
+    "windows_risk": "medium",
+    "dependency_risk": "medium",
+    "notes": "Potentially relevant for China market, requires license review and maintenance review."
+  },
+  {
+    "name": "vn.py / VeighNa",
+    "category": "full_trading_platform",
+    "integration_policy": "borrow_architecture_only",
+    "readiness_status": "metadata_reviewed",
+    "license_risk": "medium",
+    "live_trading_risk": "high",
+    "a_share_fit_risk": "medium",
+    "windows_risk": "medium",
+    "dependency_risk": "high",
+    "notes": "Trading system architecture reference, not early dependency. Live trading and broker capabilities must remain outside core."
+  },
+  {
+    "name": "Zipline-reloaded",
+    "category": "event_driven",
+    "integration_policy": "prototype_later",
+    "readiness_status": "metadata_reviewed",
+    "license_risk": "medium",
+    "live_trading_risk": "medium",
+    "a_share_fit_risk": "high",
+    "windows_risk": "medium",
+    "dependency_risk": "medium",
+    "notes": "Requires maintenance, compatibility, and A-share rule-fit review before any prototype."
+  },
+  {
+    "name": "NautilusTrader",
+    "category": "full_trading_platform",
+    "integration_policy": "borrow_architecture_only",
+    "readiness_status": "metadata_reviewed",
+    "license_risk": "medium",
+    "live_trading_risk": "high",
+    "a_share_fit_risk": "high",
+    "windows_risk": "medium",
+    "dependency_risk": "high",
+    "notes": "Advanced trading engine candidate and likely too heavy for early stage. Live trading capability must remain isolated."
+  },
+  {
+    "name": "backtesting.py",
+    "category": "lightweight_educational",
+    "integration_policy": "prototype_later",
+    "readiness_status": "metadata_reviewed",
+    "license_risk": "medium",
+    "live_trading_risk": "low",
+    "a_share_fit_risk": "high",
+    "windows_risk": "medium",
+    "dependency_risk": "medium",
+    "notes": "Simple baseline candidate only. Needs A-share realism review before any prototype."
+  },
+  {
+    "name": "bt",
+    "category": "lightweight_educational",
+    "integration_policy": "prototype_later",
+    "readiness_status": "metadata_reviewed",
+    "license_risk": "medium",
+    "live_trading_risk": "low",
+    "a_share_fit_risk": "high",
+    "windows_risk": "medium",
+    "dependency_risk": "medium",
+    "notes": "Simple portfolio/backtest baseline candidate only. Needs A-share realism review before any prototype."
+  }
+]
+

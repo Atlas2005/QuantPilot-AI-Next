@@ -92,3 +92,12 @@
 - Fee, slippage, corporate action, and special-case handling remains deferred.
 - No broker or execution path exists.
 - No backtest engine exists.
+
+## Phase 6A Decisions
+
+- Phase 6A creates evaluation metadata only.
+- No backtest framework is installed.
+- No final backtest engine selection is made.
+- Live-trading-capable engines must be isolated from early core.
+- Future engine integration must happen through adapters and contract tests.
+- Phase 6A does not run prototypes or backtests.
