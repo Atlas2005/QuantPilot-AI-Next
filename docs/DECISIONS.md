@@ -191,3 +191,12 @@
 - Factor candidates are not alpha evidence.
 - No factor is validated or trading-ready.
 - No strategy tournament is created.
+
+## Phase 7D Decisions
+
+- Phase 7D creates external analytics preflight only.
+- Python standard library is the correct runtime for this module.
+- No Alphalens, quantstats, empyrical, or Qlib package is installed.
+- External analytics require larger real data and evidence gates.
+- No external library can substitute for OOS, walk-forward, transaction costs, A-share execution rules, and paper feedback.
+- No strategy tournament is created.

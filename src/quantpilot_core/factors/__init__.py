@@ -6,6 +6,16 @@ from quantpilot_core.factors.evaluation import (
     rank_values,
     simple_rank_correlation,
 )
+from quantpilot_core.factors.external_analytics_preflight import (
+    AnalyticsCandidateType,
+    AnalyticsIntegrationPolicy,
+    AnalyticsRiskLevel,
+    ExternalAnalyticsCandidate,
+    load_external_analytics_preflight,
+    summarize_external_analytics_preflight,
+    validate_external_analytics_candidate,
+    validate_external_analytics_preflight,
+)
 from quantpilot_core.factors.candidate_library import (
     FactorCandidateRecord,
     load_factor_candidates,
@@ -41,6 +51,10 @@ from quantpilot_core.factors.validation_metrics import (
 
 __all__ = [
     "EvidenceQuality",
+    "AnalyticsCandidateType",
+    "AnalyticsIntegrationPolicy",
+    "AnalyticsRiskLevel",
+    "ExternalAnalyticsCandidate",
     "FactorCategory",
     "FactorCandidateRecord",
     "FactorDefinition",
@@ -62,10 +76,14 @@ __all__ = [
     "compute_toy_information_coefficient",
     "compute_toy_volume_change_1d",
     "evaluate_factor_against_forward_returns",
+    "load_external_analytics_preflight",
     "load_factor_candidates",
     "rank_values",
     "simple_rank_correlation",
     "summarize_factor_candidates",
+    "summarize_external_analytics_preflight",
+    "validate_external_analytics_candidate",
+    "validate_external_analytics_preflight",
     "validate_factor_candidate",
     "validate_factor_candidates",
 ]

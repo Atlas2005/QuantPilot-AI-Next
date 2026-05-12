@@ -48,6 +48,12 @@ Phase 7B metrics are evidence gates for Phase 7C candidates.
 
 Adding more factor candidates does not bypass validation requirements. Every candidate remains toy or not evaluated until it passes larger-data checks, OOS validation, walk-forward validation, transaction cost review, A-share execution constraints, capacity checks, and paper feedback.
 
+## Phase 7D External Analytics Preflight
+
+External analytics remain deferred.
+
+Alphalens-like tools require real factor and forward-return panels. quantstats and empyrical require meaningful return streams. No external analytics output exists yet.
+
 ## Current Limitations
 
 - fake fixture only

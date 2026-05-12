@@ -6,19 +6,21 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-Phase 7C: factor candidate library foundation, implemented by Codex and pending ChatGPT closure review.
+Phase 7D: external analytics preflight, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
-Step 0A through Phase 7B are completed.
+Step 0A through Phase 7C are completed.
 
-Phase 7B factor validation metrics foundation is completed and pushed.
+Phase 7C factor candidate library foundation is completed and pushed.
 
-Phase 7C adds conservative factor candidate metadata, toy candidate factor computations, docs, and tests.
+Phase 7D adds external analytics preflight metadata, standard-library validation helpers, docs, and tests for Alphalens, quantstats, empyrical, Qlib, and related candidates.
 
 The repository is still not trading-ready.
 
 No real alpha is proven.
+
+No external analytics package is installed.
 
 No final backtest engine is selected.
 
@@ -34,11 +36,12 @@ No broker/order/live path exists.
 - do not call external APIs
 - do not install or uninstall packages
 - do not add external analytics dependencies to `pyproject.toml`
-- do not claim candidate factors are alpha evidence
+- do not run factor tear sheets or portfolio reports
+- do not claim external analytics output exists
 - do not claim statistical significance
 - do not run real backtests
 - do not implement strategy tournament
-- do not implement production backtest adapters
+- do not implement production adapters
 - do not implement model, broker, live order, or agent workflows
 - do not mark anything trading-ready
 - do not claim profitability
@@ -46,4 +49,4 @@ No broker/order/live path exists.
 
 ## Next Expected Action
 
-ChatGPT should perform Phase 7C module closure review. Do not move to external analytics integration, larger real-data validation, strategy tournament, or real alpha claims until approved.
+ChatGPT should perform Phase 7D module closure review. Do not move to external package installation, larger real-data validation, strategy tournament, or real alpha claims until approved.

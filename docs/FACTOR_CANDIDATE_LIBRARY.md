@@ -38,6 +38,12 @@ Future phases may evaluate:
 
 Any future integration must pass ChatGPT review, dependency review, license/commercial review, adapter boundaries, and evidence gates.
 
+## Phase 7D External Analytics Preflight
+
+Factor candidates must pass validation policy before external analytics can be meaningful.
+
+External analytics preflight does not validate candidates. It only records tool roles, risks, and future prototype boundaries.
+
 ## Next Likely Phases
 
 - Phase 7D external analytics preflight

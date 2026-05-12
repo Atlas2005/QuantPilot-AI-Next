@@ -46,6 +46,12 @@ Phase 7C adds conservative factor candidate metadata and toy computations.
 
 The candidates are metadata and local toy calculations only. No factor candidate may claim real alpha, statistical significance, profitability, or trading readiness.
 
+## Phase 7D External Analytics Preflight
+
+External analytics tools are candidates, not proof.
+
+No tool can replace data quality, OOS validation, walk-forward validation, transaction costs, A-share execution realism, and paper feedback.
+
 ## Why No External Analytics Yet
 
 Phase 7A does not integrate:
