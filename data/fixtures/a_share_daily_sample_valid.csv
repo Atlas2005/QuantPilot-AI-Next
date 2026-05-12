@@ -1,0 +1,8 @@
+symbol,trade_date,open,high,low,close,volume,amount,adjustment,asset_type
+000001.SZ,2024-01-02,10.00,10.50,9.90,10.20,100000,1020000,qfq,a_share_stock
+000001.SZ,2024-01-03,10.20,10.80,10.10,10.60,120000,1272000,qfq,a_share_stock
+000001.SZ,2024-01-04,10.60,10.70,10.30,10.40,90000,936000,qfq,a_share_stock
+600000.SH,2024-01-02,8.00,8.20,7.90,8.10,200000,1620000,unknown,a_share_stock
+600000.SH,2024-01-03,8.10,8.30,8.00,8.25,210000,1732500,unknown,a_share_stock
+600000.SH,2024-01-04,8.25,8.40,8.10,8.30,190000,1577000,unknown,a_share_stock
+

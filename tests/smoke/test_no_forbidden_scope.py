@@ -66,6 +66,11 @@ FORBIDDEN_PATTERNS = [
     "execute_order(",
     "enable_live_trading(",
     "connect_broker(",
+    "requests.",
+    "urllib.request",
+    "http.client",
+    "api_key",
+    "access_token",
 ]
 
 

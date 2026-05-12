@@ -6,7 +6,7 @@ QuantPilot-AI 2.0 is an open-source-first, adapter-first, contract-first, A-shar
 
 ## Current Phase
 
-Phase 1.1: candidate registry refresh patch, implemented by Codex and pending ChatGPT closure review.
+Phase 3: data contracts and local fixtures, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
@@ -16,45 +16,48 @@ Step 0B clean skeleton and minimal CI was completed.
 
 Phase 1 candidate registry was completed.
 
-Phase 2 core contracts was completed and pushed.
+Phase 1.1 candidate registry refresh was completed.
 
-Phase 1.1 added:
+Phase 2 core contracts was completed.
 
-- terminal/product benchmark schema fields
-- professional terminal/product benchmark records
-- open-source terminal/dashboard candidate records
-- license and commercial-risk documentation
-- terminal benchmark tests
+Phase 3 created:
+
+- `src/quantpilot_core/data/types.py`
+- `src/quantpilot_core/data/schema.py`
+- `src/quantpilot_core/data/validation.py`
+- `src/quantpilot_core/data/csv_loader.py`
+- `src/quantpilot_core/data/fixtures.py`
+- fake local CSV fixtures under `data/fixtures/`
+- tests under `tests/data/`
+- `docs/DATA_CONTRACTS.md`
+- Phase 3 module kickoff and closure draft docs
 
 ## Current Prohibitions
 
-- do not implement trading logic
 - do not fetch market data
 - do not call external APIs
-- do not install or import external frameworks
-- do not clone or copy terminal/dashboard projects
-- do not create dashboard or terminal implementation
-- do not create broker/live/order paths
-- do not implement backtesting, model training, or agent orchestration
+- do not install new packages
+- do not import external data, quant, validation, storage, or agent frameworks
+- do not implement data-source adapters
+- do not run backtests
+- do not implement trading, strategy, factor, portfolio, model, broker, live order, or agent workflows
 - do not mark anything trading-ready
 - do not claim profitability
-- do not make final product or terminal architecture selections
+- do not copy old v2 source code
 
 ## Next Recommended Step
 
-ChatGPT should perform Phase 1.1 closure review.
+ChatGPT should perform Phase 3 closure review.
 
-After approval: commit/push, then Phase 3 kickoff review.
-
-Do not move to Phase 3 until approved.
+Do not move to Phase 4 until approved.
 
 ## Key Decisions
 
-- Professional terminals are benchmarks, not dependencies.
-- Proprietary terminals are reference-only.
-- FinceptTerminal requires license review before any cloning, copying, integration, commercial use, or derivative work.
-- Terminal-like projects are not automatically safe to integrate.
-- Future module kickoff reviews must include both open-source search and professional benchmark scan.
+- Local fixtures come before real data sources.
+- The daily OHLCV schema is provisional.
+- Validation is shape-only and does not check real market truth.
+- No external validation/storage/data framework is integrated.
+- Codex is not the project architect.
 
 ## Role Split
 

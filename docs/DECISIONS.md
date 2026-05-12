@@ -54,3 +54,12 @@
 - The registry must include commercial/product benchmarks, not only GitHub libraries.
 - Future module kickoff reviews must include both open-source search and professional benchmark scan.
 - Phase 1.1 makes no final terminal, dashboard, or product architecture selection.
+
+## Phase 3 Decisions
+
+- Phase 3 uses local fixtures only.
+- Phase 3 adds no pandas, Polars, DuckDB, PyArrow, Pandera, or Great Expectations.
+- Phase 3 uses no real market data.
+- Phase 3 creates no data-source adapters.
+- A-share daily OHLCV schema is provisional and will be refined before prototypes.
+- Phase 3 validation checks shape only and does not validate real market truth.

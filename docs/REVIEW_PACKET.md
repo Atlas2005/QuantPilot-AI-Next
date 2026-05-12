@@ -2,19 +2,25 @@
 
 ## Task Name
 
-Phase 1.1: Candidate Registry Refresh Patch.
+Phase 3: Data Contracts and Local Fixtures.
 
 ## Changed Files
 
-- `src/quantpilot_core/registry/candidate.py`
-- `src/quantpilot_core/registry/candidate_loader.py`
-- `data/open_source_candidates/candidates.json`
-- `tests/registry/test_candidate_registry.py`
-- `tests/registry/test_terminal_benchmarks.py`
-- `docs/OPEN_SOURCE_CANDIDATE_REGISTRY.md`
-- `docs/OPEN_SOURCE_CANDIDATE_UNIVERSE.md`
-- `docs/modules/phase_1_1_candidate_registry_refresh/MODULE_KICKOFF_REVIEW.md`
-- `docs/modules/phase_1_1_candidate_registry_refresh/MODULE_CLOSURE_DRAFT.md`
+- `docs/modules/phase_3_data_contracts_fixtures/MODULE_KICKOFF_REVIEW.md`
+- `docs/modules/phase_3_data_contracts_fixtures/MODULE_CLOSURE_DRAFT.md`
+- `docs/DATA_CONTRACTS.md`
+- `src/quantpilot_core/data/__init__.py`
+- `src/quantpilot_core/data/types.py`
+- `src/quantpilot_core/data/schema.py`
+- `src/quantpilot_core/data/validation.py`
+- `src/quantpilot_core/data/csv_loader.py`
+- `src/quantpilot_core/data/fixtures.py`
+- `data/fixtures/a_share_daily_sample_valid.csv`
+- `data/fixtures/a_share_daily_sample_invalid.csv`
+- `tests/data/test_daily_bar_schema.py`
+- `tests/data/test_daily_bar_validation.py`
+- `tests/data/test_csv_loader.py`
+- `tests/smoke/test_no_forbidden_scope.py`
 - `docs/CURRENT_PROJECT_STATE.md`
 - `docs/DECISIONS.md`
 - `docs/NEXT_CHAT_HANDOFF.md`
@@ -22,14 +28,15 @@ Phase 1.1: Candidate Registry Refresh Patch.
 
 ## Safety Checks
 
-- `src/` changed: Yes. Registry metadata schema and validation only.
-- `tests/` changed: Yes. Registry and terminal benchmark tests only.
-- Data registry changed: Yes. Static candidate records only.
+- `src/` changed: Yes. Data schema, local CSV loader, fixture helper, and shape validation only.
+- `tests/` changed: Yes. Data contract and fixture tests only.
+- Data fixtures changed: Yes. Fake local CSV fixtures only.
 - Dependencies changed: No.
 - Packages installed: No.
 - Market data/API used: No.
+- External data-source adapters implemented: No.
 - Broker/live/order path created: No.
-- Backtest/model/agent/terminal/dashboard implementation added: No.
+- Backtest/model/agent implementation added: No.
 - External frameworks installed/imported: No.
 - Final technical selections made: No.
 
@@ -47,9 +54,14 @@ Listing 'src\\quantpilot_ai_next.egg-info'...
 Listing 'src\\quantpilot_core'...
 Listing 'src\\quantpilot_core\\config'...
 Listing 'src\\quantpilot_core\\contracts'...
+Listing 'src\\quantpilot_core\\data'...
+Compiling 'src\\quantpilot_core\\data\\__init__.py'...
+Compiling 'src\\quantpilot_core\\data\\csv_loader.py'...
+Compiling 'src\\quantpilot_core\\data\\fixtures.py'...
+Compiling 'src\\quantpilot_core\\data\\schema.py'...
+Compiling 'src\\quantpilot_core\\data\\types.py'...
+Compiling 'src\\quantpilot_core\\data\\validation.py'...
 Listing 'src\\quantpilot_core\\registry'...
-Compiling 'src\\quantpilot_core\\registry\\candidate.py'...
-Compiling 'src\\quantpilot_core\\registry\\candidate_loader.py'...
 Listing 'src\\quantpilot_core\\safety'...
 ```
 
@@ -58,44 +70,44 @@ Listing 'src\\quantpilot_core\\safety'...
 Result: passed.
 
 ```text
-collected 25 items
+collected 39 items
 
-tests\\contracts\\test_contract_skeleton.py ..                             [  8%]
-tests\\contracts\\test_core_contracts.py ......                            [ 32%]
-tests\\registry\\test_candidate_registry.py .......                        [ 60%]
-tests\\registry\\test_terminal_benchmarks.py ......                        [ 84%]
-tests\\smoke\\test_imports.py .                                            [ 88%]
-tests\\smoke\\test_no_forbidden_scope.py .                                 [ 92%]
+tests\\contracts\\test_contract_skeleton.py ..                             [  5%]
+tests\\contracts\\test_core_contracts.py ......                            [ 20%]
+tests\\data\\test_csv_loader.py ...                                        [ 28%]
+tests\\data\\test_daily_bar_schema.py ....                                 [ 38%]
+tests\\data\\test_daily_bar_validation.py .......                          [ 56%]
+tests\\registry\\test_candidate_registry.py .......                        [ 74%]
+tests\\registry\\test_terminal_benchmarks.py ......                        [ 89%]
+tests\\smoke\\test_imports.py .                                            [ 92%]
+tests\\smoke\\test_no_forbidden_scope.py .                                 [ 94%]
 tests\\smoke\\test_safety_flags.py ..                                      [100%]
 
-============================= 25 passed in 0.06s ==============================
+============================= 39 passed in 0.07s ==============================
 ```
 
 ## Git Status
 
 ```text
 ## main...origin/main
- M data/open_source_candidates/candidates.json
  M docs/CURRENT_PROJECT_STATE.md
  M docs/DECISIONS.md
  M docs/NEXT_CHAT_HANDOFF.md
- M docs/OPEN_SOURCE_CANDIDATE_REGISTRY.md
- M docs/OPEN_SOURCE_CANDIDATE_UNIVERSE.md
  M docs/REVIEW_PACKET.md
- M src/quantpilot_core/registry/candidate.py
- M src/quantpilot_core/registry/candidate_loader.py
- M tests/registry/test_candidate_registry.py
-?? docs/modules/phase_1_1_candidate_registry_refresh/
-?? tests/registry/test_terminal_benchmarks.py
+ M tests/smoke/test_no_forbidden_scope.py
+?? data/fixtures/
+?? docs/DATA_CONTRACTS.md
+?? docs/modules/phase_3_data_contracts_fixtures/
+?? src/quantpilot_core/data/
+?? tests/data/
 ```
 
 ## Risks
 
-- Terminal benchmark records are preliminary and reference-only.
-- Proprietary terminals must not be treated as integration targets.
-- FinceptTerminal and other terminal-like projects require explicit license review before any cloning, copying, integration, commercial use, or derivative work.
-- Registry fields do not replace future legal, commercial, or architecture review.
+- Daily OHLCV schema is provisional and may change before data-source prototypes.
+- Validation is local shape validation only; it does not check exchange calendars, real trading days, suspensions, corporate actions, or vendor adjustment correctness.
+- Fixtures are fake examples and must not be treated as market data.
 
 ## Recommended Next Step
 
-ChatGPT should perform Phase 1.1 closure review before Phase 3 begins.
+ChatGPT should perform Phase 3 closure review before Phase 4 begins.
