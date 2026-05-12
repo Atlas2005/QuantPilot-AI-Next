@@ -2,23 +2,17 @@
 
 ## Task Name
 
-Phase 6B: Backtest Prototype Isolation Plan.
+Phase 6C-1: Manual vectorbt Prototype Run.
 
 ## Changed Files
 
-- `docs/modules/phase_6b_backtest_prototype_isolation/MODULE_KICKOFF_REVIEW.md`
-- `docs/modules/phase_6b_backtest_prototype_isolation/MODULE_CLOSURE_DRAFT.md`
+- `docs/modules/phase_6c_1_vectorbt_manual_prototype/MODULE_KICKOFF_REVIEW.md`
+- `docs/modules/phase_6c_1_vectorbt_manual_prototype/MODULE_CLOSURE_DRAFT.md`
+- `tools/manual_backtest_prototypes/vectorbt_local_fixture_probe.py`
+- `tools/manual_backtest_prototypes/summarize_vectorbt_probe.py`
+- `docs/BACKTEST_PROTOTYPE_RESULTS.md`
 - `docs/BACKTEST_PROTOTYPE_ISOLATION_PLAN.md`
-- `docs/BACKTEST_ENGINE_EVALUATION.md`
 - `docs/BACKTEST_ENGINE_CANDIDATES.md`
-- `src/quantpilot_core/backtest_engines/prototype_plan.py`
-- `src/quantpilot_core/backtest_engines/prototype_loader.py`
-- `src/quantpilot_core/backtest_engines/__init__.py`
-- `data/backtest_engine_candidates/prototype_plans.json`
-- `tools/manual_backtest_prototypes/README.md`
-- `tools/manual_backtest_prototypes/export_phase3_fixture_snapshot.py`
-- `tests/backtest_engines/test_backtest_prototype_plans.py`
-- `tests/backtest_engines/test_fixture_snapshot_export.py`
 - `docs/CURRENT_PROJECT_STATE.md`
 - `docs/DECISIONS.md`
 - `docs/NEXT_CHAT_HANDOFF.md`
@@ -26,15 +20,19 @@ Phase 6B: Backtest Prototype Isolation Plan.
 
 ## Safety Checks
 
-- `src/` changed: Yes. Prototype plan metadata loader and validators only.
-- `tools/` changed: Yes. Manual prototype docs and fake fixture snapshot helper only.
-- Prototype plans changed: Yes. Added static prototype plan JSON.
-- Dependencies changed: No.
-- Packages installed: No.
+- `src/` changed: No.
+- `tools/` changed: Yes. Manual vectorbt probe scripts only.
+- Dependencies changed: Project dependency files unchanged; local Python environment changed by manual prototype install.
+- Packages installed: Yes, manual local install only.
+- Exact packages installed by pip: `vectorbt==1.0.0`, `anywidget==0.11.0`, `asttokens==3.0.1`, `comm==0.2.3`, `dateparser==1.4.0`, `dill==0.4.1`, `executing==2.2.1`, `imageio==2.37.3`, `ipython==9.13.0`, `ipython-pygments-lexers==1.1.1`, `ipywidgets==8.1.8`, `jedi==0.20.0`, `jupyterlab_widgets==3.0.16`, `llvmlite==0.47.0`, `matplotlib-inline==0.2.2`, `mypy_extensions==1.1.0`, `numba==0.65.1`, `pandas==2.3.3`, `parso==0.8.7`, `plotly==6.7.0`, `prompt_toolkit==3.0.52`, `psutil==7.2.2`, `psygnal==0.15.1`, `pure-eval==0.2.3`, `pytz==2026.2`, `regex==2026.5.9`, `schedule==1.2.2`, `stack_data==0.6.3`, `traitlets==5.15.0`, `tzlocal==5.3.1`, `wcwidth==0.7.0`, `widgetsnbextension==4.0.15`.
+- `pyproject.toml` changed: No.
 - Market data/API used: No.
+- Fake fixture only used: Yes, `data/fixtures/a_share_daily_sample_valid.csv`.
+- `local_artifacts/` created: Yes.
+- Raw artifacts are gitignored: Yes, `local_artifacts/` is ignored.
 - Broker/live/order submission path created: No.
 - Real backtest/model/agent implementation added: No.
-- External frameworks installed/imported: No.
+- External frameworks installed/imported in `src/`: No.
 - Final technical selections made: No.
 
 ## Validation Commands and Results
@@ -43,78 +41,79 @@ Phase 6B: Backtest Prototype Isolation Plan.
 
 Result: passed.
 
-Summary:
-
-```text
-Listing 'src'...
-Listing 'src\\quantpilot_ai_next.egg-info'...
-Listing 'src\\quantpilot_core'...
-Listing 'src\\quantpilot_core\\backtest_engines'...
-Listing 'src\\quantpilot_core\\config'...
-Listing 'src\\quantpilot_core\\contracts'...
-Listing 'src\\quantpilot_core\\data'...
-Listing 'src\\quantpilot_core\\data_sources'...
-Listing 'src\\quantpilot_core\\market_rules'...
-Listing 'src\\quantpilot_core\\registry'...
-Listing 'src\\quantpilot_core\\safety'...
-```
-
 `python -m pytest`
 
 Result: passed.
 
 ```text
 collected 90 items
-
-tests\\backtest_engines\\test_backtest_engine_candidates.py ..........     [ 11%]
-tests\\backtest_engines\\test_backtest_prototype_plans.py ...........      [ 23%]
-tests\\backtest_engines\\test_fixture_snapshot_export.py ...               [ 26%]
-tests\\contracts\\test_contract_skeleton.py ..                             [ 28%]
-tests\\contracts\\test_core_contracts.py ......                            [ 35%]
-tests\\data\\test_csv_loader.py ...                                        [ 38%]
-tests\\data\\test_daily_bar_schema.py ....                                 [ 43%]
-tests\\data\\test_daily_bar_validation.py .......                          [ 51%]
-tests\\data_sources\\test_field_mapping.py ......                          [ 57%]
-tests\\data_sources\\test_prototype_plan.py ....                           [ 62%]
-tests\\market_rules\\test_a_share_market_rules.py ...........              [ 74%]
-tests\\market_rules\\test_market_rule_profile.py ......                    [ 81%]
-tests\\registry\\test_candidate_registry.py .......                        [ 88%]
-tests\\registry\\test_terminal_benchmarks.py ......                        [ 95%]
-tests\\smoke\\test_imports.py .                                            [ 96%]
-tests\\smoke\\test_no_forbidden_scope.py .                                 [ 97%]
-tests\\smoke\\test_safety_flags.py ..                                      [100%]
-
-============================= 90 passed in 0.14s ==============================
+90 passed in 0.15s
 ```
 
-## Git Status
+`git status -sb`
+
+Result:
 
 ```text
 ## main...origin/main
  M docs/BACKTEST_ENGINE_CANDIDATES.md
- M docs/BACKTEST_ENGINE_EVALUATION.md
+ M docs/BACKTEST_PROTOTYPE_ISOLATION_PLAN.md
  M docs/CURRENT_PROJECT_STATE.md
  M docs/DECISIONS.md
  M docs/NEXT_CHAT_HANDOFF.md
  M docs/REVIEW_PACKET.md
- M src/quantpilot_core/backtest_engines/__init__.py
-?? data/backtest_engine_candidates/prototype_plans.json
-?? docs/BACKTEST_PROTOTYPE_ISOLATION_PLAN.md
-?? docs/modules/phase_6b_backtest_prototype_isolation/
-?? src/quantpilot_core/backtest_engines/prototype_loader.py
-?? src/quantpilot_core/backtest_engines/prototype_plan.py
-?? tests/backtest_engines/test_backtest_prototype_plans.py
-?? tests/backtest_engines/test_fixture_snapshot_export.py
-?? tools/manual_backtest_prototypes/
+?? docs/BACKTEST_PROTOTYPE_RESULTS.md
+?? docs/modules/phase_6c_1_vectorbt_manual_prototype/
+?? tools/manual_backtest_prototypes/summarize_vectorbt_probe.py
+?? tools/manual_backtest_prototypes/vectorbt_local_fixture_probe.py
 ```
+
+## vectorbt Prototype Summary
+
+Pre-install probe:
+
+- Command: `python tools/manual_backtest_prototypes/vectorbt_local_fixture_probe.py`
+- Result: clean missing-package failure captured in ignored local summary.
+- Error recorded: `vectorbt_or_pandas_not_installed:No module named 'vectorbt'`.
+
+Manual install:
+
+- Command: `python -m pip install vectorbt`
+- Result: succeeded after escalated network permission.
+- Project dependency files changed: no.
+
+Post-install probe:
+
+- Command: `python tools/manual_backtest_prototypes/vectorbt_local_fixture_probe.py`
+- Result: succeeded.
+- Summary command: `python tools/manual_backtest_prototypes/summarize_vectorbt_probe.py`
+- Provider: `vectorbt`.
+- Fake fixture used: yes.
+- Symbol: `000001.SZ`.
+- Row count: 3.
+- vectorbt importable: true.
+- Prototype ran: true.
+- Output metrics available: true.
+- Metric key count: 28.
+- Conclusion: vectorbt consumed the fake fixture shape and produced toy metrics, but A-share realism remains unproven.
+
+Unsupported A-share rules remain:
+
+- T+1 not proven.
+- Limit-up/limit-down not proven.
+- Suspension handling not proven.
+- ST/delisting special cases not proven.
+- Liquidity constraints not proven.
+- Realistic fees/slippage not proven.
 
 ## Risks
 
-- Prototype plans are not evidence from actual engine runs.
-- Future Phase 6C prototypes must remain isolated and manual-only.
-- Live-trading-capable frameworks must not create broker/live/order paths.
-- Fake fixture compatibility does not prove realistic A-share backtest readiness.
+- The manual install changed the local Python environment and downgraded an already-present `pandas` from `3.0.2` to `2.3.3`; future prototype runs should use an isolated environment.
+- vectorbt produced toy metrics only on fake data; this is not real backtest evidence.
+- A-share market rule fit remains unproven.
+- No production adapter exists.
+- No final backtest engine selection has been made.
 
 ## Recommended Next Step
 
-ChatGPT should perform Phase 6B closure review before Phase 6C begins.
+ChatGPT should perform Phase 6C-1 closure review before any Backtrader/RQAlpha prototype or vectorbt adapter work begins.

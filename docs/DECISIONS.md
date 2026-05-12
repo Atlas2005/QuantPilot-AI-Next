@@ -110,3 +110,12 @@
 - LEAN, vn.py / VeighNa, and NautilusTrader are deferred because live-trading and full-platform risks must remain isolated.
 - No framework is installed or selected in Phase 6B.
 - Phase 6B does not run backtests.
+
+## Phase 6C-1 Decisions
+
+- Phase 6C-1 tests vectorbt only.
+- Backtrader and RQAlpha remain deferred to later manual prototypes.
+- vectorbt is not a project dependency.
+- The vectorbt prototype result does not equal engine selection.
+- No vectorbt adapter exists yet.
+- The prototype used only the fake Phase 3 local fixture and did not prove A-share trading realism.

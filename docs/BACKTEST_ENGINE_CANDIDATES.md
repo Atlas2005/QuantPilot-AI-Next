@@ -18,7 +18,7 @@ data/backtest_engine_candidates/prototype_plans.json
 
 - Qlib: AI/ML research platform candidate; prototype later, not selected.
 - LEAN: full trading platform / architecture reference; live trading capability must remain isolated.
-- vectorbt: vectorized research candidate; must evaluate A-share market rule fit.
+- vectorbt: vectorized research candidate; Phase 6C-1 produced manual local-fixture shape-compatibility evidence, but no final selection has been made and A-share market rule fit remains unproven.
 - Backtrader: event-driven candidate; live-trading related capabilities must be isolated.
 - RQAlpha: potentially China-market relevant; requires license and maintenance review.
 - vn.py / VeighNa: trading system architecture reference; not an early dependency.

@@ -18,6 +18,16 @@ Future prototypes should run manually, outside CI, in isolated environments. Raw
 
 These are first-wave because they represent different useful categories: vectorized research, event-driven research, and China-market relevance.
 
+## Phase 6C-1 Result Reference
+
+Phase 6C-1 tested vectorbt first because it has a lower broker/live-trading surface than Backtrader and RQAlpha. The manual local-fixture probe showed that vectorbt can consume the fake Phase 3 daily OHLCV fixture and produce toy metrics, but it did not prove A-share realism, T+1 handling, limit-up/down behavior, suspension handling, liquidity realism, or production readiness.
+
+Detailed result summary lives in:
+
+```text
+docs/BACKTEST_PROTOTYPE_RESULTS.md
+```
+
 ## Second Wave
 
 Qlib is second-wave because it is more ML research platform than minimal backtest adapter.
@@ -45,4 +55,3 @@ Future prototype outputs should document:
 ## No Final Selection
 
 No engine is selected in Phase 6B. Any future integration must pass ChatGPT review, adapter boundaries, and contract tests.
-

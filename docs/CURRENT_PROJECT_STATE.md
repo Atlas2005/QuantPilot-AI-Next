@@ -6,23 +6,23 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-Phase 6B: backtest prototype isolation plan, implemented by Codex and pending ChatGPT closure review.
+Phase 6C-1: manual vectorbt local-fixture prototype, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
-Step 0A through Phase 6A are completed.
+Step 0A through Phase 6B are completed.
 
-Phase 6A backtest engine evaluation foundation is completed and pushed.
+Phase 6B backtest prototype isolation plan is completed and pushed.
 
-Phase 6B adds static prototype isolation plans, manual prototype documentation, and a fake Phase 3 fixture snapshot helper for future isolated experiments.
+Phase 6C-1 adds manual-only vectorbt probe scripts, module review records, and a documented prototype result using the fake Phase 3 local fixture.
 
 The repository is still not trading-ready.
 
-No backtest engine is selected.
+No final backtest engine is selected.
 
-No external backtest framework is installed.
+No production vectorbt adapter exists.
 
-No real backtest was run.
+No real market data was used.
 
 No broker/order/live path exists.
 
@@ -30,20 +30,13 @@ No broker/order/live path exists.
 
 - do not fetch market data
 - do not call external APIs
-- do not install packages
-- do not import external backtest, data, quant, validation, storage, or agent frameworks
-- do not implement backtesting
-- do not implement strategy logic
-- do not calculate alpha or factors
-- do not optimize portfolios
-- do not train models
-- do not implement broker, live trading, or real order submission paths
-- do not implement agent orchestration
+- do not add vectorbt or other prototype frameworks to project dependencies
+- do not implement production backtest adapters
+- do not implement strategy, alpha/factor, portfolio, model, broker, live order, or agent workflows
 - do not mark anything trading-ready
 - do not claim profitability
 - do not copy old v2 source code
 
 ## Next Expected Action
 
-ChatGPT should perform Phase 6B module closure review. Do not move to Phase 6C until approved.
-
+ChatGPT should perform Phase 6C-1 module closure review. Do not move to Backtrader, RQAlpha, or adapter implementation until approved.
