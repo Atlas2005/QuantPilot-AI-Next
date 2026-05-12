@@ -6,9 +6,9 @@ QuantPilot-AI 2.0 is planned as an open-source-first, adapter-first, contract-fi
 
 ## Current Phase
 
-The repository is in Phase 0A: planning package only.
+The repository is in Phase 0B: clean skeleton and minimal CI, pending ChatGPT closure review.
 
-No `src/` implementation, trading logic, data ingestion, backtest engine, model training, broker connection, live trading path, order execution path, or agent orchestration implementation should exist at this stage.
+The repository may contain a minimal `src` layout, placeholder contracts, placeholder registry, safety defaults, minimal tests, and CI. It must not contain trading logic, data ingestion, backtest engine implementation, model training, broker connection, live trading path, order execution path, or agent orchestration implementation.
 
 ## Legacy v2 Position
 
@@ -25,6 +25,8 @@ This project is not financial advice.
 No live trading, broker connection, or real order execution exists at this stage.
 
 No profitability claim may be made without clean data, realistic market rules, sample-out validation, walk-forward/OOS evidence, paper feedback, and risk-adjusted performance review.
+
+All safety defaults in the Phase 0B skeleton are false.
 
 ## Role Split
 

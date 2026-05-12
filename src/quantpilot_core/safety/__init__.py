@@ -1,0 +1,28 @@
+"""Safety defaults for QuantPilot-AI 2.0."""
+
+from quantpilot_core.safety.flags import (
+    AGENT_ORCHESTRATION_ALLOWED,
+    BACKTESTING_ALLOWED,
+    BROKER_CONNECTED,
+    EXECUTION_ALLOWED,
+    LIVE_TRADING,
+    MARKET_DATA_FETCH_ALLOWED,
+    MODEL_TRAINING_ALLOWED,
+    REAL_ORDER_SUBMISSION,
+    TRADING_READY,
+    get_safety_status,
+)
+
+__all__ = [
+    "AGENT_ORCHESTRATION_ALLOWED",
+    "BACKTESTING_ALLOWED",
+    "BROKER_CONNECTED",
+    "EXECUTION_ALLOWED",
+    "LIVE_TRADING",
+    "MARKET_DATA_FETCH_ALLOWED",
+    "MODEL_TRAINING_ALLOWED",
+    "REAL_ORDER_SUBMISSION",
+    "TRADING_READY",
+    "get_safety_status",
+]
+

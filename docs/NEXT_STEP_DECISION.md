@@ -2,27 +2,34 @@
 
 ## Current Decision
 
-Do not start implementation yet.
+Step 0B implementation is complete pending ChatGPT closure review.
 
 ## Recommended Next Step
 
-ChatGPT should review the Phase 0A planning package and decide whether to approve Phase 0B.
+ChatGPT should review the Phase 0B skeleton, validation results, and review packet.
 
-## Phase 0B Candidate Scope
+## Phase 1 Candidate Scope
 
-If approved, Phase 0B may create:
+If approved, Phase 1 may create:
 
-- clean repository skeleton
+- open-source candidate registry documentation or metadata
+- candidate classification workflow
+- no final framework selection
+- no framework installation
+- no framework integration
+
+## Step 0B Created
+
+- minimal `src` layout package
 - minimal CI
-- documentation validation checks
-- no trading logic
-- no market data
-- no broker path
-- no dependency installation unless explicitly approved
+- pytest-only dev dependency
+- placeholder contract
+- placeholder registry
+- false safety defaults
+- smoke and scope tests
 
 ## Blocked Until Review
 
-- source package creation
 - contracts implementation
 - adapter implementation
 - open-source framework selection

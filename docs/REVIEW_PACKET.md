@@ -2,81 +2,123 @@
 
 ## Task Name
 
-Planning Step 0A: QuantPilot-AI 2.0 planning package only.
+Step 0B: Clean Skeleton + Minimal CI.
 
 ## Changed Files
 
+- `.github/workflows/ci.yml`
+- `.gitignore`
+- `pyproject.toml`
 - `README.md`
-- `docs/PROJECT_POSITIONING.md`
-- `docs/STRATEGIC_HANDOFF.md`
-- `docs/OPEN_SOURCE_FIRST_POLICY.md`
-- `docs/MODULE_SELECTION_POLICY.md`
-- `docs/LANGUAGE_ARCHITECTURE.md`
-- `docs/DEPENDENCY_UPDATE_POLICY.md`
-- `docs/LEGACY_MIGRATION_POLICY.md`
-- `docs/OPEN_SOURCE_CANDIDATE_UNIVERSE.md`
-- `docs/QUANTPILOT_AI_2_0_ROADMAP.md`
-- `docs/SUCCESS_METRICS.md`
-- `docs/FIRST_30_DAYS_PLAN.md`
-- `docs/WORKFLOW_AUTOMATION_POLICY.md`
-- `docs/MODULE_GOVERNANCE_POLICY.md`
-- `docs/MODULE_REVIEW_TEMPLATE.md`
 - `docs/CURRENT_PROJECT_STATE.md`
 - `docs/DECISIONS.md`
 - `docs/NEXT_CHAT_HANDOFF.md`
 - `docs/NEXT_STEP_DECISION.md`
 - `docs/REVIEW_PACKET.md`
+- `docs/modules/phase_0b_skeleton/MODULE_KICKOFF_REVIEW.md`
+- `docs/modules/phase_0b_skeleton/MODULE_CLOSURE_DRAFT.md`
+- `src/quantpilot_core/__init__.py`
+- `src/quantpilot_core/contracts/__init__.py`
+- `src/quantpilot_core/contracts/base.py`
+- `src/quantpilot_core/registry/__init__.py`
+- `src/quantpilot_core/registry/base.py`
+- `src/quantpilot_core/safety/__init__.py`
+- `src/quantpilot_core/safety/flags.py`
+- `src/quantpilot_core/config/__init__.py`
+- `src/quantpilot_core/config/project.py`
+- `tests/__init__.py`
+- `tests/smoke/test_imports.py`
+- `tests/smoke/test_safety_flags.py`
+- `tests/contracts/test_contract_skeleton.py`
+- `tests/smoke/test_no_forbidden_scope.py`
 
 ## Safety Checks
 
-- `src/` changed: No. Step 0A contains no `src/` directory.
-- Dependencies changed: No.
-- Packages installed: No.
+- `src/` changed: Yes. Minimal Step 0B skeleton only.
+- `tests/` changed: Yes. Minimal smoke, safety, contract, and forbidden-scope tests only.
+- Dependencies changed: Yes. Runtime dependencies are empty; optional dev dependency is `pytest` only.
+- Packages installed: Yes, only via `python -m pip install -e ".[dev]"` after local pytest was unavailable.
 - Market data/API used: No.
 - Broker/live/order path created: No.
 - Backtest/model/agent implementation added: No.
 
 ## Validation Commands and Results
 
-`rg --files`
+`python -m compileall src`
 
-Result: only `README.md` and files under `docs/` are present.
+Result: passed.
 
-`git status -sb`
-
-Result:
+Summary:
 
 ```text
-## No commits yet on main...origin/main [gone]
-?? README.md
-?? docs/
+Listing 'src'...
+Listing 'src\\quantpilot_core'...
+Compiling 'src\\quantpilot_core\\__init__.py'...
+Listing 'src\\quantpilot_core\\config'...
+Compiling 'src\\quantpilot_core\\config\\__init__.py'...
+Compiling 'src\\quantpilot_core\\config\\project.py'...
+Listing 'src\\quantpilot_core\\contracts'...
+Compiling 'src\\quantpilot_core\\contracts\\__init__.py'...
+Compiling 'src\\quantpilot_core\\contracts\\base.py'...
+Listing 'src\\quantpilot_core\\registry'...
+Compiling 'src\\quantpilot_core\\registry\\__init__.py'...
+Compiling 'src\\quantpilot_core\\registry\\base.py'...
+Listing 'src\\quantpilot_core\\safety'...
+Compiling 'src\\quantpilot_core\\safety\\__init__.py'...
+Compiling 'src\\quantpilot_core\\safety\\flags.py'...
 ```
 
-`Test-Path .\src`
+`python -m pytest`
 
-Result: `False`
+Initial result: failed because local pytest was unavailable.
 
-`Test-Path .\tests`
+```text
+D:\\PYTHON\\python.exe: No module named pytest
+```
 
-Result: `False`
+`python -m pip install -e ".[dev]"`
 
-Dependency manifest check for `pyproject.toml`, `requirements.txt`, `package.json`, `poetry.lock`, `uv.lock`, `Pipfile`, `Pipfile.lock`, `environment.yml`, and `conda.yml`
+Result: passed. Installed editable project and pytest dev dependency only.
 
-Result: no files found.
+`python -m pytest`
+
+Result: passed.
+
+```text
+collected 6 items
+
+tests\\contracts\\test_contract_skeleton.py ..                             [ 33%]
+tests\\smoke\\test_imports.py .                                            [ 50%]
+tests\\smoke\\test_no_forbidden_scope.py .                                 [ 66%]
+tests\\smoke\\test_safety_flags.py ..                                      [100%]
+
+============================== 6 passed in 0.03s ==============================
+```
 
 ## Git Status
 
 ```text
-## No commits yet on main...origin/main [gone]
-?? README.md
-?? docs/
+## main...origin/main
+ M README.md
+ M docs/CURRENT_PROJECT_STATE.md
+ M docs/DECISIONS.md
+ M docs/NEXT_CHAT_HANDOFF.md
+ M docs/NEXT_STEP_DECISION.md
+ M docs/REVIEW_PACKET.md
+?? .github/
+?? .gitignore
+?? docs/modules/
+?? pyproject.toml
+?? src/
+?? tests/
 ```
 
 ## Risks
 
-- Step 0A records candidates and policies only; it intentionally does not make technical selections.
-- Phase 0B should not begin until ChatGPT closure review approves it.
+- Step 0B creates placeholders only; later phases still need ChatGPT-led architecture review.
+- `SimpleRegistry` is intentionally minimal and should not become a framework registry without Phase 1 review.
+- Safety flags are static defaults only, not a runtime permission system.
 
 ## Recommended Next Step
 
-ChatGPT should perform Step 0A closure review, then decide whether to approve Phase 0B: clean project skeleton and minimal CI.
+ChatGPT should perform Step 0B closure review and decide whether to revise Step 0B or approve moving to Phase 1: open-source candidate registry.

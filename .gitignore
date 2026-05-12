@@ -1,0 +1,29 @@
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Build outputs
+build/
+dist/
+*.egg-info/
+
+# Local environment files
+.env
+.env.*
+
+# Local output/log/temp files
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+outputs/
+local_outputs/
+

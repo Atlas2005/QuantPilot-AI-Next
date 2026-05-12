@@ -14,3 +14,13 @@
 - No dependency installation is allowed in Step 0A.
 - No market data, API, broker, backtest, model, live trading, or order path is allowed in Step 0A.
 
+## Step 0B Decisions
+
+- ChatGPT approved the Step 0B kickoff before Codex implementation.
+- Step 0B may create a minimal `src` layout Python package.
+- Runtime dependencies remain empty.
+- `pytest` is allowed as a dev/test dependency only.
+- No quant, data-source, broker, ML, or agent framework integration is allowed in Step 0B.
+- Safety flags default to false.
+- The package remains not trading-ready.
+
