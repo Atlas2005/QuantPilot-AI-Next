@@ -6,15 +6,15 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-Phase 7A: alpha/factor foundation, implemented by Codex and pending ChatGPT closure review.
+Phase 7B: factor validation metrics foundation, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
-Step 0A through Phase 6D are completed.
+Step 0A through Phase 7A are completed.
 
-Phase 6D backtest comparative review is completed and pushed.
+Phase 7A alpha/factor foundation is completed and pushed.
 
-Phase 7A adds factor metadata types, a toy close-to-close momentum factor, fake-fixture-only evaluation helpers, toy factor definitions, docs, and tests.
+Phase 7B adds factor validation metric types, toy IC-like metric shape, grouped forward-return shape checks, validation policy metadata, docs, and tests.
 
 The repository is still not trading-ready.
 
@@ -34,7 +34,8 @@ No broker/order/live path exists.
 - do not call external APIs
 - do not install or uninstall packages
 - do not add external analytics dependencies to `pyproject.toml`
-- do not claim toy factor output is alpha evidence
+- do not claim toy metrics are alpha evidence
+- do not claim statistical significance
 - do not run real backtests
 - do not implement strategy tournament
 - do not implement production backtest adapters
@@ -45,4 +46,4 @@ No broker/order/live path exists.
 
 ## Next Expected Action
 
-ChatGPT should perform Phase 7A module closure review. Do not move to factor validation metrics, factor library, strategy tournament, or external analytics integration until approved.
+ChatGPT should perform Phase 7B module closure review. Do not move to factor library, external analytics integration, strategy tournament, or real alpha claims until approved.

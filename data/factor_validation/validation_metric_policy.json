@@ -1,0 +1,22 @@
+{
+  "policy_name": "phase_7b_factor_validation_metric_policy",
+  "policy_version": "0.1.0",
+  "phase": "Phase 7B",
+  "alpha_claim_allowed": false,
+  "trading_ready": false,
+  "minimum_real_sample_size_required_later": 1000,
+  "minimum_symbol_count_required_later": 100,
+  "oos_required_later": true,
+  "walk_forward_required_later": true,
+  "paper_feedback_required_later": true,
+  "transaction_cost_required_later": true,
+  "a_share_rule_required_later": true,
+  "approved_external_libraries": [],
+  "deferred_external_libraries": [
+    "Alphalens Reloaded",
+    "quantstats",
+    "empyrical / empyrical-reloaded",
+    "Qlib"
+  ],
+  "notes": "Phase 7B metrics are toy fixture shape checks only. No alpha, profitability, statistical significance, trading readiness, or adapter approval is allowed."
+}

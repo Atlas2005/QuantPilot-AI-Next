@@ -173,3 +173,12 @@
 - Toy factor output is not alpha evidence.
 - Final backtest engine selection is not required before factor contract foundation.
 - No strategy tournament is created.
+
+## Phase 7B Decisions
+
+- Phase 7B creates validation metrics foundation using fake fixtures only.
+- Python standard library is the correct runtime for this module.
+- No pandas, NumPy, Alphalens, quantstats, or empyrical are introduced.
+- Toy IC-like metrics are not alpha evidence.
+- OOS, walk-forward, transaction costs, A-share rules, turnover, capacity, and paper feedback are required before real alpha claims.
+- No strategy tournament is created.

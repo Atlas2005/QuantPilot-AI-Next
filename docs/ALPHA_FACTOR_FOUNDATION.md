@@ -34,6 +34,12 @@ The toy rank correlation compares factor observation ranks with one-step forward
 
 It does not measure statistical significance, robustness, out-of-sample behavior, walk-forward behavior, transaction costs, capacity, liquidity, or profitability.
 
+## Phase 7B Validation Metrics
+
+Phase 7B adds evidence-gating metric shapes for toy IC-like calculation and grouped forward returns.
+
+The Phase 7A toy factor foundation remains not alpha evidence. Phase 7B still uses fake fixtures only, and no real alpha claim is allowed.
+
 ## Why No External Analytics Yet
 
 Phase 7A does not integrate:

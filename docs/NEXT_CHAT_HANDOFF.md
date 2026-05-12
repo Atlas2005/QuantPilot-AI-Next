@@ -6,22 +6,20 @@ QuantPilot-AI 2.0 is an open-source-first, adapter-first, contract-first, A-shar
 
 ## Current Phase
 
-Phase 7A: alpha/factor foundation, implemented by Codex and pending ChatGPT closure review.
+Phase 7B: factor validation metrics foundation, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
-Step 0A through Phase 6D are completed.
+Step 0A through Phase 7A are completed.
 
-Phase 7A created:
+Phase 7B created:
 
-- `src/quantpilot_core/factors/types.py`
-- `src/quantpilot_core/factors/toy_factors.py`
-- `src/quantpilot_core/factors/evaluation.py`
-- `data/factor_definitions/toy_factors.json`
-- `docs/ALPHA_FACTOR_FOUNDATION.md`
-- factor tests for toy computation, toy evaluation, and metadata safety
+- `src/quantpilot_core/factors/validation_metrics.py`
+- `data/factor_validation/validation_metric_policy.json`
+- `docs/FACTOR_VALIDATION_METRICS.md`
+- validation metric and policy tests
 
-The implementation uses only Python standard library and the fake Phase 3 local fixture.
+The implementation uses only Python standard library, fake fixture assumptions, and Phase 7A toy factor shapes.
 
 ## Current Prohibitions
 
@@ -29,7 +27,7 @@ The implementation uses only Python standard library and the fake Phase 3 local 
 - do not call external APIs
 - do not install packages
 - do not add pandas, NumPy, Alphalens, quantstats, empyrical, Qlib, or backtest engines
-- do not claim alpha or profitability
+- do not claim alpha, profitability, or statistical significance
 - do not run real backtests
 - do not implement strategy tournament
 - do not implement production adapters
@@ -38,16 +36,16 @@ The implementation uses only Python standard library and the fake Phase 3 local 
 
 ## Next Recommended Step
 
-ChatGPT should perform Phase 7A closure review.
+ChatGPT should perform Phase 7B closure review.
 
-Do not move to factor validation metrics, factor library, strategy tournament, or external analytics integration until approved.
+Do not move to factor library, external analytics integration, strategy tournament, or real alpha claims until approved.
 
 ## Key Decisions
 
-- Phase 7A is fake-fixture-only.
-- Toy factor output is not alpha evidence.
+- Phase 7B is fake-fixture-only.
+- Toy IC-like metrics are not alpha evidence.
 - Python standard library is sufficient for this module.
-- Final backtest engine selection is not required before factor contract foundation.
+- OOS, walk-forward, transaction costs, A-share rules, turnover, capacity, and paper feedback are required before real alpha claims.
 - Codex is not the project architect.
 
 ## Role Split
