@@ -6,7 +6,7 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-Phase 4A: controlled data-source prototype harness, implemented by Codex and pending ChatGPT closure review.
+Phase 4B: manual AkShare and Baostock provider probes, implemented and run by Codex pending ChatGPT closure review.
 
 ## Current Contents
 
@@ -20,22 +20,22 @@ Phase 1.1 candidate registry refresh is completed.
 
 Phase 2 core contracts is completed.
 
-Phase 3 data contracts and local fixtures is completed and pushed.
+Phase 3 data contracts and local fixtures is completed.
 
-Phase 4A adds a manual-only data-source prototype planning harness, provisional field-mapping templates, SimTradeData registry metadata, and tests for harness safety.
+Phase 4A controlled data-source prototype harness is completed and pushed.
+
+Phase 4B adds manual provider probe scripts and docs-only probe summaries for AkShare and Baostock.
 
 The repository is still not trading-ready.
 
-No real data-source integration exists.
+Provider probes are manual-only. No production data-source adapter exists.
 
 ## Current Prohibitions
 
-- do not fetch market data
-- do not call external APIs
-- do not install packages
-- do not import external data, quant, validation, storage, or agent frameworks
-- do not clone or copy external projects
-- do not implement real data-source adapters
+- do not commit raw market data
+- do not add provider packages to project dependencies
+- do not fetch large datasets or full market history
+- do not implement data-source adapters
 - do not create token or secrets handling
 - do not run backtests
 - do not implement trading, strategy, factor, portfolio, model, broker, live order, or agent workflows
@@ -45,5 +45,5 @@ No real data-source integration exists.
 
 ## Next Expected Action
 
-ChatGPT should perform Phase 4A module closure review. Do not move to Phase 4B until approved.
+ChatGPT should perform Phase 4B module closure review. Do not move to provider adapter implementation until approved.
 

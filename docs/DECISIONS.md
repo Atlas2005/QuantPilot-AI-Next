@@ -73,3 +73,13 @@
 - Data-source prototypes are manual-only until approved.
 - SimTradeData is registry/reference only until license review.
 - Field mappings are provisional until manual verification.
+
+## Phase 4B Decisions
+
+- Phase 4B tests AkShare and Baostock only.
+- Tushare is deferred because of token and permission concerns.
+- OpenBB is deferred because it is platform-level, not the first A-share daily source.
+- SimTradeData remains reference-only because of license and commercial risk.
+- Provider packages are not project dependencies yet.
+- Raw provider output must not be committed.
+- Phase 4B makes no final data-source selection.

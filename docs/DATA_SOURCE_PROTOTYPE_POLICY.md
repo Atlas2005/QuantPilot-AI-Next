@@ -10,13 +10,19 @@ Data-source prototypes can involve provider terms, network calls, rate limits, t
 
 Real data fetching is disabled in CI. CI may validate local templates, local fixtures, and standard-library code only.
 
+Phase 4B raw outputs must stay in `local_artifacts/`, which is ignored by git.
+
 ## Tokens and Secrets
 
 APIs, tokens, credentials, and secrets are not introduced in Phase 4A.
 
+Provider packages must not be added to `pyproject.toml` during manual probes.
+
 ## Future Phase 4B Scope
 
 Future Phase 4B may manually test candidates such as AkShare, Baostock, Tushare, OpenBB, and SimTradeData-style approaches only after ChatGPT approval. Those runs should remain controlled, documented, and outside automatic CI.
+
+Probe success is not production approval and does not imply provider selection, data quality approval, adapter readiness, or trading readiness.
 
 ## Field Mapping Before Adapters
 
@@ -29,4 +35,3 @@ Any future prototype output must conform to the Phase 3 daily bar schema before 
 ## SimTradeData Policy
 
 SimTradeData is architecture-reference only until license review. Do not clone, copy, integrate, commercialize, or create derivative work before explicit review.
-

@@ -26,4 +26,6 @@ tmp/
 temp/
 outputs/
 local_outputs/
-
+local_artifacts/
+*.local.csv
+*.local.json

@@ -6,56 +6,39 @@ QuantPilot-AI 2.0 is an open-source-first, adapter-first, contract-first, A-shar
 
 ## Current Phase
 
-Phase 4A: controlled data-source prototype harness, implemented by Codex and pending ChatGPT closure review.
+Phase 4B: manual provider probes, implemented and run by Codex pending ChatGPT closure review.
 
 ## Completed Work
 
-Step 0A planning package was completed.
+Step 0A through Phase 4A are completed.
 
-Step 0B clean skeleton and minimal CI was completed.
+Phase 4B created manual-only probe scripts for AkShare and Baostock under `tools/manual_provider_probes/`.
 
-Phase 1 candidate registry was completed.
-
-Phase 1.1 candidate registry refresh was completed.
-
-Phase 2 core contracts was completed.
-
-Phase 3 data contracts and local fixtures was completed and pushed.
-
-Phase 4A created:
-
-- manual-only prototype plan structures
-- field-mapping validation helpers
-- provisional mapping templates under `data/source_mapping_templates/`
-- SimTradeData registry/reference metadata
-- data-source prototype policy docs
-- tests for prototype plan and field-mapping safety
+Both probes were run. Provider packages were already available locally, so no package install was performed in this phase. Both probes failed safely because provider/network access was unavailable, produced zero rows, and wrote only ignored local summaries under `local_artifacts/`.
 
 ## Current Prohibitions
 
-- do not fetch market data
-- do not call external APIs
-- do not install or import external frameworks
-- do not clone or copy external projects
-- do not implement data-source adapters
+- do not commit raw market data
+- do not add provider packages to `pyproject.toml`
+- do not implement production data-source adapters
 - do not create token or secrets handling
-- do not create broker/live/order paths
-- do not implement backtesting, model training, or agent orchestration
+- do not run backtests
+- do not implement strategy, factor, portfolio, model, broker, live order, or agent workflows
 - do not mark anything trading-ready
 - do not claim profitability
 
 ## Next Recommended Step
 
-ChatGPT should perform Phase 4A closure review.
+ChatGPT should perform Phase 4B closure review.
 
-Do not move to Phase 4B until approved.
+Do not move to provider adapter implementation until approved.
 
 ## Key Decisions
 
-- Data-source prototypes are manual-only until approved.
-- Real data fetching is disabled in CI.
-- Field mappings are provisional until manual verification.
-- SimTradeData is registry/reference only until license review.
+- AkShare and Baostock were the only providers probed.
+- Tushare, OpenBB, SimTradeData, and other tools remain deferred for this phase.
+- Probe failure is acceptable if safely captured.
+- Raw provider outputs stay in ignored `local_artifacts/`.
 - Codex is not the project architect.
 
 ## Role Split
