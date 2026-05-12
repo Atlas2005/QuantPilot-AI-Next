@@ -2,19 +2,27 @@
 
 ## Task Name
 
-Phase 1: Open-source Candidate Registry.
+Phase 2: Core Contracts.
 
 ## Changed Files
 
-- `src/quantpilot_core/registry/candidate.py`
-- `src/quantpilot_core/registry/candidate_loader.py`
-- `src/quantpilot_core/registry/__init__.py`
-- `data/open_source_candidates/candidates.json`
-- `docs/OPEN_SOURCE_CANDIDATE_REGISTRY.md`
-- `docs/OPEN_SOURCE_CANDIDATE_UNIVERSE.md`
-- `docs/modules/phase_1_candidate_registry/MODULE_KICKOFF_REVIEW.md`
-- `docs/modules/phase_1_candidate_registry/MODULE_CLOSURE_DRAFT.md`
-- `tests/registry/test_candidate_registry.py`
+- `docs/modules/phase_2_core_contracts/MODULE_KICKOFF_REVIEW.md`
+- `docs/modules/phase_2_core_contracts/MODULE_CLOSURE_DRAFT.md`
+- `docs/CORE_CONTRACTS.md`
+- `src/quantpilot_core/contracts/types.py`
+- `src/quantpilot_core/contracts/base.py`
+- `src/quantpilot_core/contracts/data_source.py`
+- `src/quantpilot_core/contracts/data_validator.py`
+- `src/quantpilot_core/contracts/market_rule.py`
+- `src/quantpilot_core/contracts/backtest_engine.py`
+- `src/quantpilot_core/contracts/factor_engine.py`
+- `src/quantpilot_core/contracts/portfolio_engine.py`
+- `src/quantpilot_core/contracts/agent_skill.py`
+- `src/quantpilot_core/contracts/__init__.py`
+- `tests/contracts/test_core_contracts.py`
+- `tests/contracts/test_contract_skeleton.py`
+- `tests/smoke/test_imports.py`
+- `tests/smoke/test_no_forbidden_scope.py`
 - `docs/CURRENT_PROJECT_STATE.md`
 - `docs/DECISIONS.md`
 - `docs/NEXT_CHAT_HANDOFF.md`
@@ -22,8 +30,8 @@ Phase 1: Open-source Candidate Registry.
 
 ## Safety Checks
 
-- `src/` changed: Yes. Candidate metadata and standard-library JSON loader only.
-- `tests/` changed: Yes. Candidate registry validation tests only.
+- `src/` changed: Yes. Core contract boundaries only.
+- `tests/` changed: Yes. Contract shape and safety-boundary tests only.
 - Dependencies changed: No.
 - Packages installed: No.
 - Market data/API used: No.
@@ -46,10 +54,17 @@ Listing 'src\\quantpilot_ai_next.egg-info'...
 Listing 'src\\quantpilot_core'...
 Listing 'src\\quantpilot_core\\config'...
 Listing 'src\\quantpilot_core\\contracts'...
+Compiling 'src\\quantpilot_core\\contracts\\__init__.py'...
+Compiling 'src\\quantpilot_core\\contracts\\agent_skill.py'...
+Compiling 'src\\quantpilot_core\\contracts\\backtest_engine.py'...
+Compiling 'src\\quantpilot_core\\contracts\\base.py'...
+Compiling 'src\\quantpilot_core\\contracts\\data_source.py'...
+Compiling 'src\\quantpilot_core\\contracts\\data_validator.py'...
+Compiling 'src\\quantpilot_core\\contracts\\factor_engine.py'...
+Compiling 'src\\quantpilot_core\\contracts\\market_rule.py'...
+Compiling 'src\\quantpilot_core\\contracts\\portfolio_engine.py'...
+Compiling 'src\\quantpilot_core\\contracts\\types.py'...
 Listing 'src\\quantpilot_core\\registry'...
-Compiling 'src\\quantpilot_core\\registry\\__init__.py'...
-Compiling 'src\\quantpilot_core\\registry\\candidate.py'...
-Compiling 'src\\quantpilot_core\\registry\\candidate_loader.py'...
 Listing 'src\\quantpilot_core\\safety'...
 ```
 
@@ -58,15 +73,16 @@ Listing 'src\\quantpilot_core\\safety'...
 Result: passed.
 
 ```text
-collected 13 items
+collected 19 items
 
-tests\\contracts\\test_contract_skeleton.py ..                             [ 15%]
-tests\\registry\\test_candidate_registry.py .......                        [ 69%]
-tests\\smoke\\test_imports.py .                                            [ 76%]
-tests\\smoke\\test_no_forbidden_scope.py .                                 [ 84%]
+tests\\contracts\\test_contract_skeleton.py ..                             [ 10%]
+tests\\contracts\\test_core_contracts.py ......                            [ 42%]
+tests\\registry\\test_candidate_registry.py .......                        [ 78%]
+tests\\smoke\\test_imports.py .                                            [ 84%]
+tests\\smoke\\test_no_forbidden_scope.py .                                 [ 89%]
 tests\\smoke\\test_safety_flags.py ..                                      [100%]
 
-============================= 13 passed in 0.03s ==============================
+============================= 19 passed in 0.05s ==============================
 ```
 
 ## Git Status
@@ -76,23 +92,31 @@ tests\\smoke\\test_safety_flags.py ..                                      [100%
  M docs/CURRENT_PROJECT_STATE.md
  M docs/DECISIONS.md
  M docs/NEXT_CHAT_HANDOFF.md
- M docs/OPEN_SOURCE_CANDIDATE_UNIVERSE.md
  M docs/REVIEW_PACKET.md
- M src/quantpilot_core/registry/__init__.py
-?? data/
-?? docs/OPEN_SOURCE_CANDIDATE_REGISTRY.md
-?? docs/modules/phase_1_candidate_registry/
-?? src/quantpilot_core/registry/candidate.py
-?? src/quantpilot_core/registry/candidate_loader.py
-?? tests/registry/
+ M src/quantpilot_core/contracts/__init__.py
+ M src/quantpilot_core/contracts/base.py
+ M tests/contracts/test_contract_skeleton.py
+ M tests/smoke/test_imports.py
+ M tests/smoke/test_no_forbidden_scope.py
+?? docs/CORE_CONTRACTS.md
+?? docs/modules/phase_2_core_contracts/
+?? src/quantpilot_core/contracts/agent_skill.py
+?? src/quantpilot_core/contracts/backtest_engine.py
+?? src/quantpilot_core/contracts/data_source.py
+?? src/quantpilot_core/contracts/data_validator.py
+?? src/quantpilot_core/contracts/factor_engine.py
+?? src/quantpilot_core/contracts/market_rule.py
+?? src/quantpilot_core/contracts/portfolio_engine.py
+?? src/quantpilot_core/contracts/types.py
+?? tests/contracts/test_core_contracts.py
 ```
 
 ## Risks
 
-- Candidate metadata is preliminary and must be refreshed by ChatGPT at module boundaries.
-- Registry classifications are conservative and non-final.
-- This phase does not evaluate licenses, maintenance, or Windows behavior beyond placeholder risk fields.
+- Contracts are intentionally broad and may need refinement before adapters exist.
+- Agent skill and market rule contracts are boundaries only; later modules must avoid treating them as implementations.
+- Phase 2 does not validate real data, run market rules, run backtests, calculate factors, or optimize portfolios.
 
 ## Recommended Next Step
 
-ChatGPT should perform Phase 1 closure review before any Phase 2 core contract work begins.
+ChatGPT should perform Phase 2 closure review before any Phase 3 data contract work begins.

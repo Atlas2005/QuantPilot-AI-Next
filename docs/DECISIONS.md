@@ -34,3 +34,14 @@
 - External frameworks must later enter through adapters and contract tests.
 - Candidate metadata is static and stored in `data/open_source_candidates/candidates.json`.
 - Candidate validation uses Python standard library only.
+
+## Phase 2 Decisions
+
+- ChatGPT approved the Phase 2 kickoff before Codex implementation.
+- Phase 2 creates contracts only.
+- Phase 2 creates no real adapters.
+- Phase 2 makes no final engine selection.
+- Phase 2 adds no external imports.
+- Agent skill contract exists only as a late-stage boundary, not an implementation.
+- Market rule contract exists only as a boundary before the actual market rule engine phase.
+- Core contracts expose descriptive metadata and scope warnings only.

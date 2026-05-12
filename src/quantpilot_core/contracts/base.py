@@ -1,21 +1,29 @@
-"""Minimal base contract placeholder for Phase 0B."""
+"""Base contract boundary for Phase 2."""
 
-from dataclasses import dataclass
+from abc import ABC
+from dataclasses import dataclass, field
+
+from quantpilot_core.contracts.types import ContractMetadata
 
 
 @dataclass(frozen=True)
-class BaseContract:
-    """Small descriptive contract placeholder.
+class BaseContract(ABC):
+    """Minimal non-operational base for contract definitions."""
 
-    This is intentionally generic. Domain-specific contracts belong to later
-    phases after ChatGPT-led review.
-    """
+    metadata: ContractMetadata
+    scope_warnings: tuple[str, ...] = field(default_factory=tuple)
 
-    name: str
-    version: str = "0.0.1"
+    def describe(self) -> dict[str, object]:
+        """Return a serializable description of this contract boundary."""
 
-    def describe(self) -> dict[str, str]:
-        """Return a serializable description of the contract."""
+        return {
+            "metadata": self.metadata.as_dict(),
+            "scope_warnings": list(self.scope_warnings),
+            "trading_ready": False,
+        }
 
-        return {"name": self.name, "version": self.version}
+    def validate_scope(self) -> list[str]:
+        """Return scope warnings without performing business logic."""
+
+        return list(self.scope_warnings)
 
