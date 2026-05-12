@@ -40,6 +40,12 @@ Phase 7B adds evidence-gating metric shapes for toy IC-like calculation and grou
 
 The Phase 7A toy factor foundation remains not alpha evidence. Phase 7B still uses fake fixtures only, and no real alpha claim is allowed.
 
+## Phase 7C Factor Candidate Library
+
+Phase 7C adds conservative factor candidate metadata and toy computations.
+
+The candidates are metadata and local toy calculations only. No factor candidate may claim real alpha, statistical significance, profitability, or trading readiness.
+
 ## Why No External Analytics Yet
 
 Phase 7A does not integrate:

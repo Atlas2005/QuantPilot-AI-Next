@@ -182,3 +182,12 @@
 - Toy IC-like metrics are not alpha evidence.
 - OOS, walk-forward, transaction costs, A-share rules, turnover, capacity, and paper feedback are required before real alpha claims.
 - No strategy tournament is created.
+
+## Phase 7C Decisions
+
+- Phase 7C creates a conservative factor candidate library using fake fixtures only.
+- Python standard library is the correct runtime for this module.
+- No pandas, NumPy, Alphalens, quantstats, or empyrical are introduced.
+- Factor candidates are not alpha evidence.
+- No factor is validated or trading-ready.
+- No strategy tournament is created.

@@ -42,6 +42,12 @@ Phase 7B does not integrate:
 
 These remain future candidates after contracts, local metrics, data quality, and validation requirements are stable.
 
+## Phase 7C Candidate Library Relationship
+
+Phase 7B metrics are evidence gates for Phase 7C candidates.
+
+Adding more factor candidates does not bypass validation requirements. Every candidate remains toy or not evaluated until it passes larger-data checks, OOS validation, walk-forward validation, transaction cost review, A-share execution constraints, capacity checks, and paper feedback.
+
 ## Current Limitations
 
 - fake fixture only

@@ -6,6 +6,19 @@ from quantpilot_core.factors.evaluation import (
     rank_values,
     simple_rank_correlation,
 )
+from quantpilot_core.factors.candidate_library import (
+    FactorCandidateRecord,
+    load_factor_candidates,
+    summarize_factor_candidates,
+    validate_factor_candidate,
+    validate_factor_candidates,
+)
+from quantpilot_core.factors.toy_candidate_factors import (
+    compute_close_to_close_momentum_1d,
+    compute_close_to_close_reversal_1d,
+    compute_toy_range_volatility_1d,
+    compute_toy_volume_change_1d,
+)
 from quantpilot_core.factors.toy_factors import compute_close_to_close_momentum
 from quantpilot_core.factors.types import (
     FactorCategory,
@@ -29,6 +42,7 @@ from quantpilot_core.factors.validation_metrics import (
 __all__ = [
     "EvidenceQuality",
     "FactorCategory",
+    "FactorCandidateRecord",
     "FactorDefinition",
     "FactorDirection",
     "FactorEvaluationStatus",
@@ -40,10 +54,18 @@ __all__ = [
     "ValidationMetricStatus",
     "build_factor_validation_report",
     "compute_close_to_close_momentum",
+    "compute_close_to_close_momentum_1d",
+    "compute_close_to_close_reversal_1d",
     "compute_forward_returns",
     "compute_grouped_forward_returns",
+    "compute_toy_range_volatility_1d",
     "compute_toy_information_coefficient",
+    "compute_toy_volume_change_1d",
     "evaluate_factor_against_forward_returns",
+    "load_factor_candidates",
     "rank_values",
     "simple_rank_correlation",
+    "summarize_factor_candidates",
+    "validate_factor_candidate",
+    "validate_factor_candidates",
 ]

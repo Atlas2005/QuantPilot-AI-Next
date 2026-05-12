@@ -6,20 +6,21 @@ QuantPilot-AI 2.0 is an open-source-first, adapter-first, contract-first, A-shar
 
 ## Current Phase
 
-Phase 7B: factor validation metrics foundation, implemented by Codex and pending ChatGPT closure review.
+Phase 7C: factor candidate library foundation, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
-Step 0A through Phase 7A are completed.
+Step 0A through Phase 7B are completed.
 
-Phase 7B created:
+Phase 7C created:
 
-- `src/quantpilot_core/factors/validation_metrics.py`
-- `data/factor_validation/validation_metric_policy.json`
-- `docs/FACTOR_VALIDATION_METRICS.md`
-- validation metric and policy tests
+- `src/quantpilot_core/factors/candidate_library.py`
+- `src/quantpilot_core/factors/toy_candidate_factors.py`
+- `data/factor_definitions/factor_candidates.json`
+- `docs/FACTOR_CANDIDATE_LIBRARY.md`
+- candidate library and toy candidate factor tests
 
-The implementation uses only Python standard library, fake fixture assumptions, and Phase 7A toy factor shapes.
+The implementation uses only Python standard library and fake Phase 3 local fixtures.
 
 ## Current Prohibitions
 
@@ -36,16 +37,16 @@ The implementation uses only Python standard library, fake fixture assumptions, 
 
 ## Next Recommended Step
 
-ChatGPT should perform Phase 7B closure review.
+ChatGPT should perform Phase 7C closure review.
 
-Do not move to factor library, external analytics integration, strategy tournament, or real alpha claims until approved.
+Do not move to external analytics integration, larger real-data validation, strategy tournament, or real alpha claims until approved.
 
 ## Key Decisions
 
-- Phase 7B is fake-fixture-only.
-- Toy IC-like metrics are not alpha evidence.
+- Phase 7C is fake-fixture-only.
+- Factor candidates are not alpha evidence.
+- No factor is validated or trading-ready.
 - Python standard library is sufficient for this module.
-- OOS, walk-forward, transaction costs, A-share rules, turnover, capacity, and paper feedback are required before real alpha claims.
 - Codex is not the project architect.
 
 ## Role Split

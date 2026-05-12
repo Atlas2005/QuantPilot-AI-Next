@@ -1,0 +1,94 @@
+[
+  {
+    "name": "close_to_close_momentum_1d",
+    "category": "price_momentum",
+    "direction": "higher_is_better",
+    "status": "toy",
+    "required_fields": ["symbol", "trade_date", "close"],
+    "lookback_window": 1,
+    "computation_scope": "fake_fixture_only",
+    "evidence_status": "toy_fixture_only",
+    "alpha_claim_allowed": false,
+    "trading_ready": false,
+    "known_limitations": [
+      "fake fixture only",
+      "tiny sample",
+      "no OOS",
+      "no walk-forward",
+      "no transaction costs",
+      "no A-share execution rules",
+      "no capacity/liquidity proof",
+      "no paper feedback"
+    ],
+    "notes": "Toy one-day momentum candidate for shape validation only. Not alpha evidence."
+  },
+  {
+    "name": "close_to_close_reversal_1d",
+    "category": "mean_reversion",
+    "direction": "higher_is_better",
+    "status": "toy",
+    "required_fields": ["symbol", "trade_date", "close"],
+    "lookback_window": 1,
+    "computation_scope": "fake_fixture_only",
+    "evidence_status": "toy_fixture_only",
+    "alpha_claim_allowed": false,
+    "trading_ready": false,
+    "known_limitations": [
+      "fake fixture only",
+      "tiny sample",
+      "no OOS",
+      "no walk-forward",
+      "no transaction costs",
+      "no A-share execution rules",
+      "no capacity/liquidity proof",
+      "no paper feedback"
+    ],
+    "notes": "Toy reversal candidate equal to negative one-day momentum. Not alpha evidence."
+  },
+  {
+    "name": "toy_range_volatility_1d",
+    "category": "volatility",
+    "direction": "lower_is_better",
+    "status": "toy",
+    "required_fields": ["symbol", "trade_date", "high", "low", "close"],
+    "lookback_window": 1,
+    "computation_scope": "fake_fixture_only",
+    "evidence_status": "toy_fixture_only",
+    "alpha_claim_allowed": false,
+    "trading_ready": false,
+    "known_limitations": [
+      "fake fixture only",
+      "tiny sample",
+      "no OOS",
+      "no walk-forward",
+      "no transaction costs",
+      "no A-share execution rules",
+      "no capacity/liquidity proof",
+      "no paper feedback"
+    ],
+    "notes": "Toy range volatility candidate using (high - low) / close. Not alpha evidence."
+  },
+  {
+    "name": "toy_volume_change_1d",
+    "category": "volume_liquidity",
+    "direction": "unknown",
+    "status": "toy",
+    "required_fields": ["symbol", "trade_date", "volume"],
+    "lookback_window": 1,
+    "computation_scope": "fake_fixture_only",
+    "evidence_status": "toy_fixture_only",
+    "alpha_claim_allowed": false,
+    "trading_ready": false,
+    "known_limitations": [
+      "fake fixture only",
+      "tiny sample",
+      "no OOS",
+      "no walk-forward",
+      "no transaction costs",
+      "no A-share execution rules",
+      "no capacity/liquidity proof",
+      "no paper feedback"
+    ],
+    "notes": "Toy volume change candidate with safe zero previous volume handling. Not alpha evidence."
+  }
+]
