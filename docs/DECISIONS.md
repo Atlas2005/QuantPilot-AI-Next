@@ -136,3 +136,12 @@
 - The Backtrader prototype result does not equal engine selection.
 - No Backtrader adapter exists yet.
 - Live trading capable framework risk remains isolated from QuantPilot core.
+
+## Phase 6C-3A Decisions
+
+- Phase 6C-3A reviews RQAlpha before installation.
+- RQAlpha must not be installed in the main environment.
+- RQAlpha requires isolated `.venv-prototypes/rqalpha/` if a prototype is later approved.
+- RQAlpha is not a project dependency.
+- No RQAlpha adapter exists.
+- The preflight result does not equal engine selection.

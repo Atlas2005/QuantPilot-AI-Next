@@ -20,7 +20,7 @@ data/backtest_engine_candidates/prototype_plans.json
 - LEAN: full trading platform / architecture reference; live trading capability must remain isolated.
 - vectorbt: vectorized research candidate; Phase 6C-1 produced manual local-fixture shape-compatibility evidence, but no final selection has been made and A-share market rule fit remains unproven.
 - Backtrader: event-driven candidate; Phase 6C-2 produced manual local-fixture prototype evidence in isolated `.venv-prototypes/backtrader/`, but no final selection has been made. Live-trading related capabilities must be isolated, and maintenance risk remains because the PyPI latest release appears older and must be refreshed before any adapter phase.
-- RQAlpha: potentially China-market relevant; requires license and maintenance review.
+- RQAlpha: potentially China-market relevant; Phase 6C-3A adds a dedicated preflight review before any prototype. China-market relevance is promising but not enough for selection. No installation or prototype evidence exists from Phase 6C-3A.
 - vn.py / VeighNa: trading system architecture reference; not an early dependency.
 - Zipline-reloaded: event-driven candidate; requires maintenance and compatibility review.
 - NautilusTrader: advanced trading engine candidate; likely too heavy for early stage.

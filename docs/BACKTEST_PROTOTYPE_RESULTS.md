@@ -114,3 +114,11 @@ The prototype indicates that Backtrader can consume a converted fake local daily
 ## Backtrader Recommendation
 
 Backtrader deserves closure review before any deeper prototype. If ChatGPT approves additional work, the next Backtrader step should focus on A-share rule fit and broker/live isolation risk, still inside `.venv-prototypes/backtrader/`.
+
+## Phase 6C-3A: RQAlpha Preflight Only
+
+vectorbt and Backtrader now have toy fake-fixture prototype evidence.
+
+RQAlpha has preflight metadata only. It has not been installed, imported, or run, and there is no RQAlpha prototype result yet.
+
+No final backtest engine has been selected.

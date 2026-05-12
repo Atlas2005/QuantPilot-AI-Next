@@ -6,19 +6,23 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-Phase 6C-2: manual Backtrader local-fixture prototype, implemented by Codex and pending ChatGPT closure review.
+Phase 6C-3A: RQAlpha license, maintenance, and isolation preflight, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
-Step 0A through Phase 6C-1.1 are completed.
+Step 0A through Phase 6C-2 are completed.
 
-Phase 6C-1.1 prototype environment isolation policy is completed and pushed.
+Phase 6C-2 manual Backtrader prototype is completed and pushed.
 
-Phase 6C-2 adds a manual Backtrader probe, module review records, and a documented prototype result using the fake Phase 3 local fixture inside `.venv-prototypes/backtrader/`.
+Phase 6C-3A adds RQAlpha preflight metadata, review documentation, and validation tests. It does not install, import, or run RQAlpha.
 
 The repository is still not trading-ready.
 
 No final backtest engine is selected.
+
+No RQAlpha install was performed.
+
+No RQAlpha prototype was run.
 
 No production adapter exists.
 
@@ -30,9 +34,10 @@ No broker/order/live path exists.
 
 - do not fetch market data
 - do not call external APIs
+- do not install or import RQAlpha without ChatGPT approval
 - do not install prototype packages outside isolated prototype environments
 - do not add prototype framework dependencies to `pyproject.toml`
-- do not run RQAlpha, Qlib, or deeper Backtrader/vectorbt prototypes without ChatGPT approval
+- do not run RQAlpha prototype before Phase 6C-3B approval
 - do not implement production backtest adapters
 - do not implement strategy, alpha/factor, portfolio, model, broker, live order, or agent workflows
 - do not mark anything trading-ready
@@ -41,4 +46,4 @@ No broker/order/live path exists.
 
 ## Next Expected Action
 
-ChatGPT should perform Phase 6C-2 module closure review. Do not start RQAlpha prototype or adapter implementation until approved.
+ChatGPT should perform Phase 6C-3A module closure review. Do not move to isolated RQAlpha prototype until approved.

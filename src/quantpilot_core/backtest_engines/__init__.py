@@ -6,6 +6,10 @@ from quantpilot_core.backtest_engines.evaluation import (
     validate_backtest_engine_candidate,
     validate_backtest_engine_candidates,
 )
+from quantpilot_core.backtest_engines.preflight import (
+    load_preflight,
+    validate_preflight,
+)
 from quantpilot_core.backtest_engines.prototype_loader import (
     load_backtest_prototype_plans,
     summarize_backtest_prototype_plans,
@@ -38,10 +42,12 @@ __all__ = [
     "PrototypeRunMode",
     "load_backtest_engine_candidates",
     "load_backtest_prototype_plans",
+    "load_preflight",
     "summarize_backtest_engine_candidates",
     "summarize_backtest_prototype_plans",
     "validate_backtest_engine_candidate",
     "validate_backtest_engine_candidates",
     "validate_backtest_prototype_plan",
     "validate_backtest_prototype_plans",
+    "validate_preflight",
 ]

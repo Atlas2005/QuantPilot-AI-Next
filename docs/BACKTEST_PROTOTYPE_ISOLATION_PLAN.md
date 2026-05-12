@@ -36,6 +36,18 @@ Phase 6C-2 tested Backtrader only inside `.venv-prototypes/backtrader/` because 
 
 Backtrader, RQAlpha, Qlib, and any other external engine prototypes must continue to run outside the main project environment.
 
+## Phase 6C-3A RQAlpha Preflight
+
+Phase 6C-3A is preflight only. RQAlpha is not installed, imported, or run in this phase.
+
+RQAlpha remains interesting because of China-market relevance, but any prototype must be approved later and must run only in `.venv-prototypes/rqalpha/`. No fallback to the main project environment is allowed.
+
+Preflight metadata lives in:
+
+```text
+data/backtest_engine_candidates/rqalpha_preflight.json
+```
+
 ## Second Wave
 
 Qlib is second-wave because it is more ML research platform than minimal backtest adapter.
