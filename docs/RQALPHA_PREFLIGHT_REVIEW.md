@@ -45,3 +45,11 @@ If ChatGPT approves a future RQAlpha prototype, it must follow these rules:
 ## Current Status
 
 Phase 6C-3A creates only static preflight metadata and validation tests. It does not prove RQAlpha compatibility, A-share realism, profitability, or production readiness.
+
+## Phase 6C-3B Result Reference
+
+Phase 6C-3B installed and imported RQAlpha only inside `.venv-prototypes/rqalpha/`. The probe did not run a real or toy backtest because fake-fixture-only execution was not proven without RQAlpha data bundle/config setup.
+
+RQAlpha remains research/prototype-only. There is no commercial integration approval, no production adapter, and no final engine selection.
+
+License and commercial review remain required before any copying, vendoring, integration, commercialization, or derivative production adapter work.

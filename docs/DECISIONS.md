@@ -145,3 +145,13 @@
 - RQAlpha is not a project dependency.
 - No RQAlpha adapter exists.
 - The preflight result does not equal engine selection.
+
+## Phase 6C-3B Decisions
+
+- Phase 6C-3B tests RQAlpha only in isolated `.venv-prototypes/rqalpha/`.
+- RQAlpha is not a project dependency.
+- The RQAlpha prototype result does not equal engine selection.
+- RQAlpha commercial/license issue remains unresolved.
+- No RQAlpha adapter exists yet.
+- No broker/live/order path is allowed.
+- Fake-fixture-only RQAlpha execution was not proven in this phase.

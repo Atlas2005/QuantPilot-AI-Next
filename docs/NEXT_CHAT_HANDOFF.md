@@ -6,31 +6,28 @@ QuantPilot-AI 2.0 is an open-source-first, adapter-first, contract-first, A-shar
 
 ## Current Phase
 
-Phase 6C-3A: RQAlpha license, maintenance, and isolation preflight, implemented by Codex and pending ChatGPT closure review.
+Phase 6C-3B: isolated RQAlpha prototype probe, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
-Step 0A through Phase 6C-2 are completed.
+Step 0A through Phase 6C-3A are completed.
 
-Phase 6C-3A created:
+Phase 6C-3B created:
 
-- `docs/modules/phase_6c_3a_rqalpha_preflight/MODULE_KICKOFF_REVIEW.md`
-- `docs/modules/phase_6c_3a_rqalpha_preflight/MODULE_CLOSURE_DRAFT.md`
-- `data/backtest_engine_candidates/rqalpha_preflight.json`
-- `src/quantpilot_core/backtest_engines/preflight.py`
-- `docs/RQALPHA_PREFLIGHT_REVIEW.md`
-- `tests/backtest_engines/test_rqalpha_preflight.py`
+- `docs/modules/phase_6c_3b_rqalpha_isolated_prototype/MODULE_KICKOFF_REVIEW.md`
+- `docs/modules/phase_6c_3b_rqalpha_isolated_prototype/MODULE_CLOSURE_DRAFT.md`
+- `tools/manual_backtest_prototypes/rqalpha_local_fixture_probe.py`
+- `tools/manual_backtest_prototypes/summarize_rqalpha_probe.py`
 
-RQAlpha has preflight metadata only. It was not installed, imported, or run.
+RQAlpha was installed and imported only inside `.venv-prototypes/rqalpha/`. The probe did not run a backtest because fake-fixture-only execution was not proven without RQAlpha data bundle/config setup.
 
 ## Current Prohibitions
 
 - do not fetch market data
 - do not call external APIs
-- do not install or import RQAlpha without ChatGPT approval
 - do not add RQAlpha or other prototype packages to `pyproject.toml`
-- do not run RQAlpha outside isolated `.venv-prototypes/rqalpha/`
-- do not move to isolated RQAlpha prototype before ChatGPT approval
+- do not run prototype packages outside isolated `.venv-prototypes/<tool-name>/` environments
+- do not commercialize, vendor, copy, or integrate RQAlpha before license review
 - do not implement production backtest adapters
 - do not implement strategy, alpha/factor, portfolio, model, broker, live order, or agent workflows
 - do not mark anything trading-ready
@@ -38,16 +35,17 @@ RQAlpha has preflight metadata only. It was not installed, imported, or run.
 
 ## Next Recommended Step
 
-ChatGPT should perform Phase 6C-3A closure review.
+ChatGPT should perform Phase 6C-3B closure review.
 
-Do not move to isolated RQAlpha prototype until approved.
+Do not move to adapter implementation or final engine selection until approved.
 
 ## Key Decisions
 
-- RQAlpha is China-market relevant but sensitive because it is a backtest/trading framework.
-- RQAlpha requires license, maintenance, Windows, dependency, data bundle, A-share rule fit, and broker/live/order isolation review.
+- Phase 6C-3B tested RQAlpha only.
 - RQAlpha is not a project dependency.
 - No final backtest engine selection was made.
+- No production RQAlpha adapter exists.
+- RQAlpha license/commercial risk remains unresolved.
 - Codex is not the project architect.
 
 ## Role Split

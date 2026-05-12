@@ -122,3 +122,69 @@ vectorbt and Backtrader now have toy fake-fixture prototype evidence.
 RQAlpha has preflight metadata only. It has not been installed, imported, or run, and there is no RQAlpha prototype result yet.
 
 No final backtest engine has been selected.
+
+## Phase 6C-3B: RQAlpha Isolated Prototype Probe
+
+This result is manual prototype evidence only. It is not production integration, not a real A-share backtest, not a final engine selection, and not trading-ready.
+
+## RQAlpha Environment
+
+RQAlpha was installed only inside:
+
+```text
+.venv-prototypes/rqalpha/
+```
+
+RQAlpha was not installed into the main project Python environment, was not added to `pyproject.toml`, and is not a project dependency.
+
+## RQAlpha Commands Run
+
+```text
+powershell -ExecutionPolicy Bypass -File .\tools\prototype_envs\create_prototype_env.ps1 -Name rqalpha
+.venv-prototypes\rqalpha\Scripts\python.exe -m pip install --upgrade pip
+.venv-prototypes\rqalpha\Scripts\python.exe -m pip install rqalpha
+.venv-prototypes\rqalpha\Scripts\python.exe tools\manual_backtest_prototypes\rqalpha_local_fixture_probe.py
+python tools\manual_backtest_prototypes\summarize_rqalpha_probe.py
+```
+
+The direct PowerShell helper invocation was blocked by local execution policy, so the helper was run with process-local `ExecutionPolicy Bypass`.
+
+## RQAlpha Prototype Result
+
+- Fake local fixture used: yes, `data/fixtures/a_share_daily_sample_valid.csv`.
+- Real market data used: no.
+- Provider/API used: no.
+- Symbol selected: `000001.SZ`.
+- Row count: 3.
+- RQAlpha importable inside isolated env: yes.
+- RQAlpha version observed: `6.1.4`.
+- Minimal local fake-fixture run attempted: no.
+- Minimal local fake-fixture run succeeded: no.
+- Data bundle/config blocker: likely required for normal RQAlpha execution; no bundle/provider setup was created.
+- Direct fake fixture support observed: no.
+- Output metrics produced: no.
+- Production adapter created: no.
+- Broker/live/order functionality used: no.
+
+The probe indicates that RQAlpha can be installed and imported in the isolated environment, but fake-fixture-only local run support was not proven. Data bundle/config requirements need further review before any deeper prototype.
+
+## RQAlpha A-share Rule Gaps
+
+- T+1 not proven.
+- Limit-up/limit-down not proven.
+- Suspension handling not proven.
+- ST/delisting special cases not proven.
+- Liquidity constraints not proven.
+- Realistic fees/slippage not proven.
+- Realistic A-share order matching not proven.
+- Corporate actions not proven.
+- Production data bundle reliability not proven.
+- Commercial/license suitability not proven.
+
+## RQAlpha License and Commercial Warning
+
+RQAlpha remains research/prototype-only. Do not commercialize, vendor, copy source, integrate, or create derivative production adapter code before license review.
+
+## RQAlpha Recommendation
+
+RQAlpha may deserve a deeper prototype only if ChatGPT approves a data-bundle/config review. Any future work must remain isolated in `.venv-prototypes/rqalpha/`, use fake fixtures unless explicitly approved otherwise, and avoid adapter or engine-selection decisions.

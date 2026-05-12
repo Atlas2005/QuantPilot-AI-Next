@@ -48,6 +48,14 @@ Preflight metadata lives in:
 data/backtest_engine_candidates/rqalpha_preflight.json
 ```
 
+## Phase 6C-3B RQAlpha Result Reference
+
+Phase 6C-3B tested RQAlpha only inside `.venv-prototypes/rqalpha/`. No fallback to the main project environment occurred.
+
+RQAlpha installed and imported in isolation, but fake-fixture-only local run support was not proven. The probe stopped before any backtest because data bundle/config requirements need further review.
+
+Any future deeper RQAlpha work must remain isolated and must not create production adapters, project dependencies, broker/live/order paths, or final engine-selection claims.
+
 ## Second Wave
 
 Qlib is second-wave because it is more ML research platform than minimal backtest adapter.
