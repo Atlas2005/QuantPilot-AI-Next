@@ -54,6 +54,12 @@ External analytics remain deferred.
 
 Alphalens-like tools require real factor and forward-return panels. quantstats and empyrical require meaningful return streams. No external analytics output exists yet.
 
+## Phase 7E Real Data Readiness
+
+Real-data readiness is required before moving from toy metrics to real metrics.
+
+OOS, walk-forward validation, transaction costs, A-share execution rules, and reproducibility are mandatory before real alpha claims.
+
 ## Current Limitations
 
 - fake fixture only

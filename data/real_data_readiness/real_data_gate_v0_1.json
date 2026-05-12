@@ -1,0 +1,265 @@
+{
+  "gate_name": "real_data_readiness_gate",
+  "gate_version": "0.1.0",
+  "phase": "Phase 7E",
+  "alpha_claim_allowed": false,
+  "trading_ready": false,
+  "strategy_tournament_allowed": false,
+  "external_provider_integration_allowed": false,
+  "real_data_fetch_allowed_in_this_phase": false,
+  "approved_data_sources": [],
+  "candidate_data_sources": [
+    "AkShare",
+    "Baostock",
+    "Tushare",
+    "OpenBB",
+    "future paid/vendor data source"
+  ],
+  "deferred_storage_tools": [
+    "DuckDB",
+    "Parquet / PyArrow",
+    "Polars"
+  ],
+  "deferred_quality_tools": [
+    "Pandera",
+    "Great Expectations"
+  ],
+  "deferred_analytics_tools": [
+    "Alphalens Reloaded",
+    "quantstats",
+    "empyrical / empyrical-reloaded",
+    "Qlib"
+  ],
+  "checks": [
+    {
+      "code": "data_source_license_review",
+      "category": "license",
+      "severity": "blocking",
+      "description": "Provider license and commercial use terms must be reviewed.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "No provider is approved for real alpha validation."
+    },
+    {
+      "code": "data_source_reliability_probe",
+      "category": "data_source",
+      "severity": "blocking",
+      "description": "Provider reliability and failure behavior must be probed.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Prior provider probes were limited and not approval."
+    },
+    {
+      "code": "schema_mapping_coverage",
+      "category": "schema",
+      "severity": "blocking",
+      "description": "Provider fields must map to the daily OHLCV contract.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Mapping coverage has not been proven on real data."
+    },
+    {
+      "code": "qfq_hfq_raw_adjustment_policy",
+      "category": "adjustment",
+      "severity": "blocking",
+      "description": "Raw/qfq/hfq adjustment policy must be defined.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Adjustment handling can change factor conclusions."
+    },
+    {
+      "code": "symbol_format_policy",
+      "category": "schema",
+      "severity": "blocking",
+      "description": "A-share symbol format must be normalized.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Provider symbol conventions may differ."
+    },
+    {
+      "code": "duplicate_date_symbol_check",
+      "category": "schema",
+      "severity": "blocking",
+      "description": "Duplicate symbol/date rows must be detected.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Duplicates can corrupt factor panels."
+    },
+    {
+      "code": "missing_bar_policy",
+      "category": "schema",
+      "severity": "blocking",
+      "description": "Missing bar behavior must be detected and documented.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Missing data policy is not ready."
+    },
+    {
+      "code": "suspension_policy",
+      "category": "market_rules",
+      "severity": "blocking",
+      "description": "Suspension handling must be represented.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Suspensions affect tradability and returns."
+    },
+    {
+      "code": "corporate_action_policy",
+      "category": "adjustment",
+      "severity": "blocking",
+      "description": "Corporate action handling must be defined.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Corporate actions affect historical prices and returns."
+    },
+    {
+      "code": "minimum_symbol_count",
+      "category": "sample_size",
+      "severity": "blocking",
+      "description": "Minimum symbol coverage must be defined and satisfied.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Tiny samples cannot support alpha claims."
+    },
+    {
+      "code": "minimum_date_count",
+      "category": "sample_size",
+      "severity": "blocking",
+      "description": "Minimum date coverage must be defined and satisfied.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Short histories cannot support robust validation."
+    },
+    {
+      "code": "train_validation_test_split",
+      "category": "time_split",
+      "severity": "blocking",
+      "description": "Train/validation/test split policy must exist.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "No split policy is approved."
+    },
+    {
+      "code": "oos_required",
+      "category": "alpha_validation",
+      "severity": "blocking",
+      "description": "Out-of-sample validation must be required.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "OOS evidence is mandatory later."
+    },
+    {
+      "code": "walk_forward_required",
+      "category": "alpha_validation",
+      "severity": "blocking",
+      "description": "Walk-forward validation must be required.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Walk-forward evidence is mandatory later."
+    },
+    {
+      "code": "transaction_cost_model_required",
+      "category": "transaction_cost",
+      "severity": "blocking",
+      "description": "Transaction cost model must be defined.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Costs can erase apparent factor performance."
+    },
+    {
+      "code": "a_share_market_rule_integration_required",
+      "category": "market_rules",
+      "severity": "blocking",
+      "description": "A-share market rules must be integrated into validation.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "T+1, lots, limits, suspensions, ST and fees matter."
+    },
+    {
+      "code": "liquidity_capacity_policy",
+      "category": "market_rules",
+      "severity": "blocking",
+      "description": "Liquidity and capacity policy must exist.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Small-capital and capacity constraints are core requirements."
+    },
+    {
+      "code": "raw_data_storage_policy",
+      "category": "storage",
+      "severity": "blocking",
+      "description": "Raw data storage policy must be defined.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Raw data must not leak into git."
+    },
+    {
+      "code": "raw_data_not_committed_policy",
+      "category": "storage",
+      "severity": "blocking",
+      "description": "Raw data must not be committed.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Use local_artifacts or later approved data lake."
+    },
+    {
+      "code": "reproducibility_manifest_required",
+      "category": "reproducibility",
+      "severity": "blocking",
+      "description": "Dataset reproducibility manifest must be required.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Validation must be reproducible."
+    },
+    {
+      "code": "provider_failure_handling_policy",
+      "category": "data_source",
+      "severity": "blocking",
+      "description": "Provider failures must be logged and handled.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "Failures must not be silently ignored."
+    },
+    {
+      "code": "paper_feedback_required_before_live",
+      "category": "compliance",
+      "severity": "blocking",
+      "description": "Paper feedback is required before any live path.",
+      "passed": false,
+      "required_before_real_alpha": false,
+      "required_before_strategy_tournament": true,
+      "notes": "No live readiness exists."
+    },
+    {
+      "code": "no_alpha_claim_without_evidence",
+      "category": "alpha_validation",
+      "severity": "blocking",
+      "description": "No alpha claim is allowed without full evidence gates.",
+      "passed": false,
+      "required_before_real_alpha": true,
+      "required_before_strategy_tournament": true,
+      "notes": "No alpha evidence exists yet."
+    }
+  ]
+}

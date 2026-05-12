@@ -38,6 +38,12 @@ External analytics require:
 - no trading-ready claim
 - no strategy tournament shortcut
 
+## Real Data Readiness
+
+External analytics prototypes require real-data readiness.
+
+The fake fixture is insufficient for Alphalens, quantstats, empyrical, or Qlib output.
+
 ## Current Status
 
 Phase 7D creates metadata, validation helpers, docs, and tests only. External analytics remain candidates, not proof.

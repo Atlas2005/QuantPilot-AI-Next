@@ -6,17 +6,19 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-Phase 7D: external analytics preflight, implemented by Codex and pending ChatGPT closure review.
+Phase 7E: real data readiness gate, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
-Step 0A through Phase 7C are completed.
+Step 0A through Phase 7D are completed.
 
-Phase 7C factor candidate library foundation is completed and pushed.
+Phase 7D external analytics preflight is completed and pushed.
 
-Phase 7D adds external analytics preflight metadata, standard-library validation helpers, docs, and tests for Alphalens, quantstats, empyrical, Qlib, and related candidates.
+Phase 7E adds real-data readiness gate metadata, standard-library validation/evaluation helpers, docs, and tests.
 
 The repository is still not trading-ready.
+
+No real data was fetched.
 
 No real alpha is proven.
 
@@ -26,8 +28,6 @@ No final backtest engine is selected.
 
 No production adapter exists.
 
-No real market data was used.
-
 No broker/order/live path exists.
 
 ## Current Prohibitions
@@ -35,9 +35,10 @@ No broker/order/live path exists.
 - do not fetch market data
 - do not call external APIs
 - do not install or uninstall packages
-- do not add external analytics dependencies to `pyproject.toml`
-- do not run factor tear sheets or portfolio reports
-- do not claim external analytics output exists
+- do not add external dependencies to `pyproject.toml`
+- do not create provider clients or API token handling
+- do not write real data files
+- do not run real factor validation
 - do not claim statistical significance
 - do not run real backtests
 - do not implement strategy tournament
@@ -49,4 +50,4 @@ No broker/order/live path exists.
 
 ## Next Expected Action
 
-ChatGPT should perform Phase 7D module closure review. Do not move to external package installation, larger real-data validation, strategy tournament, or real alpha claims until approved.
+ChatGPT should perform Phase 7E module closure review. Do not move to controlled real data fetch, larger data validation, external analytics install, strategy tournament, or real alpha claims until approved.

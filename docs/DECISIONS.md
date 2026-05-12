@@ -200,3 +200,13 @@
 - External analytics require larger real data and evidence gates.
 - No external library can substitute for OOS, walk-forward, transaction costs, A-share execution rules, and paper feedback.
 - No strategy tournament is created.
+
+## Phase 7E Decisions
+
+- Phase 7E creates real-data readiness gate only.
+- Python standard library is the correct runtime for this module.
+- No real data fetch occurs.
+- No data source is approved.
+- Raw data must not be committed.
+- OOS, walk-forward, transaction costs, A-share rules, capacity, reproducibility, and paper feedback are required before real alpha claims.
+- No strategy tournament is created.

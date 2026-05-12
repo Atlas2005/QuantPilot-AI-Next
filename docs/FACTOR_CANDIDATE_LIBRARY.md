@@ -44,6 +44,10 @@ Factor candidates must pass validation policy before external analytics can be m
 
 External analytics preflight does not validate candidates. It only records tool roles, risks, and future prototype boundaries.
 
+## Phase 7E Real Data Readiness
+
+No factor candidate may move beyond toy or not-evaluated status until the real-data readiness gate is satisfied.
+
 ## Next Likely Phases
 
 - Phase 7D external analytics preflight

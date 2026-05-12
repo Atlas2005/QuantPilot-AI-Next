@@ -32,6 +32,12 @@ Field mapping comes before adapter implementation so future prototypes can compa
 
 Any future prototype output must conform to the Phase 3 daily bar schema before it can be considered for adapter work.
 
+## Real Data Readiness Gate
+
+Real data cannot be used for alpha validation until the Phase 7E readiness gate is satisfied.
+
+Raw provider data must not be committed. Provider reliability and schema mapping are required before larger use. Provider failures must be logged and must not be silently ignored.
+
 ## SimTradeData Policy
 
 SimTradeData is architecture-reference only until license review. Do not clone, copy, integrate, commercialize, or create derivative work before explicit review.
