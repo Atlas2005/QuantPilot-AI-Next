@@ -21,6 +21,8 @@ The first probe run confirmed clean failure behavior when `vectorbt` was missing
 
 The install pulled vectorbt-related packages into the local Python environment and downgraded an already-present `pandas` installation from `3.0.2` to `2.3.3` because of vectorbt's dependency constraint. This is a local environment risk and should be reviewed before future prototype work.
 
+Phase 6C-1.1 adds the follow-up policy: future external-framework prototypes must run in isolated `.venv-prototypes/<tool-name>/` environments. The vectorbt result remains useful as local fixture shape-compatibility evidence, but it is not enough for engine selection. Any deeper vectorbt test should be rerun in an isolated prototype environment if needed.
+
 ## Prototype Result
 
 - Fake local fixture used: yes, `data/fixtures/a_share_daily_sample_valid.csv`.

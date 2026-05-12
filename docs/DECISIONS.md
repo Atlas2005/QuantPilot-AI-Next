@@ -119,3 +119,11 @@
 - The vectorbt prototype result does not equal engine selection.
 - No vectorbt adapter exists yet.
 - The prototype used only the fake Phase 3 local fixture and did not prove A-share trading realism.
+
+## Phase 6C-1.1 Decisions
+
+- Future external framework prototypes require isolated `.venv-prototypes/<tool-name>/` environments.
+- The main Python environment must not be used for Backtrader, RQAlpha, Qlib, or deeper vectorbt prototype installs.
+- Prototype dependencies remain out of `pyproject.toml` until a later approved adapter phase.
+- Package install and uninstall operations require explicit approval.
+- Prototype helper scripts may create environments but must not install packages or run prototypes automatically.

@@ -6,45 +6,46 @@ QuantPilot-AI 2.0 is an open-source-first, adapter-first, contract-first, A-shar
 
 ## Current Phase
 
-Phase 6C-1: manual vectorbt local-fixture prototype, implemented by Codex and pending ChatGPT closure review.
+Phase 6C-1.1: prototype environment isolation policy, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
-Step 0A through Phase 6B are completed.
+Step 0A through Phase 6C-1 are completed.
 
-Phase 6C-1 created:
+Phase 6C-1.1 created:
 
-- `docs/modules/phase_6c_1_vectorbt_manual_prototype/MODULE_KICKOFF_REVIEW.md`
-- `docs/modules/phase_6c_1_vectorbt_manual_prototype/MODULE_CLOSURE_DRAFT.md`
-- `tools/manual_backtest_prototypes/vectorbt_local_fixture_probe.py`
-- `tools/manual_backtest_prototypes/summarize_vectorbt_probe.py`
-- `docs/BACKTEST_PROTOTYPE_RESULTS.md`
+- `docs/PROTOTYPE_ENVIRONMENT_ISOLATION_POLICY.md`
+- `tools/prototype_envs/README.md`
+- `tools/prototype_envs/create_prototype_env.ps1`
+- `tools/prototype_envs/create_prototype_env.sh`
+- `tests/policy/test_prototype_environment_policy.py`
+- Phase 6C-1.1 module kickoff and closure draft docs
 
-The manual vectorbt probe used only the fake Phase 3 fixture. It showed vectorbt can consume the local fixture shape and produce toy metrics, but it did not prove A-share realism or production readiness.
+The patch requires future external-framework prototypes to use isolated `.venv-prototypes/<tool-name>/` environments instead of the main project Python environment.
 
 ## Current Prohibitions
 
 - do not fetch market data
 - do not call external APIs
-- do not add vectorbt or other prototype frameworks to `pyproject.toml`
+- do not install or uninstall packages without explicit approval
+- do not add prototype packages to `pyproject.toml`
+- do not run Backtrader/RQAlpha/Qlib/deeper vectorbt prototypes in the main project environment
 - do not implement production backtest adapters
-- do not move to Backtrader or RQAlpha prototype without ChatGPT approval
 - do not implement strategy, alpha/factor, portfolio, model, broker, live order, or agent workflows
 - do not mark anything trading-ready
 - do not claim profitability
 
 ## Next Recommended Step
 
-ChatGPT should perform Phase 6C-1 closure review.
+ChatGPT should perform Phase 6C-1.1 closure review.
 
-Do not move to Backtrader/RQAlpha prototype or adapter implementation until approved.
+Do not start Backtrader/RQAlpha/Qlib prototype work until approved.
 
 ## Key Decisions
 
-- Phase 6C-1 tested vectorbt only.
-- vectorbt is not a project dependency.
-- No final backtest engine selection was made.
-- No production vectorbt adapter exists.
+- Prototype environments must live under `.venv-prototypes/<tool-name>/`.
+- Prototype outputs remain under `local_artifacts/`.
+- Prototype dependencies remain out of project dependency files until a later approved adapter phase.
 - Codex is not the project architect.
 
 ## Role Split

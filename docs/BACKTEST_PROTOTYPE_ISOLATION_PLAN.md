@@ -22,6 +22,8 @@ These are first-wave because they represent different useful categories: vectori
 
 Phase 6C-1 tested vectorbt first because it has a lower broker/live-trading surface than Backtrader and RQAlpha. The manual local-fixture probe showed that vectorbt can consume the fake Phase 3 daily OHLCV fixture and produce toy metrics, but it did not prove A-share realism, T+1 handling, limit-up/down behavior, suspension handling, liquidity realism, or production readiness.
 
+Phase 6C-1 also showed that installing prototype frameworks in the main Python environment is unsafe: the local vectorbt install changed the environment and downgraded an already-present pandas version. Future prototypes must use `.venv-prototypes/<tool-name>/`. Backtrader, RQAlpha, Qlib, and any deeper vectorbt tests must not run in the main project environment. No future framework prototype should proceed without environment isolation.
+
 Detailed result summary lives in:
 
 ```text
