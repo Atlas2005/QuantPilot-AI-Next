@@ -1,0 +1,64 @@
+{
+  "profile_name": "a_share_basic",
+  "profile_version": "0.1.0",
+  "market": "China A-share",
+  "source_status": "manually_review_required",
+  "source_notes": "Provisional configurable profile. Must be checked against latest SSE/SZSE/BSE rules before any real use. This file is not legal, compliance, broker, or trading guidance.",
+  "effective_date": "provisional",
+  "last_reviewed": "2026-05-12",
+  "manual_review_required": true,
+  "lot_rules": {
+    "buy_lot_size": 100,
+    "buy_lot_increment": 100,
+    "odd_lot_sell_policy": "deferred"
+  },
+  "t_plus_rules": {
+    "enabled": true,
+    "sell_same_day_acquired_forbidden": true
+  },
+  "price_limit_rules": {
+    "enabled": true,
+    "board_limits": {
+      "main": 0.10,
+      "star": 0.20,
+      "chinext": 0.20,
+      "bse": 0.30,
+      "unknown": null
+    },
+    "risk_flag_limits": {
+      "normal": null,
+      "st": null,
+      "delisting": null,
+      "unknown": null
+    },
+    "risk_flag_notes": {
+      "st": "Manual review required before use. Do not assume this provisional profile reflects current rules.",
+      "delisting": "Manual review required before use. Do not assume this provisional profile reflects current rules."
+    },
+    "special_cases_deferred": [
+      "IPO first trading days",
+      "relisting",
+      "no price limit days",
+      "temporary suspension",
+      "risk warning rule changes"
+    ]
+  },
+  "suspension_rules": {
+    "block_if_suspended": true
+  },
+  "fee_rules": {
+    "commission_rate": null,
+    "stamp_duty_rate": null,
+    "transfer_fee_rate": null,
+    "manual_review_required": true
+  },
+  "slippage_rules": {
+    "enabled": false,
+    "manual_review_required": true
+  },
+  "liquidity_rules": {
+    "enabled": true,
+    "max_participation_rate": 0.10,
+    "manual_review_required": true
+  }
+}

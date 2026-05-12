@@ -83,3 +83,12 @@
 - Provider packages are not project dependencies yet.
 - Raw provider output must not be committed.
 - Phase 4B makes no final data-source selection.
+
+## Phase 5 Decisions
+
+- Phase 5 creates source-versioned market rule profiles.
+- Market rules are configurable, not permanent hard-coded truth.
+- Official exchange rules must be refreshed before production use.
+- Fee, slippage, corporate action, and special-case handling remains deferred.
+- No broker or execution path exists.
+- No backtest engine exists.

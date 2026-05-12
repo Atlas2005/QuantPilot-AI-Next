@@ -6,39 +6,47 @@ QuantPilot-AI 2.0 is an open-source-first, adapter-first, contract-first, A-shar
 
 ## Current Phase
 
-Phase 4B: manual provider probes, implemented and run by Codex pending ChatGPT closure review.
+Phase 5: A-share market rule foundation, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
-Step 0A through Phase 4A are completed.
+Step 0A through Phase 4B are completed.
 
-Phase 4B created manual-only probe scripts for AkShare and Baostock under `tools/manual_provider_probes/`.
+Phase 5 created:
 
-Both probes were run. Provider packages were already available locally, so no package install was performed in this phase. Both probes failed safely because provider/network access was unavailable, produced zero rows, and wrote only ignored local summaries under `local_artifacts/`.
+- `src/quantpilot_core/market_rules/types.py`
+- `src/quantpilot_core/market_rules/profile.py`
+- `src/quantpilot_core/market_rules/a_share.py`
+- `data/market_rule_profiles/a_share_basic_v0_1.json`
+- market rule profile tests
+- A-share rule behavior tests
+- `docs/A_SHARE_MARKET_RULES.md`
+- Phase 5 module kickoff and closure draft docs
 
 ## Current Prohibitions
 
-- do not commit raw market data
-- do not add provider packages to `pyproject.toml`
-- do not implement production data-source adapters
-- do not create token or secrets handling
+- do not fetch market data
+- do not call external APIs
+- do not install packages
+- do not import external frameworks
+- do not implement broker, live trading, or real order submission paths
 - do not run backtests
-- do not implement strategy, factor, portfolio, model, broker, live order, or agent workflows
+- do not implement strategy, alpha/factor, portfolio, model, or agent workflows
 - do not mark anything trading-ready
 - do not claim profitability
 
 ## Next Recommended Step
 
-ChatGPT should perform Phase 4B closure review.
+ChatGPT should perform Phase 5 closure review.
 
-Do not move to provider adapter implementation until approved.
+Do not move to Phase 6 until approved.
 
 ## Key Decisions
 
-- AkShare and Baostock were the only providers probed.
-- Tushare, OpenBB, SimTradeData, and other tools remain deferred for this phase.
-- Probe failure is acceptable if safely captured.
-- Raw provider outputs stay in ignored `local_artifacts/`.
+- Market rule profiles are configurable and source-versioned.
+- Current profile values are provisional and manual-review-required.
+- Official SSE/SZSE/BSE rules must be refreshed before real use.
+- Fee, slippage, corporate action, and special-case handling remains deferred.
 - Codex is not the project architect.
 
 ## Role Split
