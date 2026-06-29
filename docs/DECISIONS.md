@@ -253,3 +253,14 @@
 - R2 does not add broker integration, live trading, or order execution.
 - R2 does not implement a full backtest engine, risk engine, factor analysis engine, market calendar system, or portfolio accounting engine.
 - The next phase should move toward controlled adapter/probe integration or sandbox validation using fixtures, not live trading.
+
+## R3 Decisions
+
+- R3 adds a Provider-Sandbox Fixture Bridge.
+- R3 uses local mock/fixture/probe data only.
+- R3 does not add real market data ingestion, provider API calls, broker integration, live trading, or order execution.
+- R3 does not reinvent data providers. AkShare, Baostock, Tushare, and similar projects remain external adapter candidates.
+- R3 rejects approved production data flags unless the snapshot is explicitly marked as fixture/mock/probe data.
+- R3 rejects provider failure signals, poor data quality signals, missing timestamp audit, missing adapter boundaries, and invalid OHLCV-like values.
+- R3 preserves provider latency and provider failure assumptions for later R2 Market Reality Sandbox scenario usage.
+- The next phase should move toward controlled provider probe execution or a small-sample data gate only after review.
