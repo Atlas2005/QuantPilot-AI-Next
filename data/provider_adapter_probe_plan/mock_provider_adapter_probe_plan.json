@@ -1,0 +1,54 @@
+{
+  "provider": {
+    "provider_candidate_name": "mock",
+    "provider_project_name": "mock",
+    "project_url_or_docs": "local mock fixture only; AkShare/Baostock/Tushare remain future adapter candidates",
+    "explicitly_mock": true
+  },
+  "endpoint_category": "mock_daily_bar",
+  "schema_requirement": {
+    "expected_fields": ["symbol", "trading_date", "open", "high", "low", "close", "volume", "amount"],
+    "schema_notes": "Mock OHLCV-like daily-bar schema for adapter probe planning only."
+  },
+  "symbol_universe_scope": ["600000.SH"],
+  "start_date": "2026-06-29",
+  "end_date": "2026-06-29",
+  "max_rows": 1,
+  "max_symbols": 1,
+  "max_lookback_days": 1,
+  "adjustment_policy_review": {
+    "adjustment_policy": "mock_unadjusted_fixture_only",
+    "review_notes": "Adjustment policy is explicit for planning; no real market data is fetched.",
+    "explicit": true
+  },
+  "symbol_mapping_review": {
+    "symbol_format": "A-share exchange suffix fixture format",
+    "mapping_notes": "Symbol mapping is local fixture-only and not provider-approved.",
+    "explicit": true
+  },
+  "timestamp_audit_review": {
+    "timestamp_source": "local fixture timestamp",
+    "audit_notes": "Timestamp audit is required before any future gate submission.",
+    "explicit": true
+  },
+  "license_review": {
+    "review_status": "fixture_only_not_production_approved",
+    "commercial_use_notes": "No provider license approval is granted by this plan.",
+    "approved_for_production": false
+  },
+  "adapter_boundary": {
+    "boundary_statement": "R6 defines an adapter probe plan only; mature providers remain external candidates.",
+    "external_project_remains_candidate": true,
+    "no_self_built_provider": true
+  },
+  "no_real_data_fetch": true,
+  "no_provider_api_call": true,
+  "no_broker": true,
+  "no_live_trading": true,
+  "no_order_execution": true,
+  "output_classification": "adapter_probe_plan_only",
+  "compatible_with_r4_gate": true,
+  "compatible_with_r3_bridge": true,
+  "compatible_with_r2_sandbox_fixture": true,
+  "plan_notes": "Static local adapter probe plan only. No real market data, no provider API call, no broker, no live trading, no order execution. Future adapter candidate only."
+}

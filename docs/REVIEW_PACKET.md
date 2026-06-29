@@ -2,17 +2,17 @@
 
 ## Task Name
 
-R5: Controlled Mock Provider Probe Run.
+R6: Controlled Provider Adapter Probe Plan.
 
 ## Changed Files
 
-- `docs/CONTROLLED_MOCK_PROVIDER_PROBE_RUN.md`
-- `data/mock_probe_run/mock_probe_run_request.json`
-- `src/quantpilot_core/mock_probe_run/__init__.py`
-- `src/quantpilot_core/mock_probe_run/contracts.py`
-- `src/quantpilot_core/mock_probe_run/run.py`
-- `tests/mock_probe_run/test_mock_probe_run_contracts.py`
-- `tests/mock_probe_run/test_mock_probe_run.py`
+- `docs/CONTROLLED_PROVIDER_ADAPTER_PROBE_PLAN.md`
+- `data/provider_adapter_probe_plan/mock_provider_adapter_probe_plan.json`
+- `src/quantpilot_core/provider_adapter_probe_plan/__init__.py`
+- `src/quantpilot_core/provider_adapter_probe_plan/contracts.py`
+- `src/quantpilot_core/provider_adapter_probe_plan/plan.py`
+- `tests/provider_adapter_probe_plan/test_provider_adapter_probe_plan_contracts.py`
+- `tests/provider_adapter_probe_plan/test_provider_adapter_probe_plan.py`
 - `README.md`
 - `docs/CURRENT_PROJECT_STATE.md`
 - `docs/DECISIONS.md`
@@ -21,9 +21,9 @@ R5: Controlled Mock Provider Probe Run.
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R5 Controlled Mock Provider Probe Run contracts and orchestration helpers.
-- Tests changed: Yes. Added R5 Controlled Mock Provider Probe Run contract and orchestration tests.
-- Local fixture changed: Yes. Added `data/mock_probe_run/mock_probe_run_request.json`.
+- `src/` changed: Yes. Added standard-library-only R6 Controlled Provider Adapter Probe Plan contracts and validation helpers.
+- Tests changed: Yes. Added R6 Controlled Provider Adapter Probe Plan contract and validation tests.
+- Local fixture changed: Yes. Added `data/provider_adapter_probe_plan/mock_provider_adapter_probe_plan.json`.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
 - Manual probe scripts changed: No.
@@ -51,28 +51,28 @@ R5: Controlled Mock Provider Probe Run.
 
 ## Language / Runtime Decision
 
-R5 keeps new `src/` code on Python standard library only. No provider, analytics, backtest, broker, or agent framework package is a project dependency.
+R6 keeps new `src/` code on Python standard library only. No provider, analytics, backtest, broker, or agent framework package is a project dependency.
 
-R5 adds mock-only orchestration/glue contracts and local run helpers only. It does not implement a full data provider, market data ingestion, provider API calls, simulator, backtest engine, broker integration, live trading, or order execution path.
+R6 adds provider adapter probe planning contracts and validation helpers only. It does not implement a full data provider, market data ingestion, provider API calls, simulator, backtest engine, broker integration, live trading, or order execution path.
 
-R5 respects R1.1 open-source integration guardrails by keeping AkShare, Baostock, Tushare, and similar projects as adapter candidates, not replaced self-built providers.
+R6 respects R1.1 open-source integration guardrails by keeping AkShare, Baostock, Tushare, and similar projects as adapter candidates, not replaced self-built providers.
 
-R5 uses local mock fixtures only and proves the local R4 gate -> R3 bridge -> R2 sandbox fixture path.
+R6 uses a local mock plan fixture only and defines the review evidence needed before any future provider adapter probe can be submitted to the R4 gate.
 
 ## Validation Commands and Results
 
 `python -m compileall src`
 
-Result: passed via `.venv/bin/python -m compileall src`.
+Result: bare `python` is not available in this environment (`zsh:1: command not found: python`). Passed via `.venv/bin/python -m compileall src`.
 
 `python -m pytest`
 
-Result: passed via `.venv/bin/python -m pytest`.
+Result: bare `python` is not available in this environment (`zsh:1: command not found: python`). Passed via `.venv/bin/python -m pytest`.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 214 items
-214 passed in 0.11s
+collected 234 items
+234 passed in 0.12s
 ```
 
 `git status -sb`
@@ -80,35 +80,35 @@ collected 214 items
 Result:
 
 ```text
-## r5-controlled-mock-provider-probe-run
+## r6-controlled-provider-adapter-probe-plan
  M README.md
  M docs/CURRENT_PROJECT_STATE.md
  M docs/DECISIONS.md
  M docs/NEXT_CHAT_HANDOFF.md
  M docs/REVIEW_PACKET.md
-?? data/mock_probe_run/
-?? docs/CONTROLLED_MOCK_PROVIDER_PROBE_RUN.md
-?? src/quantpilot_core/mock_probe_run/
-?? tests/mock_probe_run/
+?? data/provider_adapter_probe_plan/
+?? docs/CONTROLLED_PROVIDER_ADAPTER_PROBE_PLAN.md
+?? src/quantpilot_core/provider_adapter_probe_plan/
+?? tests/provider_adapter_probe_plan/
 ```
 
-## R5 Controlled Mock Provider Probe Run Summary
+## R6 Controlled Provider Adapter Probe Plan Summary
 
-R5 adds a controlled mock provider probe run.
+R6 adds a controlled provider adapter probe plan.
 
-R5 proves the local R4 gate -> R3 bridge -> R2 sandbox fixture path.
+R6 defines the static plan contract, validation rules, and audit result required before any future provider adapter probe can be considered for R4 gate submission.
 
-R5 does not fetch real market data, call provider APIs, add broker integration, live trading, order execution, or write production data assets.
+R6 does not fetch real market data, call provider APIs, implement provider adapters, add broker integration, live trading, order execution, or write production data assets.
 
-R5 does not reinvent data providers. Mature provider projects remain adapter candidates.
+R6 does not reinvent data providers. Mature provider projects remain adapter candidates.
 
 ## Risks
 
 - Matrix risk labels are preliminary and require future upstream/license review.
 - Architecture targets may still need contract design before implementation.
-- R5 run contracts are mock orchestration/glue shapes only; they do not install, select, approve, or call external packages.
+- R6 plan contracts are planning/validation shapes only; they do not install, select, approve, or call external packages.
 - The Phase 7E readiness gate still blocks real alpha validation until updated, reviewed, and explicitly approved.
 
 ## Recommended Next Step
 
-ChatGPT should perform R5 closure review. The next phase may define a controlled provider adapter probe or real small-sample data gate only after review.
+ChatGPT should perform R6 closure review. The next phase may define a real small-sample data gate only after review.
