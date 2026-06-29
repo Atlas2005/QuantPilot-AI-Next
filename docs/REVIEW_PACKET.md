@@ -2,17 +2,17 @@
 
 ## Task Name
 
-R6: Controlled Provider Adapter Probe Plan.
+R7: Real A-share Small Sample Data Gate.
 
 ## Changed Files
 
-- `docs/CONTROLLED_PROVIDER_ADAPTER_PROBE_PLAN.md`
-- `data/provider_adapter_probe_plan/mock_provider_adapter_probe_plan.json`
-- `src/quantpilot_core/provider_adapter_probe_plan/__init__.py`
-- `src/quantpilot_core/provider_adapter_probe_plan/contracts.py`
-- `src/quantpilot_core/provider_adapter_probe_plan/plan.py`
-- `tests/provider_adapter_probe_plan/test_provider_adapter_probe_plan_contracts.py`
-- `tests/provider_adapter_probe_plan/test_provider_adapter_probe_plan.py`
+- `docs/REAL_A_SHARE_SMALL_SAMPLE_DATA_GATE.md`
+- `data/small_sample_data_gate/mock_small_sample_data_gate_request.json`
+- `src/quantpilot_core/small_sample_data_gate/__init__.py`
+- `src/quantpilot_core/small_sample_data_gate/contracts.py`
+- `src/quantpilot_core/small_sample_data_gate/gate.py`
+- `tests/small_sample_data_gate/test_small_sample_data_gate_contracts.py`
+- `tests/small_sample_data_gate/test_small_sample_data_gate.py`
 - `README.md`
 - `docs/CURRENT_PROJECT_STATE.md`
 - `docs/DECISIONS.md`
@@ -21,9 +21,9 @@ R6: Controlled Provider Adapter Probe Plan.
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R6 Controlled Provider Adapter Probe Plan contracts and validation helpers.
-- Tests changed: Yes. Added R6 Controlled Provider Adapter Probe Plan contract and validation tests.
-- Local fixture changed: Yes. Added `data/provider_adapter_probe_plan/mock_provider_adapter_probe_plan.json`.
+- `src/` changed: Yes. Added standard-library-only R7 Real A-share Small Sample Data Gate contracts and validation helpers.
+- Tests changed: Yes. Added R7 Real A-share Small Sample Data Gate contract and validation tests.
+- Local fixture changed: Yes. Added `data/small_sample_data_gate/mock_small_sample_data_gate_request.json`.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
 - Manual probe scripts changed: No.
@@ -51,28 +51,28 @@ R6: Controlled Provider Adapter Probe Plan.
 
 ## Language / Runtime Decision
 
-R6 keeps new `src/` code on Python standard library only. No provider, analytics, backtest, broker, or agent framework package is a project dependency.
+R7 keeps new `src/` code on Python standard library only. No provider, analytics, backtest, broker, or agent framework package is a project dependency.
 
-R6 adds provider adapter probe planning contracts and validation helpers only. It does not implement a full data provider, market data ingestion, provider API calls, simulator, backtest engine, broker integration, live trading, or order execution path.
+R7 adds small-sample data gate contracts and manifest validation helpers only. It does not implement a full data provider, market data ingestion, provider API calls, simulator, backtest engine, broker integration, live trading, or order execution path.
 
-R6 respects R1.1 open-source integration guardrails by keeping AkShare, Baostock, Tushare, and similar projects as adapter candidates, not replaced self-built providers.
+R7 respects R1.1 open-source integration guardrails by keeping AkShare, Baostock, Tushare, and similar projects as adapter candidates, not replaced self-built providers.
 
-R6 uses a local mock plan fixture only and defines the review evidence needed before any future provider adapter probe can be submitted to the R4 gate.
+R7 uses a local mock manifest fixture only and defines the review evidence needed before any future small-sample dataset can enter sandbox replay preparation.
 
 ## Validation Commands and Results
 
 `python -m compileall src`
 
-Result: bare `python` is not available in this environment (`zsh:1: command not found: python`). Passed via `.venv/bin/python -m compileall src`.
+Result: passed in the active `.venv`.
 
 `python -m pytest`
 
-Result: bare `python` is not available in this environment (`zsh:1: command not found: python`). Passed via `.venv/bin/python -m pytest`.
+Result: passed in the active `.venv`.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 234 items
-234 passed in 0.12s
+collected 252 items
+252 passed in 0.12s
 ```
 
 `git status -sb`
@@ -80,35 +80,35 @@ collected 234 items
 Result:
 
 ```text
-## r6-controlled-provider-adapter-probe-plan
+## r7-real-a-share-small-sample-data-gate
  M README.md
  M docs/CURRENT_PROJECT_STATE.md
  M docs/DECISIONS.md
  M docs/NEXT_CHAT_HANDOFF.md
  M docs/REVIEW_PACKET.md
-?? data/provider_adapter_probe_plan/
-?? docs/CONTROLLED_PROVIDER_ADAPTER_PROBE_PLAN.md
-?? src/quantpilot_core/provider_adapter_probe_plan/
-?? tests/provider_adapter_probe_plan/
+?? data/small_sample_data_gate/
+?? docs/REAL_A_SHARE_SMALL_SAMPLE_DATA_GATE.md
+?? src/quantpilot_core/small_sample_data_gate/
+?? tests/small_sample_data_gate/
 ```
 
-## R6 Controlled Provider Adapter Probe Plan Summary
+## R7 Real A-share Small Sample Data Gate Summary
 
-R6 adds a controlled provider adapter probe plan.
+R7 adds a real A-share small-sample data gate.
 
-R6 defines the static plan contract, validation rules, and audit result required before any future provider adapter probe can be considered for R4 gate submission.
+R7 defines the manifest contract, validation rules, and audit result required before any future small-sample dataset can be considered for sandbox replay preparation.
 
-R6 does not fetch real market data, call provider APIs, implement provider adapters, add broker integration, live trading, order execution, or write production data assets.
+R7 does not fetch or include real market data, call provider APIs, implement data provider adapters, add broker integration, live trading, order execution, or write production data assets.
 
-R6 does not reinvent data providers. Mature provider projects remain adapter candidates.
+R7 does not reinvent data providers. Mature provider projects remain adapter candidates.
 
 ## Risks
 
 - Matrix risk labels are preliminary and require future upstream/license review.
 - Architecture targets may still need contract design before implementation.
-- R6 plan contracts are planning/validation shapes only; they do not install, select, approve, or call external packages.
+- R7 gate contracts are manifest/validation shapes only; they do not install, select, approve, or call external packages.
 - The Phase 7E readiness gate still blocks real alpha validation until updated, reviewed, and explicitly approved.
 
 ## Recommended Next Step
 
-ChatGPT should perform R6 closure review. The next phase may define a real small-sample data gate only after review.
+ChatGPT should perform R7 closure review. The next phase may define sandbox replay preparation using approved fixture or small-sample manifests only after review.

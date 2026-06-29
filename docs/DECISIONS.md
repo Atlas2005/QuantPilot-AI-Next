@@ -297,3 +297,15 @@
 - R6 plans must include provider identity, endpoint category, schema requirements, adjustment-policy review, symbol-mapping review, timestamp-audit review, license review, adapter boundary, narrow scope limits, safety flags, output classification, and R4/R3/R2 compatibility.
 - Future modules must keep checking mature open-source candidates before self-building provider infrastructure.
 - The next phase may define a real small-sample data gate only after review.
+
+## R7 Decisions
+
+- R7 adds a Real A-share Small Sample Data Gate.
+- R7 is data gate, manifest, and validation only, not data ingestion.
+- R7 does not fetch or include real market data.
+- R7 does not call provider APIs or implement data provider adapters.
+- R7 does not add broker integration, live trading, or order execution.
+- R7 does not write production data assets.
+- R7 requires small-sample manifests to reference an R6 provider adapter probe plan, an approved R4 gate decision, R3 bridge compatibility, and R2 sandbox fixture compatibility.
+- R7 keeps AkShare, Baostock, Tushare, and similar mature projects as external adapter candidates.
+- The next phase may define sandbox replay preparation using approved fixture or small-sample manifests only after review.

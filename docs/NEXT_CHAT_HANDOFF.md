@@ -6,7 +6,7 @@ QuantPilot-AI 2.0 is a profit-first, integration-first, adapter-first, contract-
 
 ## Current Phase
 
-R6: Controlled Provider Adapter Probe Plan, implemented by Codex and pending ChatGPT closure review.
+R7: Real A-share Small Sample Data Gate, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
@@ -83,6 +83,16 @@ R6 created:
 - `tests/provider_adapter_probe_plan/test_provider_adapter_probe_plan_contracts.py`
 - `tests/provider_adapter_probe_plan/test_provider_adapter_probe_plan.py`
 
+R7 created:
+
+- `docs/REAL_A_SHARE_SMALL_SAMPLE_DATA_GATE.md`
+- `data/small_sample_data_gate/mock_small_sample_data_gate_request.json`
+- `src/quantpilot_core/small_sample_data_gate/__init__.py`
+- `src/quantpilot_core/small_sample_data_gate/contracts.py`
+- `src/quantpilot_core/small_sample_data_gate/gate.py`
+- `tests/small_sample_data_gate/test_small_sample_data_gate_contracts.py`
+- `tests/small_sample_data_gate/test_small_sample_data_gate.py`
+
 No provider package was installed, no real data was fetched, no provider was approved, no adapter was created, no broker connection was created, and no order execution path was added.
 
 R2 does not implement full backtest, risk, factor, calendar, or portfolio accounting engines.
@@ -94,6 +104,8 @@ R4 does not fetch real market data, call provider APIs, implement a provider ada
 R5 uses local mock fixtures only and proves the R4 gate -> R3 bridge -> R2 sandbox fixture path.
 
 R6 uses a local mock plan fixture only and defines adapter-probe planning validation before any future R4 gate submission.
+
+R7 uses a local mock manifest fixture only and defines small-sample data admission validation before any future sandbox replay preparation.
 
 ## Current Prohibitions
 
@@ -113,9 +125,9 @@ R6 uses a local mock plan fixture only and defines adapter-probe planning valida
 
 ## Next Recommended Step
 
-ChatGPT should perform R6 closure review.
+ChatGPT should perform R7 closure review.
 
-The next phase may define a real small-sample data gate only after review.
+The next phase may define sandbox replay preparation using approved fixture or small-sample manifests only after review.
 
 Future work must stay contract/adapter-boundary focused. It must use mature open-source candidates through adapters, prototypes, or benchmarks where practical instead of becoming a fully self-built backtest, risk, factor, calendar, or portfolio accounting engine.
 
@@ -140,6 +152,8 @@ Do not move to larger real-data validation, external analytics install, broker c
 - R5 does not write production data assets and does not call provider APIs.
 - R6 adds Controlled Provider Adapter Probe Plan validation only.
 - R6 does not implement provider adapters, fetch real market data, or call provider APIs.
+- R7 adds Real A-share Small Sample Data Gate validation only.
+- R7 does not fetch or include real market data, call provider APIs, implement data provider adapters, write production data assets, or add broker/live/order paths.
 - Codex is not the project architect.
 
 ## Role Split

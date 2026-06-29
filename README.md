@@ -6,9 +6,9 @@ QuantPilot-AI 2.0 is planned as a profit-first, integration-first, adapter-first
 
 ## Current Phase
 
-The repository is in R6: Controlled Provider Adapter Probe Plan, implemented by Codex and pending ChatGPT closure review.
+The repository is in R7: Real A-share Small Sample Data Gate, implemented by Codex and pending ChatGPT closure review.
 
-The repository contains planning docs, safety gates, core contracts, local fixtures, candidate registries, market-rule foundations, prototype evidence, the R1 integration reset matrix, R1.1 open-source integration enforcement guardrails, R2 Market Reality Sandbox contracts, the R3 Provider-Sandbox Fixture Bridge, the R4 Controlled Provider Probe Execution Gate, the R5 Controlled Mock Provider Probe Run, and the R6 Controlled Provider Adapter Probe Plan. It must not contain broker connection, live trading path, real order execution path, provider API calls, real market data ingestion, production data assets, or unapproved agent execution workflow.
+The repository contains planning docs, safety gates, core contracts, local fixtures, candidate registries, market-rule foundations, prototype evidence, the R1 integration reset matrix, R1.1 open-source integration enforcement guardrails, R2 Market Reality Sandbox contracts, the R3 Provider-Sandbox Fixture Bridge, the R4 Controlled Provider Probe Execution Gate, the R5 Controlled Mock Provider Probe Run, the R6 Controlled Provider Adapter Probe Plan, and the R7 Real A-share Small Sample Data Gate. It must not contain broker connection, live trading path, real order execution path, provider API calls, real market data ingestion, production data assets, or unapproved agent execution workflow.
 
 ## Legacy v2 Position
 
@@ -63,6 +63,7 @@ Codex is responsible for creating files, organizing documentation, running valid
 - [Controlled Provider Probe Gate](docs/CONTROLLED_PROVIDER_PROBE_GATE.md)
 - [Controlled Mock Provider Probe Run](docs/CONTROLLED_MOCK_PROVIDER_PROBE_RUN.md)
 - [Controlled Provider Adapter Probe Plan](docs/CONTROLLED_PROVIDER_ADAPTER_PROBE_PLAN.md)
+- [Real A-share Small Sample Data Gate](docs/REAL_A_SHARE_SMALL_SAMPLE_DATA_GATE.md)
 - [Capital-Aware Fast Compounding Mode](docs/CAPITAL_AWARE_FAST_COMPOUNDING_MODE.md)
 - [Open-Source Replacement Strategy](docs/OPEN_SOURCE_REPLACEMENT_STRATEGY.md)
 - [Open-Source Integration Enforcement](docs/OPEN_SOURCE_INTEGRATION_ENFORCEMENT.md)

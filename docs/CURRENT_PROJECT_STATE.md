@@ -6,7 +6,7 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-R6: Controlled Provider Adapter Probe Plan, implemented by Codex and pending ChatGPT closure review.
+R7: Real A-share Small Sample Data Gate, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
@@ -27,6 +27,8 @@ R4 adds a Controlled Provider Probe Execution Gate that decides whether mock, dr
 R5 adds a local mock-only run that connects R4 gate request, R4 gate decision, R3 provider probe snapshot, R3 bridge conversion, and R2 `SandboxFixtureInput`.
 
 R6 adds a controlled provider adapter probe plan and validator that define the review evidence required before any future provider adapter probe can be submitted to the R4 gate.
+
+R7 adds a real A-share small-sample data gate and manifest validator that define the metadata required before a future small-sample dataset can enter sandbox replay preparation.
 
 The repository is still not trading-ready.
 
@@ -58,7 +60,9 @@ R5 uses local mock fixtures only. It does not fetch real market data, call provi
 
 R6 uses a local mock plan fixture only. It does not fetch real market data, call provider APIs, implement a provider adapter, add broker integration, live trading, order execution, write production data assets, or reinvent data providers.
 
-Future modules must check mature open-source candidates before self-building generic infrastructure. R6 stays plan/validation focused and keeps AkShare, Baostock, Tushare, and similar projects as adapter candidates.
+R7 uses a local mock manifest fixture only. It does not fetch or include real market data, call provider APIs, implement data provider adapters, add broker integration, live trading, order execution, write production data assets, or reinvent data providers.
+
+Future modules must check mature open-source candidates before self-building generic infrastructure. R7 stays data-gate/manifest/validation focused and keeps AkShare, Baostock, Tushare, and similar projects as adapter candidates.
 
 ## Current Prohibitions
 
@@ -81,4 +85,4 @@ Future modules must check mature open-source candidates before self-building gen
 
 ## Next Expected Action
 
-ChatGPT should perform R6 module closure review. The next phase may define a real small-sample data gate only after review. Do not move to real data ingestion, dependency installation, provider API calls, broker connectivity, live trading, order execution, production data assets, or profitability claims until explicitly approved.
+ChatGPT should perform R7 module closure review. The next phase may define sandbox replay preparation using approved fixture or small-sample manifests only after review. Do not move to real data ingestion, dependency installation, provider API calls, broker connectivity, live trading, order execution, production data assets, or profitability claims until explicitly approved.
