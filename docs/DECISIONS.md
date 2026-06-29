@@ -242,3 +242,14 @@
 - Self-built code remains appropriate for contracts, adapters, glue code, A-share market reality constraints, capital/account constraints, safety gates, orchestration boundaries, and validation layers.
 - R2 Market Reality Sandbox Contracts must stay contract/adapter-boundary focused and must not become a fully self-built backtest, factor, risk, calendar, or portfolio accounting engine.
 - R1.1 adds no dependencies, no data fetches, no broker integration, no live trading, and no order execution.
+
+## R2 Decisions
+
+- R2 adds a Market Reality Sandbox contract layer and validation helpers.
+- R2 covers A-share T+1 constraints, T+0 eligibility markers where applicable, 100-share lots, price limits, suspension, ST/delisting risk flags, cash availability, account permissions, costs, slippage, partial fills, rejected orders, provider failure, data latency, and timestamp audit assumptions.
+- R2 respects R1.1 open-source integration guardrails by keeping mature engines and libraries as adapter boundaries or benchmarks.
+- External candidates such as RQAlpha, vectorbt, Backtrader, Hikyuu, Qlib, exchange_calendars, empyrical, and quantstats are not installed, imported, selected, or approved in R2.
+- R2 does not fetch real market data.
+- R2 does not add broker integration, live trading, or order execution.
+- R2 does not implement a full backtest engine, risk engine, factor analysis engine, market calendar system, or portfolio accounting engine.
+- The next phase should move toward controlled adapter/probe integration or sandbox validation using fixtures, not live trading.
