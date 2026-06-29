@@ -2,17 +2,17 @@
 
 ## Task Name
 
-R3: Provider-Sandbox Fixture Bridge.
+R4: Controlled Provider Probe Execution Gate.
 
 ## Changed Files
 
-- `docs/PROVIDER_SANDBOX_FIXTURE_BRIDGE.md`
-- `data/provider_sandbox_bridge/mock_provider_probe_snapshot.json`
-- `src/quantpilot_core/provider_sandbox_bridge/__init__.py`
-- `src/quantpilot_core/provider_sandbox_bridge/contracts.py`
-- `src/quantpilot_core/provider_sandbox_bridge/bridge.py`
-- `tests/provider_sandbox_bridge/test_provider_sandbox_bridge_contracts.py`
-- `tests/provider_sandbox_bridge/test_provider_sandbox_bridge.py`
+- `docs/CONTROLLED_PROVIDER_PROBE_GATE.md`
+- `data/provider_probe_gate/mock_provider_probe_gate_request.json`
+- `src/quantpilot_core/provider_probe_gate/__init__.py`
+- `src/quantpilot_core/provider_probe_gate/contracts.py`
+- `src/quantpilot_core/provider_probe_gate/gate.py`
+- `tests/provider_probe_gate/test_provider_probe_gate_contracts.py`
+- `tests/provider_probe_gate/test_provider_probe_gate.py`
 - `README.md`
 - `docs/CURRENT_PROJECT_STATE.md`
 - `docs/DECISIONS.md`
@@ -21,9 +21,9 @@ R3: Provider-Sandbox Fixture Bridge.
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R3 Provider-Sandbox Fixture Bridge contracts and local transformation helpers.
-- Tests changed: Yes. Added R3 Provider-Sandbox Fixture Bridge contract and bridge tests.
-- Local fixture changed: Yes. Added `data/provider_sandbox_bridge/mock_provider_probe_snapshot.json`.
+- `src/` changed: Yes. Added standard-library-only R4 Controlled Provider Probe Gate contracts and decision helpers.
+- Tests changed: Yes. Added R4 Controlled Provider Probe Gate contract and decision tests.
+- Local fixture changed: Yes. Added `data/provider_probe_gate/mock_provider_probe_gate_request.json`.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
 - Manual probe scripts changed: No.
@@ -32,6 +32,7 @@ R3: Provider-Sandbox Fixture Bridge.
 - Packages uninstalled: No.
 - `pyproject.toml` changed: No.
 - Market data/API used during implementation: No.
+- Provider API called during implementation: No.
 - Manual probes run: No.
 - Real data fetched: No.
 - Raw data committed: No.
@@ -49,13 +50,13 @@ R3: Provider-Sandbox Fixture Bridge.
 
 ## Language / Runtime Decision
 
-R3 keeps new `src/` code on Python standard library only. No provider, analytics, backtest, broker, or agent framework package is a project dependency.
+R4 keeps new `src/` code on Python standard library only. No provider, analytics, backtest, broker, or agent framework package is a project dependency.
 
-R3 adds fixture/adapter/glue contracts and local transformation helpers only. It does not implement a full data provider, market data ingestion, simulator, backtest engine, broker integration, live trading, or order execution path.
+R4 adds gate/safety/decision contracts and local decision helpers only. It does not implement a full data provider, market data ingestion, provider API calls, simulator, backtest engine, broker integration, live trading, or order execution path.
 
-R3 respects R1.1 open-source integration guardrails by keeping AkShare, Baostock, Tushare, and similar projects as adapter candidates, not replaced self-built providers.
+R4 respects R1.1 open-source integration guardrails by keeping AkShare, Baostock, Tushare, and similar projects as adapter candidates, not replaced self-built providers.
 
-R3 uses local mock/fixture/probe data only and rejects approved production data flags.
+R4 evaluates static gate requests only and does not run probes.
 
 ## Validation Commands and Results
 
@@ -69,8 +70,8 @@ Result: passed via `.venv/bin/python -m pytest`.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 184 items
-184 passed in 0.09s
+collected 198 items
+198 passed in 0.10s
 ```
 
 `git status -sb`
@@ -78,35 +79,35 @@ collected 184 items
 Result:
 
 ```text
-## r3-provider-sandbox-fixture-bridge
+## r4-controlled-provider-probe-gate
  M README.md
  M docs/CURRENT_PROJECT_STATE.md
  M docs/DECISIONS.md
  M docs/NEXT_CHAT_HANDOFF.md
  M docs/REVIEW_PACKET.md
-?? data/provider_sandbox_bridge/
-?? docs/PROVIDER_SANDBOX_FIXTURE_BRIDGE.md
-?? src/quantpilot_core/provider_sandbox_bridge/
-?? tests/provider_sandbox_bridge/
+?? data/provider_probe_gate/
+?? docs/CONTROLLED_PROVIDER_PROBE_GATE.md
+?? src/quantpilot_core/provider_probe_gate/
+?? tests/provider_probe_gate/
 ```
 
-## R3 Provider-Sandbox Fixture Bridge Summary
+## R4 Controlled Provider Probe Gate Summary
 
-R3 adds a controlled bridge from provider probe/readiness output into Market Reality Sandbox fixture inputs.
+R4 adds a controlled provider probe execution gate.
 
-R3 validates that snapshots are local mock/fixture/probe data, not approved production data.
+R4 decides whether a mock, dry-run, or controlled provider probe request is allowed and whether its output may later be considered for R3 bridge conversion.
 
-R3 does not add real market data ingestion, broker integration, live trading, or order execution.
+R4 does not fetch real market data, call provider APIs, add broker integration, live trading, or order execution.
 
-R3 does not reinvent data providers. Mature provider projects remain adapter candidates.
+R4 does not reinvent data providers. Mature provider projects remain adapter candidates.
 
 ## Risks
 
 - Matrix risk labels are preliminary and require future upstream/license review.
 - Architecture targets may still need contract design before implementation.
-- R3 bridge contracts are fixture/glue shapes only; they do not install, select, or approve external packages.
+- R4 gate contracts are safety/decision shapes only; they do not install, select, approve, or call external packages.
 - The Phase 7E readiness gate still blocks real alpha validation until updated, reviewed, and explicitly approved.
 
 ## Recommended Next Step
 
-ChatGPT should perform R3 closure review. The next phase should move toward controlled provider probe execution or a small-sample data gate only after review.
+ChatGPT should perform R4 closure review. The next phase may run a controlled mock/dry-run probe or define approved adapter probes only after review.

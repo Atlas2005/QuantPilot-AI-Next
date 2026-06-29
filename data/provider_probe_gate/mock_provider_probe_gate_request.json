@@ -1,0 +1,28 @@
+{
+  "provider_candidate_name": "mock",
+  "execution_mode": "mock_only",
+  "scope": {
+    "requested_symbols": ["600000.SH"],
+    "requested_start_date": "2026-06-29",
+    "requested_end_date": "2026-06-29",
+    "max_rows": 1,
+    "max_symbols": 1,
+    "max_lookback_days": 1,
+    "allowed_endpoint_category": "mock_daily_bar"
+  },
+  "evidence": {
+    "license_review_status": "fixture_only",
+    "adapter_boundary_acknowledged": true,
+    "timestamp_audit_required": true,
+    "latency_requirement_required": true,
+    "provider_failure_handling_required": true,
+    "sandbox_bridge_compatibility_required": true
+  },
+  "no_broker": true,
+  "no_live_trading": true,
+  "no_order_execution": true,
+  "storage_policy": "local_artifacts_or_fixture_only",
+  "output_as_probe_fixture_only": true,
+  "attempts_production_data_approval": false,
+  "request_notes": "Static mock/dry-run/probe gate configuration only. This file makes no real market data claim."
+}

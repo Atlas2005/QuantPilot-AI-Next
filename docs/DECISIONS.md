@@ -264,3 +264,14 @@
 - R3 rejects provider failure signals, poor data quality signals, missing timestamp audit, missing adapter boundaries, and invalid OHLCV-like values.
 - R3 preserves provider latency and provider failure assumptions for later R2 Market Reality Sandbox scenario usage.
 - The next phase should move toward controlled provider probe execution or a small-sample data gate only after review.
+
+## R4 Decisions
+
+- R4 adds a Controlled Provider Probe Execution Gate.
+- R4 is a gate/safety/decision layer, not a provider adapter.
+- R4 does not fetch real market data or call provider APIs.
+- R4 does not add broker integration, live trading, or order execution.
+- R4 does not reinvent data providers. AkShare, Baostock, Tushare, and similar projects remain external adapter candidates.
+- R4 allows mock-only requests only when fixture/probe constraints, scope limits, evidence requirements, safety flags, storage policy, timestamp audit, latency, failure handling, and R3 bridge compatibility are satisfied.
+- R4 rejects production-data approval attempts, unknown providers, missing license review, missing adapter boundary acknowledgement, unsafe broker/live/order flags, overbroad scope, and missing audit/failure/latency/bridge requirements.
+- The next phase may run a controlled mock/dry-run probe or define approved adapter probes only after review.
