@@ -287,3 +287,13 @@
 - R5 does not reinvent data providers. AkShare, Baostock, Tushare, and similar projects remain external adapter candidates.
 - R5 proves the local gate -> bridge -> sandbox fixture path only.
 - The next phase may define a controlled provider adapter probe or real small-sample data gate only after review.
+
+## R6 Decisions
+
+- R6 adds a Controlled Provider Adapter Probe Plan.
+- R6 is planning and validation only, not a provider adapter implementation.
+- R6 does not install dependencies, fetch real market data, call provider APIs, add broker integration, enable live trading, execute orders, or write production data assets.
+- R6 keeps AkShare, Baostock, Tushare, and similar mature projects as external adapter candidates.
+- R6 plans must include provider identity, endpoint category, schema requirements, adjustment-policy review, symbol-mapping review, timestamp-audit review, license review, adapter boundary, narrow scope limits, safety flags, output classification, and R4/R3/R2 compatibility.
+- Future modules must keep checking mature open-source candidates before self-building provider infrastructure.
+- The next phase may define a real small-sample data gate only after review.
