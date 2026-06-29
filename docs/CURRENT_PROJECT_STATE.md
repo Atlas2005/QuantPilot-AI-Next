@@ -6,13 +6,17 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-R1: Profit-First Integration Architecture Reset, implemented by Codex and pending ChatGPT closure review.
+R1.1: Open-source Integration Enforcement Patch, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
 Step 0A through Phase 7F are completed.
 
 R1 adds profit-first integration architecture docs, a multi-agent target architecture, Market Reality Sandbox architecture, Capital-Aware Fast Compounding Mode, an open-source replacement strategy, upstream dependency intelligence target, a 30-day Capital-Test MVP plan, a machine-readable integration reset matrix, and standard-library validation helpers.
+
+R1.1 adds enforceable open-source integration guardrails through a machine-readable decision table, standard-library loader/validator, tests, and documentation.
+
+R1 was architecture reset, not full external integration.
 
 The repository is still not trading-ready.
 
@@ -33,6 +37,8 @@ No production adapter exists.
 No broker/order/live path exists.
 
 No R1 candidate is approved for installation, raw data fetching, broker connection, live trading, or real order execution.
+
+Future modules must check mature open-source candidates before self-building generic infrastructure. R2 must stay contract/adapter-boundary focused, especially for Market Reality Sandbox contracts.
 
 ## Current Prohibitions
 
@@ -55,4 +61,4 @@ No R1 candidate is approved for installation, raw data fetching, broker connecti
 
 ## Next Expected Action
 
-ChatGPT should perform R1 module closure review. Recommended next phase should be selected from Market Reality Sandbox contracts, controlled provider gate refresh, or capital-aware candidate packet schemas. Do not move to real data validation, dependency installation, broker connectivity, live trading, or profitability claims until explicitly approved.
+ChatGPT should perform R1.1 module closure review. The next recommended phase is R2 Market Reality Sandbox Contracts, with strict adapter boundaries to external engines/libraries and no self-built backtest, factor, risk, calendar, or portfolio accounting core. Do not move to real data validation, dependency installation, broker connectivity, live trading, or profitability claims until explicitly approved.

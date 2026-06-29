@@ -1,0 +1,135 @@
+[
+  {
+    "module_name": "data_provider",
+    "role": "Approved market data ingestion should wrap mature A-share provider candidates behind stable QuantPilot contracts.",
+    "preferred_external_projects": [
+      "AkShare",
+      "Baostock",
+      "Tushare"
+    ],
+    "integration_status": "candidate_identified",
+    "adapter_boundary": "QuantPilot owns data contracts, schema normalization, timestamp audit, provider failure handling, and safety gates; external providers supply raw market data only after approval.",
+    "why_not_directly_integrated_yet": "Provider license, endpoint reliability, adjustment policy, symbol mapping, and raw-data storage gates are not approved.",
+    "must_not_reinvent": true,
+    "next_required_action": "Refresh provider gate review and choose controlled isolated provider probes; do not build a custom market data source when mature providers can be adapted."
+  },
+  {
+    "module_name": "market_calendar",
+    "role": "Trading sessions, holidays, and exchange-day logic for A-share research and sandbox validation.",
+    "preferred_external_projects": [
+      "exchange_calendars",
+      "pandas-market-calendars",
+      "RQAlpha trading calendar"
+    ],
+    "integration_status": "adapter_required",
+    "adapter_boundary": "QuantPilot owns A-share rule overrides, source-versioned calendar contracts, and validation tests; external calendar libraries provide baseline sessions where license and coverage permit.",
+    "why_not_directly_integrated_yet": "A-share exchange coverage, dependency weight, license posture, and exact SSE/SZSE/BSE alignment require review before adoption.",
+    "must_not_reinvent": true,
+    "next_required_action": "Evaluate mature calendar libraries before adding any custom calendar implementation."
+  },
+  {
+    "module_name": "backtest_engine",
+    "role": "Research simulation engine for signal validation before paper or capital-test readiness review.",
+    "preferred_external_projects": [
+      "RQAlpha",
+      "vectorbt",
+      "Backtrader",
+      "Hikyuu",
+      "Qlib"
+    ],
+    "integration_status": "prototype_completed",
+    "adapter_boundary": "QuantPilot owns contracts, A-share market reality checks, cost assumptions, and evidence gates; external engines remain behind adapters or isolated prototypes.",
+    "why_not_directly_integrated_yet": "Prior prototypes are not enough for final selection, and no engine has proven A-share market reality, license safety, and dependency suitability.",
+    "must_not_reinvent": true,
+    "next_required_action": "R2 must define sandbox/backtest adapter contracts before any engine selection or adapter work."
+  },
+  {
+    "module_name": "factor_analysis",
+    "role": "Factor diagnostics, IC-style analysis, tear sheets, and validation support.",
+    "preferred_external_projects": [
+      "Alphalens Reloaded",
+      "Qlib",
+      "vectorbt"
+    ],
+    "integration_status": "candidate_identified",
+    "adapter_boundary": "QuantPilot owns factor contracts, leakage gates, OOS and walk-forward policy, and A-share cost feasibility; external analytics provide diagnostics only after data gates.",
+    "why_not_directly_integrated_yet": "Real data, dataframe stack, and factor validation gates are not approved; analytics packages cannot substitute for A-share realism.",
+    "must_not_reinvent": true,
+    "next_required_action": "Benchmark factor analytics candidates before expanding custom factor report code."
+  },
+  {
+    "module_name": "risk_metrics",
+    "role": "Risk, return, drawdown, turnover, and performance diagnostics for candidate review.",
+    "preferred_external_projects": [
+      "empyrical / empyrical-reloaded",
+      "quantstats / quantstats-reloaded",
+      "vectorbt"
+    ],
+    "integration_status": "candidate_identified",
+    "adapter_boundary": "QuantPilot owns risk policy, capital constraints, cost assumptions, and report gating; external libraries provide metric calculations after validation.",
+    "why_not_directly_integrated_yet": "Metric libraries need dependency, maintenance, and data-shape review before entering the project.",
+    "must_not_reinvent": true,
+    "next_required_action": "Compare metric coverage and dependency risk before writing custom performance analytics."
+  },
+  {
+    "module_name": "portfolio_accounting",
+    "role": "Position, cash, exposure, turnover, and account-state accounting for sandbox and paper tracking.",
+    "preferred_external_projects": [
+      "RQAlpha portfolio model",
+      "Backtrader broker model",
+      "vn.py / VeighNa accounting reference"
+    ],
+    "integration_status": "adapter_required",
+    "adapter_boundary": "QuantPilot owns capital/account constraints, A-share lot and T+1 constraints, and audit snapshots; external systems can inform accounting models or be wrapped where safe.",
+    "why_not_directly_integrated_yet": "Portfolio accounting touches capital state and execution-adjacent concepts, so direct integration requires strict review and no broker path.",
+    "must_not_reinvent": true,
+    "next_required_action": "Define portfolio/account contract boundaries and benchmark external accounting models before custom implementation."
+  },
+  {
+    "module_name": "order_simulation",
+    "role": "Sandbox-only simulation of order feasibility, rejections, partial fills, slippage, costs, and liquidity constraints.",
+    "preferred_external_projects": [
+      "RQAlpha",
+      "Backtrader",
+      "Hikyuu",
+      "vn.py / VeighNa execution model reference"
+    ],
+    "integration_status": "project_specific_contract_layer",
+    "adapter_boundary": "QuantPilot owns A-share order feasibility contracts and safety gates; external engines may provide fill-model benchmarks but cannot create broker or live execution paths.",
+    "why_not_directly_integrated_yet": "A-share constraints, rejected-order reasons, and capital permissions are project-specific and must remain sandbox-only.",
+    "must_not_reinvent": false,
+    "next_required_action": "R2 should define order simulation contracts and external engine comparison points without adding execution integration."
+  },
+  {
+    "module_name": "agent_orchestration",
+    "role": "Deterministic, auditable multi-agent workflow boundaries for research, validation, risk, execution gate, updater, and reporting agents.",
+    "preferred_external_projects": [
+      "LangGraph",
+      "OpenAI Agents SDK",
+      "CrewAI",
+      "AutoGen"
+    ],
+    "integration_status": "candidate_identified",
+    "adapter_boundary": "QuantPilot owns agent contracts, safety gates, audit logs, and execution prohibitions; external runtimes may later orchestrate approved tools only.",
+    "why_not_directly_integrated_yet": "Agent safety, determinism, tool permissions, and audit boundaries are not ready for runtime integration.",
+    "must_not_reinvent": false,
+    "next_required_action": "Review agent runtimes against deterministic graph control and audit requirements before implementing orchestration."
+  },
+  {
+    "module_name": "market_reality_sandbox",
+    "role": "Project-specific A-share sandbox contract layer for T+1, T+0 eligibility where applicable, lot rules, price limits, costs, slippage, liquidity, partial fills, rejections, data latency, timestamp audit, and provider failure.",
+    "preferred_external_projects": [
+      "RQAlpha",
+      "vectorbt",
+      "Backtrader",
+      "Hikyuu",
+      "Qlib",
+      "exchange_calendars"
+    ],
+    "integration_status": "project_specific_contract_layer",
+    "adapter_boundary": "QuantPilot owns market reality contracts, A-share constraints, capital/account checks, and execution gates; external engines and libraries remain adapters, benchmarks, or prototypes.",
+    "why_not_directly_integrated_yet": "No single external project covers QuantPilot's required A-share market reality, capital/account awareness, and safety-gated order-draft workflow.",
+    "must_not_reinvent": false,
+    "next_required_action": "R2 must define contracts and adapter boundaries before any sandbox implementation expands into backtest, risk, factor, or calendar core."
+  }
+]

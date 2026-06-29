@@ -2,23 +2,15 @@
 
 ## Task Name
 
-R1: Profit-First Integration Architecture Reset.
+R1.1: Open-source Integration Enforcement Patch.
 
 ## Changed Files
 
-- `docs/modules/r1_profit_first_integration_architecture_reset/MODULE_KICKOFF_REVIEW.md`
-- `docs/modules/r1_profit_first_integration_architecture_reset/MODULE_CLOSURE_DRAFT.md`
-- `docs/PROFIT_FIRST_INTEGRATION_ARCHITECTURE.md`
-- `docs/MULTI_AGENT_TARGET_ARCHITECTURE.md`
-- `docs/MARKET_REALITY_SANDBOX_ARCHITECTURE.md`
-- `docs/CAPITAL_AWARE_FAST_COMPOUNDING_MODE.md`
-- `docs/OPEN_SOURCE_REPLACEMENT_STRATEGY.md`
-- `docs/UPSTREAM_DEPENDENCY_INTELLIGENCE_LAYER.md`
-- `docs/THIRTY_DAY_CAPITAL_TEST_MVP_PLAN.md`
-- `data/integration_reset/r1_integration_replacement_matrix.json`
+- `docs/OPEN_SOURCE_INTEGRATION_ENFORCEMENT.md`
+- `data/integration_reset/open_source_integration_decision_table.json`
 - `src/quantpilot_core/integration_reset/__init__.py`
-- `src/quantpilot_core/integration_reset/integration_matrix.py`
-- `tests/integration_reset/test_integration_matrix.py`
+- `src/quantpilot_core/integration_reset/open_source_decision_table.py`
+- `tests/integration_reset/test_open_source_decision_table.py`
 - `README.md`
 - `docs/CURRENT_PROJECT_STATE.md`
 - `docs/DECISIONS.md`
@@ -27,9 +19,10 @@ R1: Profit-First Integration Architecture Reset.
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R1 integration matrix validation helpers.
-- Tests changed: Yes. Added R1 integration matrix tests.
-- Integration matrix changed: Yes. Added `data/integration_reset/r1_integration_replacement_matrix.json`.
+- `src/` changed: Yes. Added standard-library-only R1.1 open-source decision table validation helpers.
+- Tests changed: Yes. Added R1.1 open-source decision table tests.
+- Integration matrix changed: No.
+- Open-source decision table changed: Yes. Added `data/integration_reset/open_source_integration_decision_table.json`.
 - Manual probe scripts changed: No.
 - Dependencies changed: No.
 - Packages installed: No.
@@ -51,25 +44,26 @@ R1: Profit-First Integration Architecture Reset.
 
 ## Language / Runtime Decision
 
-R1 keeps new `src/` code on Python standard library only. No provider, analytics, backtest, broker, or agent framework package is a project dependency.
+R1.1 keeps new `src/` code on Python standard library only. No provider, analytics, backtest, broker, or agent framework package is a project dependency.
 
-R1 full test validation passed after rebuilding the local `.venv` with Python 3.12.10.
+R1.1 strengthens integration-first enforcement without claiming full external integration is complete.
+
+R1.1 full test validation passed in the local `.venv` with Python 3.12.10.
 
 ## Validation Commands and Results
 
-`python3 -m compileall src`
+`python -m compileall src`
 
-Result: passed.
+Result: passed via `.venv/bin/python -m compileall src`.
 
-`python3 -m pytest`
+`python -m pytest`
 
-Result: passed.
+Result: passed via `.venv/bin/python -m pytest`.
 
 ```text
-Python 3.12.10
-pytest 9.1.1
-platform darwin
-150 passed in 0.16s
+platform darwin -- Python 3.12.10, pytest-9.1.1
+collected 157 items
+157 passed in 0.08s
 ```
 
 `git status -sb`
@@ -77,37 +71,34 @@ platform darwin
 Result:
 
 ```text
-## main...origin/main
+## r1-1-open-source-integration-enforcement
  M README.md
  M docs/CURRENT_PROJECT_STATE.md
  M docs/DECISIONS.md
  M docs/NEXT_CHAT_HANDOFF.md
  M docs/REVIEW_PACKET.md
-?? data/integration_reset/
-?? docs/CAPITAL_AWARE_FAST_COMPOUNDING_MODE.md
-?? docs/MARKET_REALITY_SANDBOX_ARCHITECTURE.md
-?? docs/MULTI_AGENT_TARGET_ARCHITECTURE.md
-?? docs/OPEN_SOURCE_REPLACEMENT_STRATEGY.md
-?? docs/PROFIT_FIRST_INTEGRATION_ARCHITECTURE.md
-?? docs/THIRTY_DAY_CAPITAL_TEST_MVP_PLAN.md
-?? docs/UPSTREAM_DEPENDENCY_INTELLIGENCE_LAYER.md
-?? docs/modules/r1_profit_first_integration_architecture_reset/
-?? src/quantpilot_core/integration_reset/
-?? tests/integration_reset/
+ M src/quantpilot_core/integration_reset/__init__.py
+?? data/integration_reset/open_source_integration_decision_table.json
+?? docs/OPEN_SOURCE_INTEGRATION_ENFORCEMENT.md
+?? src/quantpilot_core/integration_reset/open_source_decision_table.py
+?? tests/integration_reset/test_open_source_decision_table.py
 ```
 
-## R1 Integration Reset Summary
+## R1.1 Open-Source Enforcement Summary
 
-R1 records integration candidates across data sources, quant platforms, backtest engines, data quality, factor analytics, performance analytics, agent orchestration, and execution-platform benchmarking.
+R1.1 adds enforceable open-source integration guardrails through a machine-readable decision table, loader/validator code, tests, and documentation.
 
-Every candidate in the matrix has install, live trading, broker connection, and raw data fetch permissions set to false for R1.
+R1 was architecture reset, not full external integration. Future modules must check mature open-source candidates before self-building generic infrastructure.
+
+R2 Market Reality Sandbox Contracts must stay contract/adapter-boundary focused and must not become a fully self-built backtest, factor, risk, calendar, or portfolio accounting engine.
 
 ## Risks
 
 - Matrix risk labels are preliminary and require future upstream/license review.
 - Architecture targets may still need contract design before implementation.
+- R1.1 enforcement is static validation only; it does not install, select, or approve external packages.
 - The Phase 7E readiness gate still blocks real alpha validation until updated, reviewed, and explicitly approved.
 
 ## Recommended Next Step
 
-ChatGPT should perform R1 closure review. The next recommended phase is Market Reality Sandbox contracts, controlled provider gate refresh, or capital-aware candidate packet schemas.
+ChatGPT should perform R1.1 closure review. The next recommended phase is R2 Market Reality Sandbox Contracts with strict external adapter boundaries.
