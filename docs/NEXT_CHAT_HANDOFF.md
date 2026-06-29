@@ -6,7 +6,7 @@ QuantPilot-AI 2.0 is a profit-first, integration-first, adapter-first, contract-
 
 ## Current Phase
 
-R2: Market Reality Sandbox Contracts, implemented by Codex and pending ChatGPT closure review.
+R3: Provider-Sandbox Fixture Bridge, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
@@ -43,9 +43,21 @@ R2 created:
 - `tests/market_reality/test_market_reality_contracts.py`
 - `tests/market_reality/test_market_reality_validation.py`
 
+R3 created:
+
+- `docs/PROVIDER_SANDBOX_FIXTURE_BRIDGE.md`
+- `data/provider_sandbox_bridge/mock_provider_probe_snapshot.json`
+- `src/quantpilot_core/provider_sandbox_bridge/__init__.py`
+- `src/quantpilot_core/provider_sandbox_bridge/contracts.py`
+- `src/quantpilot_core/provider_sandbox_bridge/bridge.py`
+- `tests/provider_sandbox_bridge/test_provider_sandbox_bridge_contracts.py`
+- `tests/provider_sandbox_bridge/test_provider_sandbox_bridge.py`
+
 No provider package was installed, no real data was fetched, no provider was approved, no adapter was created, no broker connection was created, and no order execution path was added.
 
 R2 does not implement full backtest, risk, factor, calendar, or portfolio accounting engines.
+
+R3 does not implement a full data provider and uses local mock/fixture/probe data only.
 
 ## Current Prohibitions
 
@@ -65,9 +77,9 @@ R2 does not implement full backtest, risk, factor, calendar, or portfolio accoun
 
 ## Next Recommended Step
 
-ChatGPT should perform R2 closure review.
+ChatGPT should perform R3 closure review.
 
-The next recommended phase should move toward controlled adapter/probe integration or sandbox validation using fixtures.
+The next recommended phase should move toward controlled provider probe execution or a small-sample data gate only after review.
 
 Future work must stay contract/adapter-boundary focused. It must use mature open-source candidates through adapters, prototypes, or benchmarks where practical instead of becoming a fully self-built backtest, risk, factor, calendar, or portfolio accounting engine.
 
@@ -84,6 +96,8 @@ Do not move to larger real-data validation, external analytics install, broker c
 - Future modules must check mature open-source candidates before self-building.
 - R2 adds Market Reality Sandbox contracts and validation helpers only.
 - R2 represents mature open-source projects as adapter boundaries, not replaced self-built engines.
+- R3 adds Provider-Sandbox Fixture Bridge glue only.
+- R3 keeps mature data provider projects as external adapter candidates and does not reinvent providers.
 - Codex is not the project architect.
 
 ## Role Split

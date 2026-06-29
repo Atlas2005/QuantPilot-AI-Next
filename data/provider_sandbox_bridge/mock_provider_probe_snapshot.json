@@ -1,0 +1,29 @@
+{
+  "provider_name": "mock_provider_fixture",
+  "provider_project_name": "mock",
+  "probe_status": "mock_fixture",
+  "probe_timestamp": "2026-06-29T09:30:00Z",
+  "symbol": "600000.SH",
+  "trading_date": "2026-06-29",
+  "open_price": 10.0,
+  "high_price": 10.5,
+  "low_price": 9.8,
+  "close_price": 10.2,
+  "volume": 100000.0,
+  "amount": 1020000.0,
+  "adjustment_policy": "mock_unadjusted_fixture_only",
+  "symbol_mapping_confidence": 0.99,
+  "timestamp_audit_status": true,
+  "latency_signal": "medium",
+  "provider_failure_signal": "none",
+  "data_quality_signal": "good",
+  "adapter_boundary": {
+    "provider_project_name": "mock",
+    "adapter_role": "fixture_bridge_only",
+    "boundary_description": "Mock provider output shaped like a future AkShare, Baostock, or Tushare adapter result.",
+    "external_project_reference": "AkShare/Baostock/Tushare remain adapter candidates; this file is not real market data."
+  },
+  "is_fixture_mock_or_probe": true,
+  "approved_production_data": false,
+  "source_notes": "Static local mock fixture/probe data for R3 bridge tests only. This file contains no real market data claim."
+}

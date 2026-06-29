@@ -6,7 +6,7 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-R2: Market Reality Sandbox Contracts, implemented by Codex and pending ChatGPT closure review.
+R3: Provider-Sandbox Fixture Bridge, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
@@ -19,6 +19,8 @@ R1.1 adds enforceable open-source integration guardrails through a machine-reada
 R1 was architecture reset, not full external integration.
 
 R2 adds a Market Reality Sandbox contract and validation layer for A-share trading reality, capital/account constraints, sandbox order drafts, fill assumptions, costs, slippage, provider failure, data latency, and timestamp audit assumptions.
+
+R3 adds a Provider-Sandbox Fixture Bridge that converts explicitly local mock/fixture/probe provider snapshots into sandbox fixture inputs after validation.
 
 The repository is still not trading-ready.
 
@@ -42,7 +44,9 @@ No R1 candidate is approved for installation, raw data fetching, broker connecti
 
 R2 does not add real data, broker integration, live trading, order execution, or full backtest/risk/factor/calendar/accounting engines.
 
-Future modules must check mature open-source candidates before self-building generic infrastructure. R2 stays contract/adapter-boundary focused, especially for Market Reality Sandbox contracts.
+R3 uses local mock/fixture/probe data only. It does not add real market data ingestion, broker integration, live trading, order execution, or a self-built data provider.
+
+Future modules must check mature open-source candidates before self-building generic infrastructure. R3 stays fixture/adapter/glue focused and keeps AkShare, Baostock, Tushare, and similar projects as adapter candidates.
 
 ## Current Prohibitions
 
@@ -65,4 +69,4 @@ Future modules must check mature open-source candidates before self-building gen
 
 ## Next Expected Action
 
-ChatGPT should perform R2 module closure review. The next phase should move toward controlled adapter/probe integration or sandbox validation using fixtures, not live trading. Do not move to real data validation, dependency installation, broker connectivity, live trading, order execution, or profitability claims until explicitly approved.
+ChatGPT should perform R3 module closure review. The next phase should move toward controlled provider probe execution or a small-sample data gate only after review. Do not move to real data ingestion, dependency installation, broker connectivity, live trading, order execution, or profitability claims until explicitly approved.

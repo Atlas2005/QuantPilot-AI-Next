@@ -6,9 +6,9 @@ QuantPilot-AI 2.0 is planned as a profit-first, integration-first, adapter-first
 
 ## Current Phase
 
-The repository is in R2: Market Reality Sandbox Contracts, implemented by Codex and pending ChatGPT closure review.
+The repository is in R3: Provider-Sandbox Fixture Bridge, implemented by Codex and pending ChatGPT closure review.
 
-The repository contains planning docs, safety gates, core contracts, local fixtures, candidate registries, market-rule foundations, prototype evidence, the R1 integration reset matrix, R1.1 open-source integration enforcement guardrails, and R2 Market Reality Sandbox contracts. It must not contain broker connection, live trading path, real order execution path, or unapproved agent execution workflow.
+The repository contains planning docs, safety gates, core contracts, local fixtures, candidate registries, market-rule foundations, prototype evidence, the R1 integration reset matrix, R1.1 open-source integration enforcement guardrails, R2 Market Reality Sandbox contracts, and the R3 Provider-Sandbox Fixture Bridge. It must not contain broker connection, live trading path, real order execution path, real market data ingestion, or unapproved agent execution workflow.
 
 ## Legacy v2 Position
 
@@ -59,6 +59,7 @@ Codex is responsible for creating files, organizing documentation, running valid
 - [Multi-Agent Target Architecture](docs/MULTI_AGENT_TARGET_ARCHITECTURE.md)
 - [Market Reality Sandbox Architecture](docs/MARKET_REALITY_SANDBOX_ARCHITECTURE.md)
 - [Market Reality Sandbox Contracts](docs/MARKET_REALITY_SANDBOX_CONTRACTS.md)
+- [Provider-Sandbox Fixture Bridge](docs/PROVIDER_SANDBOX_FIXTURE_BRIDGE.md)
 - [Capital-Aware Fast Compounding Mode](docs/CAPITAL_AWARE_FAST_COMPOUNDING_MODE.md)
 - [Open-Source Replacement Strategy](docs/OPEN_SOURCE_REPLACEMENT_STRATEGY.md)
 - [Open-Source Integration Enforcement](docs/OPEN_SOURCE_INTEGRATION_ENFORCEMENT.md)
