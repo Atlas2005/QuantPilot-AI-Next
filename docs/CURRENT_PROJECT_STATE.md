@@ -6,15 +6,13 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-Phase 7F: controlled provider retry readiness probe, implemented by Codex and pending ChatGPT closure review.
+R1: Profit-First Integration Architecture Reset, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
-Step 0A through Phase 7E are completed.
+Step 0A through Phase 7F are completed.
 
-Phase 7E real-data readiness gate is completed and pushed.
-
-Phase 7F adds controlled provider retry readiness policy metadata, standard-library summary validation helpers, manual-only AkShare and Baostock retry probe scripts, docs, and tests.
+R1 adds profit-first integration architecture docs, a multi-agent target architecture, Market Reality Sandbox architecture, Capital-Aware Fast Compounding Mode, an open-source replacement strategy, upstream dependency intelligence target, a 30-day Capital-Test MVP plan, a machine-readable integration reset matrix, and standard-library validation helpers.
 
 The repository is still not trading-ready.
 
@@ -34,6 +32,8 @@ No production adapter exists.
 
 No broker/order/live path exists.
 
+No R1 candidate is approved for installation, raw data fetching, broker connection, live trading, or real order execution.
+
 ## Current Prohibitions
 
 - do not fetch market data unless a later approved manual probe explicitly allows it
@@ -50,8 +50,9 @@ No broker/order/live path exists.
 - do not implement production adapters
 - do not implement model, broker, live order, or agent workflows
 - do not mark anything trading-ready
+- do not claim profitability
 - do not copy old v2 source code
 
 ## Next Expected Action
 
-ChatGPT should perform Phase 7F module closure review. Do not move to larger real-data validation, external analytics install, strategy tournament, or real alpha claims until approved.
+ChatGPT should perform R1 module closure review. Recommended next phase should be selected from Market Reality Sandbox contracts, controlled provider gate refresh, or capital-aware candidate packet schemas. Do not move to real data validation, dependency installation, broker connectivity, live trading, or profitability claims until explicitly approved.

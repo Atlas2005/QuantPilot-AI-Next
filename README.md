@@ -2,13 +2,13 @@
 
 QuantPilot-AI-Next is the official next-generation project for QuantPilot-AI 2.0.
 
-QuantPilot-AI 2.0 is planned as an open-source-first, adapter-first, contract-first, A-share-first AI quant integration platform. The project is designed to evolve toward a profitable AI quantitative trading platform through evidence-gated research, realistic A-share market modeling, reproducible validation, paper feedback, and formal readiness review.
+QuantPilot-AI 2.0 is planned as a profit-first, integration-first, adapter-first, contract-first, A-share-first AI quant research and trading decision platform. The project is designed to move toward controlled capital testing through evidence-gated research, realistic A-share market modeling, reproducible validation, paper feedback, and formal readiness review.
 
 ## Current Phase
 
-The repository is in Phase 0B: clean skeleton and minimal CI, pending ChatGPT closure review.
+The repository is in R1: Profit-First Integration Architecture Reset, implemented by Codex and pending ChatGPT closure review.
 
-The repository may contain a minimal `src` layout, placeholder contracts, placeholder registry, safety defaults, minimal tests, and CI. It must not contain trading logic, data ingestion, backtest engine implementation, model training, broker connection, live trading path, order execution path, or agent orchestration implementation.
+The repository contains planning docs, safety gates, core contracts, local fixtures, candidate registries, market-rule foundations, prototype evidence, and the R1 integration reset matrix. It must not contain broker connection, live trading path, real order execution path, or unapproved agent execution workflow.
 
 ## Legacy v2 Position
 
@@ -55,3 +55,10 @@ Codex is responsible for creating files, organizing documentation, running valid
 - [Next Chat Handoff](docs/NEXT_CHAT_HANDOFF.md)
 - [Next Step Decision](docs/NEXT_STEP_DECISION.md)
 - [Review Packet](docs/REVIEW_PACKET.md)
+- [Profit-First Integration Architecture](docs/PROFIT_FIRST_INTEGRATION_ARCHITECTURE.md)
+- [Multi-Agent Target Architecture](docs/MULTI_AGENT_TARGET_ARCHITECTURE.md)
+- [Market Reality Sandbox Architecture](docs/MARKET_REALITY_SANDBOX_ARCHITECTURE.md)
+- [Capital-Aware Fast Compounding Mode](docs/CAPITAL_AWARE_FAST_COMPOUNDING_MODE.md)
+- [Open-Source Replacement Strategy](docs/OPEN_SOURCE_REPLACEMENT_STRATEGY.md)
+- [Upstream Dependency Intelligence Layer](docs/UPSTREAM_DEPENDENCY_INTELLIGENCE_LAYER.md)
+- [Thirty-Day Capital-Test MVP Plan](docs/THIRTY_DAY_CAPITAL_TEST_MVP_PLAN.md)

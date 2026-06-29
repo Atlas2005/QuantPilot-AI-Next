@@ -219,3 +219,16 @@
 - A successful provider probe does not approve a data source.
 - A successful provider probe does not prove alpha.
 - No strategy tournament is created.
+
+## R1 Decisions
+
+- QuantPilot-AI-Next pivots to a profit-first, integration-first, capital-aware architecture target for a 30-day v0.1 Capital-Test MVP.
+- R1 replaces the old framing "small capital survival mode" with "Capital-Aware Fast Compounding Mode."
+- R1 is architecture reset only and does not approve package installation, raw data fetching, broker connection, live trading, or real order execution.
+- Future modules should move the project closer to controlled capital testing, market simulation, signal validation, sandbox order drafts, paper tracking, or execution-readiness review.
+- Mature external tools must be reviewed before building major custom modules.
+- Market Reality Sandbox becomes a formal architecture target for A-share T+1, T+0 eligibility where applicable, 100-share lot rules, price limits, ST/suspension/delisting flags, costs, slippage, liquidity, partial fills, rejected orders, data latency, timestamp audit, and provider failure.
+- Multi-agent architecture remains a target only. No agent runtime is installed or integrated in R1.
+- Upstream dependency intelligence becomes a formal target layer for GitHub/PyPI/license/version/update risk.
+- The R1 integration reset matrix is machine-readable and every candidate keeps install, live trading, broker connection, and raw data fetch permissions false.
+- No profitability claim is made in R1.
