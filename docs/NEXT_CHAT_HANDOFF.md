@@ -2,27 +2,31 @@
 
 ## Project Goal
 
-QuantPilot-AI 2.0 is an open-source-first, adapter-first, contract-first, A-share-first AI quant integration platform designed to evolve toward a profitable AI quantitative trading platform through evidence-gated research.
+QuantPilot-AI 2.0 is a profit-first, integration-first, adapter-first, contract-first, A-share-first AI quant research and trading decision platform designed to move toward controlled capital testing through evidence-gated research.
 
 ## Current Phase
 
-Phase 7F: controlled provider retry readiness probe, implemented by Codex and pending ChatGPT closure review.
+R1: Profit-First Integration Architecture Reset, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
-Step 0A through Phase 7E are completed.
+Step 0A through Phase 7F are completed.
 
-Phase 7F created:
+R1 created:
 
-- `src/quantpilot_core/data/provider_probe_readiness.py`
-- `data/provider_probe_readiness/provider_probe_policy_v0_1.json`
-- `tools/manual_provider_probes/run_akshare_retry_probe.py`
-- `tools/manual_provider_probes/run_baostock_retry_probe.py`
-- `docs/CONTROLLED_PROVIDER_RETRY_PROBE.md`
-- `tests/data/test_provider_probe_readiness.py`
-- Phase 7F module kickoff and closure draft docs
+- `docs/PROFIT_FIRST_INTEGRATION_ARCHITECTURE.md`
+- `docs/MULTI_AGENT_TARGET_ARCHITECTURE.md`
+- `docs/MARKET_REALITY_SANDBOX_ARCHITECTURE.md`
+- `docs/CAPITAL_AWARE_FAST_COMPOUNDING_MODE.md`
+- `docs/OPEN_SOURCE_REPLACEMENT_STRATEGY.md`
+- `docs/UPSTREAM_DEPENDENCY_INTELLIGENCE_LAYER.md`
+- `docs/THIRTY_DAY_CAPITAL_TEST_MVP_PLAN.md`
+- `data/integration_reset/r1_integration_replacement_matrix.json`
+- `src/quantpilot_core/integration_reset/`
+- `tests/integration_reset/test_integration_matrix.py`
+- R1 module kickoff and closure draft docs
 
-Manual probes were not run during implementation. No provider package was installed, no real data was fetched, no provider was approved, and no adapter was created.
+No provider package was installed, no real data was fetched, no provider was approved, no adapter was created, no broker connection was created, and no order execution path was added.
 
 ## Current Prohibitions
 
@@ -38,19 +42,22 @@ Manual probes were not run during implementation. No provider package was instal
 - do not implement production adapters
 - do not implement broker/live/order or agent workflows
 - do not mark anything trading-ready
+- do not claim profitability
 
 ## Next Recommended Step
 
-ChatGPT should perform Phase 7F closure review.
+ChatGPT should perform R1 closure review.
 
-Do not move to larger real-data validation, external analytics install, strategy tournament, or real alpha claims until approved.
+The next recommended phase is one of: Market Reality Sandbox contracts, controlled provider gate refresh, or capital-aware candidate packet schemas.
+
+Do not move to larger real-data validation, external analytics install, broker connectivity, live trading, strategy tournament, or real alpha claims until approved.
 
 ## Key Decisions
 
-- Phase 7F is a controlled readiness probe layer, not provider approval.
-- Manual probe scripts are not test dependencies and are not run in CI.
-- Raw provider data must not be committed.
-- Successful provider probes do not prove alpha.
+- R1 is architecture reset only, not implementation approval.
+- Capital-Aware Fast Compounding Mode replaces the old small-capital framing.
+- Market Reality Sandbox is now a formal architecture target.
+- External candidates are recorded in a machine-readable matrix with all R1 safety permissions false.
 - Codex is not the project architect.
 
 ## Role Split
