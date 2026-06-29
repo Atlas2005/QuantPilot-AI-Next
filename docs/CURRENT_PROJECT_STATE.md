@@ -6,7 +6,7 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-R1.1: Open-source Integration Enforcement Patch, implemented by Codex and pending ChatGPT closure review.
+R2: Market Reality Sandbox Contracts, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
@@ -17,6 +17,8 @@ R1 adds profit-first integration architecture docs, a multi-agent target archite
 R1.1 adds enforceable open-source integration guardrails through a machine-readable decision table, standard-library loader/validator, tests, and documentation.
 
 R1 was architecture reset, not full external integration.
+
+R2 adds a Market Reality Sandbox contract and validation layer for A-share trading reality, capital/account constraints, sandbox order drafts, fill assumptions, costs, slippage, provider failure, data latency, and timestamp audit assumptions.
 
 The repository is still not trading-ready.
 
@@ -38,7 +40,9 @@ No broker/order/live path exists.
 
 No R1 candidate is approved for installation, raw data fetching, broker connection, live trading, or real order execution.
 
-Future modules must check mature open-source candidates before self-building generic infrastructure. R2 must stay contract/adapter-boundary focused, especially for Market Reality Sandbox contracts.
+R2 does not add real data, broker integration, live trading, order execution, or full backtest/risk/factor/calendar/accounting engines.
+
+Future modules must check mature open-source candidates before self-building generic infrastructure. R2 stays contract/adapter-boundary focused, especially for Market Reality Sandbox contracts.
 
 ## Current Prohibitions
 
@@ -61,4 +65,4 @@ Future modules must check mature open-source candidates before self-building gen
 
 ## Next Expected Action
 
-ChatGPT should perform R1.1 module closure review. The next recommended phase is R2 Market Reality Sandbox Contracts, with strict adapter boundaries to external engines/libraries and no self-built backtest, factor, risk, calendar, or portfolio accounting core. Do not move to real data validation, dependency installation, broker connectivity, live trading, or profitability claims until explicitly approved.
+ChatGPT should perform R2 module closure review. The next phase should move toward controlled adapter/probe integration or sandbox validation using fixtures, not live trading. Do not move to real data validation, dependency installation, broker connectivity, live trading, order execution, or profitability claims until explicitly approved.

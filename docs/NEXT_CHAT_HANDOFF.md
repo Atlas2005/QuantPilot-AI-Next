@@ -6,7 +6,7 @@ QuantPilot-AI 2.0 is a profit-first, integration-first, adapter-first, contract-
 
 ## Current Phase
 
-R1.1: Open-source Integration Enforcement Patch, implemented by Codex and pending ChatGPT closure review.
+R2: Market Reality Sandbox Contracts, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
@@ -34,7 +34,18 @@ R1.1 created:
 - `tests/integration_reset/test_open_source_decision_table.py`
 - exports from `src/quantpilot_core/integration_reset/__init__.py`
 
+R2 created:
+
+- `docs/MARKET_REALITY_SANDBOX_CONTRACTS.md`
+- `src/quantpilot_core/market_reality/__init__.py`
+- `src/quantpilot_core/market_reality/contracts.py`
+- `src/quantpilot_core/market_reality/validation.py`
+- `tests/market_reality/test_market_reality_contracts.py`
+- `tests/market_reality/test_market_reality_validation.py`
+
 No provider package was installed, no real data was fetched, no provider was approved, no adapter was created, no broker connection was created, and no order execution path was added.
+
+R2 does not implement full backtest, risk, factor, calendar, or portfolio accounting engines.
 
 ## Current Prohibitions
 
@@ -54,11 +65,11 @@ No provider package was installed, no real data was fetched, no provider was app
 
 ## Next Recommended Step
 
-ChatGPT should perform R1.1 closure review.
+ChatGPT should perform R2 closure review.
 
-The next recommended phase is R2 Market Reality Sandbox Contracts.
+The next recommended phase should move toward controlled adapter/probe integration or sandbox validation using fixtures.
 
-R2 must stay contract/adapter-boundary focused. It must use mature open-source candidates through adapters, prototypes, or benchmarks where practical instead of becoming a fully self-built backtest, risk, factor, calendar, or portfolio accounting engine.
+Future work must stay contract/adapter-boundary focused. It must use mature open-source candidates through adapters, prototypes, or benchmarks where practical instead of becoming a fully self-built backtest, risk, factor, calendar, or portfolio accounting engine.
 
 Do not move to larger real-data validation, external analytics install, broker connectivity, live trading, strategy tournament, or real alpha claims until approved.
 
@@ -71,6 +82,8 @@ Do not move to larger real-data validation, external analytics install, broker c
 - R1.1 makes open-source integration review enforceable with a decision table and validator.
 - R1 was architecture reset, not full external integration.
 - Future modules must check mature open-source candidates before self-building.
+- R2 adds Market Reality Sandbox contracts and validation helpers only.
+- R2 represents mature open-source projects as adapter boundaries, not replaced self-built engines.
 - Codex is not the project architect.
 
 ## Role Split
