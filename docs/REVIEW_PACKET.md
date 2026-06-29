@@ -2,17 +2,17 @@
 
 ## Task Name
 
-R4: Controlled Provider Probe Execution Gate.
+R5: Controlled Mock Provider Probe Run.
 
 ## Changed Files
 
-- `docs/CONTROLLED_PROVIDER_PROBE_GATE.md`
-- `data/provider_probe_gate/mock_provider_probe_gate_request.json`
-- `src/quantpilot_core/provider_probe_gate/__init__.py`
-- `src/quantpilot_core/provider_probe_gate/contracts.py`
-- `src/quantpilot_core/provider_probe_gate/gate.py`
-- `tests/provider_probe_gate/test_provider_probe_gate_contracts.py`
-- `tests/provider_probe_gate/test_provider_probe_gate.py`
+- `docs/CONTROLLED_MOCK_PROVIDER_PROBE_RUN.md`
+- `data/mock_probe_run/mock_probe_run_request.json`
+- `src/quantpilot_core/mock_probe_run/__init__.py`
+- `src/quantpilot_core/mock_probe_run/contracts.py`
+- `src/quantpilot_core/mock_probe_run/run.py`
+- `tests/mock_probe_run/test_mock_probe_run_contracts.py`
+- `tests/mock_probe_run/test_mock_probe_run.py`
 - `README.md`
 - `docs/CURRENT_PROJECT_STATE.md`
 - `docs/DECISIONS.md`
@@ -21,9 +21,9 @@ R4: Controlled Provider Probe Execution Gate.
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R4 Controlled Provider Probe Gate contracts and decision helpers.
-- Tests changed: Yes. Added R4 Controlled Provider Probe Gate contract and decision tests.
-- Local fixture changed: Yes. Added `data/provider_probe_gate/mock_provider_probe_gate_request.json`.
+- `src/` changed: Yes. Added standard-library-only R5 Controlled Mock Provider Probe Run contracts and orchestration helpers.
+- Tests changed: Yes. Added R5 Controlled Mock Provider Probe Run contract and orchestration tests.
+- Local fixture changed: Yes. Added `data/mock_probe_run/mock_probe_run_request.json`.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
 - Manual probe scripts changed: No.
@@ -33,6 +33,7 @@ R4: Controlled Provider Probe Execution Gate.
 - `pyproject.toml` changed: No.
 - Market data/API used during implementation: No.
 - Provider API called during implementation: No.
+- Production data assets written: No.
 - Manual probes run: No.
 - Real data fetched: No.
 - Raw data committed: No.
@@ -50,13 +51,13 @@ R4: Controlled Provider Probe Execution Gate.
 
 ## Language / Runtime Decision
 
-R4 keeps new `src/` code on Python standard library only. No provider, analytics, backtest, broker, or agent framework package is a project dependency.
+R5 keeps new `src/` code on Python standard library only. No provider, analytics, backtest, broker, or agent framework package is a project dependency.
 
-R4 adds gate/safety/decision contracts and local decision helpers only. It does not implement a full data provider, market data ingestion, provider API calls, simulator, backtest engine, broker integration, live trading, or order execution path.
+R5 adds mock-only orchestration/glue contracts and local run helpers only. It does not implement a full data provider, market data ingestion, provider API calls, simulator, backtest engine, broker integration, live trading, or order execution path.
 
-R4 respects R1.1 open-source integration guardrails by keeping AkShare, Baostock, Tushare, and similar projects as adapter candidates, not replaced self-built providers.
+R5 respects R1.1 open-source integration guardrails by keeping AkShare, Baostock, Tushare, and similar projects as adapter candidates, not replaced self-built providers.
 
-R4 evaluates static gate requests only and does not run probes.
+R5 uses local mock fixtures only and proves the local R4 gate -> R3 bridge -> R2 sandbox fixture path.
 
 ## Validation Commands and Results
 
@@ -70,8 +71,8 @@ Result: passed via `.venv/bin/python -m pytest`.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 198 items
-198 passed in 0.10s
+collected 214 items
+214 passed in 0.11s
 ```
 
 `git status -sb`
@@ -79,35 +80,35 @@ collected 198 items
 Result:
 
 ```text
-## r4-controlled-provider-probe-gate
+## r5-controlled-mock-provider-probe-run
  M README.md
  M docs/CURRENT_PROJECT_STATE.md
  M docs/DECISIONS.md
  M docs/NEXT_CHAT_HANDOFF.md
  M docs/REVIEW_PACKET.md
-?? data/provider_probe_gate/
-?? docs/CONTROLLED_PROVIDER_PROBE_GATE.md
-?? src/quantpilot_core/provider_probe_gate/
-?? tests/provider_probe_gate/
+?? data/mock_probe_run/
+?? docs/CONTROLLED_MOCK_PROVIDER_PROBE_RUN.md
+?? src/quantpilot_core/mock_probe_run/
+?? tests/mock_probe_run/
 ```
 
-## R4 Controlled Provider Probe Gate Summary
+## R5 Controlled Mock Provider Probe Run Summary
 
-R4 adds a controlled provider probe execution gate.
+R5 adds a controlled mock provider probe run.
 
-R4 decides whether a mock, dry-run, or controlled provider probe request is allowed and whether its output may later be considered for R3 bridge conversion.
+R5 proves the local R4 gate -> R3 bridge -> R2 sandbox fixture path.
 
-R4 does not fetch real market data, call provider APIs, add broker integration, live trading, or order execution.
+R5 does not fetch real market data, call provider APIs, add broker integration, live trading, order execution, or write production data assets.
 
-R4 does not reinvent data providers. Mature provider projects remain adapter candidates.
+R5 does not reinvent data providers. Mature provider projects remain adapter candidates.
 
 ## Risks
 
 - Matrix risk labels are preliminary and require future upstream/license review.
 - Architecture targets may still need contract design before implementation.
-- R4 gate contracts are safety/decision shapes only; they do not install, select, approve, or call external packages.
+- R5 run contracts are mock orchestration/glue shapes only; they do not install, select, approve, or call external packages.
 - The Phase 7E readiness gate still blocks real alpha validation until updated, reviewed, and explicitly approved.
 
 ## Recommended Next Step
 
-ChatGPT should perform R4 closure review. The next phase may run a controlled mock/dry-run probe or define approved adapter probes only after review.
+ChatGPT should perform R5 closure review. The next phase may define a controlled provider adapter probe or real small-sample data gate only after review.
