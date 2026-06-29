@@ -30,3 +30,8 @@ local_outputs/
 local_artifacts/
 *.local.csv
 *.local.json
+
+# Local review artifacts
+review_packets/
+*.DS_Store
+.DS_Store
