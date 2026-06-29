@@ -1,0 +1,61 @@
+{
+  "request_notes": "Mock small-sample gate request metadata only. No real market data included.",
+  "manifest": {
+    "dataset_id": "mock-small-sample-a-share-metadata-only-r7",
+    "source_review": {
+      "provider_candidate_name": "mock",
+      "source_project": "mock metadata fixture only; AkShare/Baostock/Tushare remain future external adapter candidates",
+      "documentation_marker": "mock small-sample gate request metadata; no real market data included",
+      "provider_adapter_probe_plan_reference": "R6 mock provider adapter probe plan accepted for review only",
+      "approved_r4_gate_decision_reference": "R4 mock/dry-run gate approval reference required before future data admission",
+      "r3_bridge_compatible": true,
+      "r2_sandbox_fixture_compatible": true
+    },
+    "scope": {
+      "symbol_list": ["600000.SH"],
+      "start_date": "2026-06-29",
+      "end_date": "2026-06-29",
+      "max_symbols": 1,
+      "max_rows": 1,
+      "max_lookback_days": 1,
+      "declared_row_count": 1
+    },
+    "license_review": {
+      "review_status": "mock_metadata_only_not_production_approved",
+      "commercial_use_notes": "No provider license approval is granted by this mock manifest.",
+      "approved_for_production": false
+    },
+    "schema_review": {
+      "expected_schema_fields": ["symbol", "trading_date", "open", "high", "low", "close", "volume", "amount"],
+      "schema_notes": "Expected future small-sample OHLCV-like schema; no market rows are included here.",
+      "reviewed": true
+    },
+    "timestamp_audit": {
+      "audit_status": "mock_timestamp_metadata_reviewed",
+      "timestamp_source": "mock local metadata timestamp marker",
+      "reviewed": true
+    },
+    "adjustment_policy_audit": {
+      "adjustment_policy": "mock_unadjusted_metadata_only",
+      "audit_notes": "Adjustment policy must be explicit before future sandbox replay preparation.",
+      "reviewed": true
+    },
+    "symbol_mapping_audit": {
+      "symbol_format": "A-share exchange suffix metadata format",
+      "mapping_confidence": "mock metadata only",
+      "audit_notes": "Symbol mapping confidence is reviewed for metadata only.",
+      "reviewed": true
+    },
+    "storage_policy": {
+      "storage_root": "data/small_sample_data_gate",
+      "allowed_storage_path": "data/small_sample_data_gate/mock_manifest_only",
+      "version_marker": "r7-mock-metadata-v1"
+    },
+    "data_classification": "small_sample_research_only",
+    "no_production_data": true,
+    "no_broker": true,
+    "no_live_trading": true,
+    "no_order_execution": true,
+    "audit_notes": "Mock small-sample gate request metadata. No real market data included. small_sample_research_only. No production data. No broker. No live trading. No order execution."
+  }
+}
