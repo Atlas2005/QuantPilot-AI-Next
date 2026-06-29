@@ -6,7 +6,7 @@ QuantPilot-AI 2.0 is a profit-first, integration-first, adapter-first, contract-
 
 ## Current Phase
 
-R1: Profit-First Integration Architecture Reset, implemented by Codex and pending ChatGPT closure review.
+R1.1: Open-source Integration Enforcement Patch, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
@@ -25,6 +25,14 @@ R1 created:
 - `src/quantpilot_core/integration_reset/`
 - `tests/integration_reset/test_integration_matrix.py`
 - R1 module kickoff and closure draft docs
+
+R1.1 created:
+
+- `docs/OPEN_SOURCE_INTEGRATION_ENFORCEMENT.md`
+- `data/integration_reset/open_source_integration_decision_table.json`
+- `src/quantpilot_core/integration_reset/open_source_decision_table.py`
+- `tests/integration_reset/test_open_source_decision_table.py`
+- exports from `src/quantpilot_core/integration_reset/__init__.py`
 
 No provider package was installed, no real data was fetched, no provider was approved, no adapter was created, no broker connection was created, and no order execution path was added.
 
@@ -46,9 +54,11 @@ No provider package was installed, no real data was fetched, no provider was app
 
 ## Next Recommended Step
 
-ChatGPT should perform R1 closure review.
+ChatGPT should perform R1.1 closure review.
 
-The next recommended phase is one of: Market Reality Sandbox contracts, controlled provider gate refresh, or capital-aware candidate packet schemas.
+The next recommended phase is R2 Market Reality Sandbox Contracts.
+
+R2 must stay contract/adapter-boundary focused. It must use mature open-source candidates through adapters, prototypes, or benchmarks where practical instead of becoming a fully self-built backtest, risk, factor, calendar, or portfolio accounting engine.
 
 Do not move to larger real-data validation, external analytics install, broker connectivity, live trading, strategy tournament, or real alpha claims until approved.
 
@@ -58,6 +68,9 @@ Do not move to larger real-data validation, external analytics install, broker c
 - Capital-Aware Fast Compounding Mode replaces the old small-capital framing.
 - Market Reality Sandbox is now a formal architecture target.
 - External candidates are recorded in a machine-readable matrix with all R1 safety permissions false.
+- R1.1 makes open-source integration review enforceable with a decision table and validator.
+- R1 was architecture reset, not full external integration.
+- Future modules must check mature open-source candidates before self-building.
 - Codex is not the project architect.
 
 ## Role Split

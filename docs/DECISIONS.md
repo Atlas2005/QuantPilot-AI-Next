@@ -232,3 +232,13 @@
 - Upstream dependency intelligence becomes a formal target layer for GitHub/PyPI/license/version/update risk.
 - The R1 integration reset matrix is machine-readable and every candidate keeps install, live trading, broker connection, and raw data fetch permissions false.
 - No profitability claim is made in R1.
+
+## R1.1 Decisions
+
+- R1.1 adds enforceable open-source integration guardrails.
+- R1 was architecture reset only, not full external integration.
+- Future modules must check mature open-source candidates before self-building generic infrastructure.
+- Generic infrastructure areas such as market calendar, backtest engine, factor analysis, risk metrics, and portfolio accounting must not be reinvented without explicit evidence-based review.
+- Self-built code remains appropriate for contracts, adapters, glue code, A-share market reality constraints, capital/account constraints, safety gates, orchestration boundaries, and validation layers.
+- R2 Market Reality Sandbox Contracts must stay contract/adapter-boundary focused and must not become a fully self-built backtest, factor, risk, calendar, or portfolio accounting engine.
+- R1.1 adds no dependencies, no data fetches, no broker integration, no live trading, and no order execution.

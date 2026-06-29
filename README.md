@@ -6,9 +6,9 @@ QuantPilot-AI 2.0 is planned as a profit-first, integration-first, adapter-first
 
 ## Current Phase
 
-The repository is in R1: Profit-First Integration Architecture Reset, implemented by Codex and pending ChatGPT closure review.
+The repository is in R1.1: Open-source Integration Enforcement Patch, implemented by Codex and pending ChatGPT closure review.
 
-The repository contains planning docs, safety gates, core contracts, local fixtures, candidate registries, market-rule foundations, prototype evidence, and the R1 integration reset matrix. It must not contain broker connection, live trading path, real order execution path, or unapproved agent execution workflow.
+The repository contains planning docs, safety gates, core contracts, local fixtures, candidate registries, market-rule foundations, prototype evidence, the R1 integration reset matrix, and R1.1 open-source integration enforcement guardrails. It must not contain broker connection, live trading path, real order execution path, or unapproved agent execution workflow.
 
 ## Legacy v2 Position
 
@@ -60,5 +60,6 @@ Codex is responsible for creating files, organizing documentation, running valid
 - [Market Reality Sandbox Architecture](docs/MARKET_REALITY_SANDBOX_ARCHITECTURE.md)
 - [Capital-Aware Fast Compounding Mode](docs/CAPITAL_AWARE_FAST_COMPOUNDING_MODE.md)
 - [Open-Source Replacement Strategy](docs/OPEN_SOURCE_REPLACEMENT_STRATEGY.md)
+- [Open-Source Integration Enforcement](docs/OPEN_SOURCE_INTEGRATION_ENFORCEMENT.md)
 - [Upstream Dependency Intelligence Layer](docs/UPSTREAM_DEPENDENCY_INTELLIGENCE_LAYER.md)
 - [Thirty-Day Capital-Test MVP Plan](docs/THIRTY_DAY_CAPITAL_TEST_MVP_PLAN.md)
