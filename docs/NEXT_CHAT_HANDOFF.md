@@ -6,7 +6,7 @@ QuantPilot-AI 2.0 is a profit-first, integration-first, adapter-first, contract-
 
 ## Current Phase
 
-R4: Controlled Provider Probe Execution Gate, implemented by Codex and pending ChatGPT closure review.
+R5: Controlled Mock Provider Probe Run, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
@@ -63,6 +63,16 @@ R4 created:
 - `tests/provider_probe_gate/test_provider_probe_gate_contracts.py`
 - `tests/provider_probe_gate/test_provider_probe_gate.py`
 
+R5 created:
+
+- `docs/CONTROLLED_MOCK_PROVIDER_PROBE_RUN.md`
+- `data/mock_probe_run/mock_probe_run_request.json`
+- `src/quantpilot_core/mock_probe_run/__init__.py`
+- `src/quantpilot_core/mock_probe_run/contracts.py`
+- `src/quantpilot_core/mock_probe_run/run.py`
+- `tests/mock_probe_run/test_mock_probe_run_contracts.py`
+- `tests/mock_probe_run/test_mock_probe_run.py`
+
 No provider package was installed, no real data was fetched, no provider was approved, no adapter was created, no broker connection was created, and no order execution path was added.
 
 R2 does not implement full backtest, risk, factor, calendar, or portfolio accounting engines.
@@ -70,6 +80,8 @@ R2 does not implement full backtest, risk, factor, calendar, or portfolio accoun
 R3 does not implement a full data provider and uses local mock/fixture/probe data only.
 
 R4 does not fetch real market data, call provider APIs, implement a provider adapter, or run probes.
+
+R5 uses local mock fixtures only and proves the R4 gate -> R3 bridge -> R2 sandbox fixture path.
 
 ## Current Prohibitions
 
@@ -89,9 +101,9 @@ R4 does not fetch real market data, call provider APIs, implement a provider ada
 
 ## Next Recommended Step
 
-ChatGPT should perform R4 closure review.
+ChatGPT should perform R5 closure review.
 
-The next phase may run a controlled mock/dry-run probe or define approved adapter probes only after review.
+The next phase may define a controlled provider adapter probe or real small-sample data gate only after review.
 
 Future work must stay contract/adapter-boundary focused. It must use mature open-source candidates through adapters, prototypes, or benchmarks where practical instead of becoming a fully self-built backtest, risk, factor, calendar, or portfolio accounting engine.
 
@@ -112,6 +124,8 @@ Do not move to larger real-data validation, external analytics install, broker c
 - R3 keeps mature data provider projects as external adapter candidates and does not reinvent providers.
 - R4 adds Controlled Provider Probe Execution Gate only.
 - R4 keeps mature data provider projects as external adapter candidates and does not call provider APIs.
+- R5 adds Controlled Mock Provider Probe Run orchestration/glue only.
+- R5 does not write production data assets and does not call provider APIs.
 - Codex is not the project architect.
 
 ## Role Split

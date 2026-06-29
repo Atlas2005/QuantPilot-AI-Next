@@ -1,0 +1,21 @@
+{
+  "run_id": "r5_mock_provider_probe_run",
+  "provider_candidate_name": "mock",
+  "execution_mode": "mock_only",
+  "gate_request_fixture_path": "data/provider_probe_gate/mock_provider_probe_gate_request.json",
+  "provider_probe_snapshot_fixture_path": "data/provider_sandbox_bridge/mock_provider_probe_snapshot.json",
+  "expected_sandbox_bridge_compatibility": true,
+  "no_real_data": true,
+  "no_provider_api": true,
+  "no_broker": true,
+  "no_live_trading": true,
+  "no_order_execution": true,
+  "output_classification": "mock_fixture_only",
+  "artifact_manifest": {
+    "gate_request_fixture_path": "data/provider_probe_gate/mock_provider_probe_gate_request.json",
+    "provider_probe_snapshot_fixture_path": "data/provider_sandbox_bridge/mock_provider_probe_snapshot.json",
+    "output_classification": "mock_fixture_only",
+    "writes_production_data_assets": false
+  },
+  "audit_notes": "R5 local mock-only dry path. No real market data, no provider API, no broker, no live trading, no order execution. Output is mock_fixture_only."
+}

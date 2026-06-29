@@ -275,3 +275,15 @@
 - R4 allows mock-only requests only when fixture/probe constraints, scope limits, evidence requirements, safety flags, storage policy, timestamp audit, latency, failure handling, and R3 bridge compatibility are satisfied.
 - R4 rejects production-data approval attempts, unknown providers, missing license review, missing adapter boundary acknowledgement, unsafe broker/live/order flags, overbroad scope, and missing audit/failure/latency/bridge requirements.
 - The next phase may run a controlled mock/dry-run probe or define approved adapter probes only after review.
+
+## R5 Decisions
+
+- R5 adds a Controlled Mock Provider Probe Run.
+- R5 connects R4 gate request, R4 gate decision, R3 provider probe snapshot, R3 bridge conversion, and R2 `SandboxFixtureInput`.
+- R5 uses local mock fixtures only.
+- R5 does not fetch real market data or call provider APIs.
+- R5 does not add broker integration, live trading, or order execution.
+- R5 does not write production data assets.
+- R5 does not reinvent data providers. AkShare, Baostock, Tushare, and similar projects remain external adapter candidates.
+- R5 proves the local gate -> bridge -> sandbox fixture path only.
+- The next phase may define a controlled provider adapter probe or real small-sample data gate only after review.

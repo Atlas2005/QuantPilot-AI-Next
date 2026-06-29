@@ -6,7 +6,7 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-R4: Controlled Provider Probe Execution Gate, implemented by Codex and pending ChatGPT closure review.
+R5: Controlled Mock Provider Probe Run, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
@@ -23,6 +23,8 @@ R2 adds a Market Reality Sandbox contract and validation layer for A-share tradi
 R3 adds a Provider-Sandbox Fixture Bridge that converts explicitly local mock/fixture/probe provider snapshots into sandbox fixture inputs after validation.
 
 R4 adds a Controlled Provider Probe Execution Gate that decides whether mock, dry-run, or controlled provider probe requests are allowed and whether their output can later be considered for R3 bridge conversion.
+
+R5 adds a local mock-only run that connects R4 gate request, R4 gate decision, R3 provider probe snapshot, R3 bridge conversion, and R2 `SandboxFixtureInput`.
 
 The repository is still not trading-ready.
 
@@ -50,7 +52,9 @@ R3 uses local mock/fixture/probe data only. It does not add real market data ing
 
 R4 does not fetch real market data, call provider APIs, add broker integration, live trading, order execution, or reinvent data providers.
 
-Future modules must check mature open-source candidates before self-building generic infrastructure. R4 stays gate/safety/decision focused and keeps AkShare, Baostock, Tushare, and similar projects as adapter candidates.
+R5 uses local mock fixtures only. It does not fetch real market data, call provider APIs, add broker integration, live trading, order execution, write production data assets, or reinvent data providers.
+
+Future modules must check mature open-source candidates before self-building generic infrastructure. R5 stays mock-only orchestration/glue focused and keeps AkShare, Baostock, Tushare, and similar projects as adapter candidates.
 
 ## Current Prohibitions
 
@@ -73,4 +77,4 @@ Future modules must check mature open-source candidates before self-building gen
 
 ## Next Expected Action
 
-ChatGPT should perform R4 module closure review. The next phase may run a controlled mock/dry-run probe or define approved adapter probes only after review. Do not move to real data ingestion, dependency installation, provider API calls, broker connectivity, live trading, order execution, or profitability claims until explicitly approved.
+ChatGPT should perform R5 module closure review. The next phase may define a controlled provider adapter probe or real small-sample data gate only after review. Do not move to real data ingestion, dependency installation, provider API calls, broker connectivity, live trading, order execution, production data assets, or profitability claims until explicitly approved.
