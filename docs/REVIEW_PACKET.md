@@ -2,22 +2,22 @@
 
 ## Task Name
 
-R28: Stats Agent / Factor Metrics Preflight.
+R29: Qlib Evaluation Preflight.
 
 ## Changed Files
 
-- `docs/STATS_AGENT_FACTOR_METRICS_PREFLIGHT.md`
+- `docs/QLIB_EVALUATION_PREFLIGHT.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/stats_agent_factor_metrics_preflight/__init__.py`
-- `src/quantpilot_core/stats_agent_factor_metrics_preflight/contracts.py`
-- `src/quantpilot_core/stats_agent_factor_metrics_preflight/metrics.py`
-- `src/quantpilot_core/stats_agent_factor_metrics_preflight/preflight.py`
-- `tests/stats_agent_factor_metrics_preflight/test_stats_agent_factor_metrics_preflight.py`
+- `src/quantpilot_core/qlib_evaluation_preflight/__init__.py`
+- `src/quantpilot_core/qlib_evaluation_preflight/config_validation.py`
+- `src/quantpilot_core/qlib_evaluation_preflight/contracts.py`
+- `src/quantpilot_core/qlib_evaluation_preflight/preflight.py`
+- `tests/qlib_evaluation_preflight/test_qlib_evaluation_preflight.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R28 stats-agent factor metrics contracts, validation, deterministic metric helpers, metric records, and preflight decision logic.
-- Tests changed: Yes. Added R28 offline stats-agent factor metrics preflight tests.
+- `src/` changed: Yes. Added standard-library-only R29 Qlib evaluation preflight contracts, dataset/benchmark/config validation, check records, and deterministic preflight decision logic.
+- Tests changed: Yes. Added R29 offline Qlib evaluation preflight tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -55,11 +55,11 @@ R28: Stats Agent / Factor Metrics Preflight.
 
 ## Language / Runtime Decision
 
-R28 keeps new `src/` code on Python standard library only. It adds deterministic factor metric evidence validation, IC, RankIC, hit-rate, turnover, drawdown, coverage, sample-count, and cost-aware score records for future Stats Agent / Factor Agent consumption.
+R29 keeps new `src/` code on Python standard library only. It adds deterministic Qlib-compatible evaluation config validation, dataset checks, benchmark checks, PIT/no-lookahead safety, R28 factor metric handoff, runtime-disabled checks, and preflight decision records.
 
-R28 does not run agents, connect to brokers, mutate accounts, place orders, import broker SDKs, call DeepSeek, perform network calls, train models, update live strategy weights, run Qlib, or run RQAlpha.
+R29 does not run Qlib, import Qlib, run qrun, run agents, connect to brokers, mutate accounts, place orders, import broker SDKs, call DeepSeek, perform network calls, train models, update live strategy weights, or run RQAlpha.
 
-R28 builds on the R16-R27 control surfaces by adding an offline factor-evidence preflight layer before future Qlib Evaluation or Multi-Agent Orchestrator runtime work.
+R29 builds on the R18/R23/R24/R25/R27/R28 control surfaces by adding an offline Qlib evaluation readiness boundary before any future runtime integration.
 
 ## Validation Commands and Results
 
@@ -71,7 +71,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/stats_agent_factor_metrics_preflight`
+`python -m pytest tests/qlib_evaluation_preflight`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -83,14 +83,14 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/stats_agent_factor_metrics_preflight`
+`.venv/bin/python -m pytest tests/qlib_evaluation_preflight`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 17 items
-17 passed in 0.03s
+collected 19 items
+19 passed in 0.02s
 ```
 
 `.venv/bin/python -m pytest`
@@ -99,24 +99,24 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 563 items
-563 passed in 0.26s
+collected 582 items
+582 passed in 0.28s
 ```
 
-## R28 Stats Agent / Factor Metrics Preflight Summary
+## R29 Qlib Evaluation Preflight Summary
 
-R28 adds an offline deterministic preflight for factor metric evidence that future Stats Agent, Factor Agent, Qlib Evaluation, Supervisor, and Multi-Agent Orchestrator stages can consume.
+R29 adds an offline deterministic preflight for future Qlib evaluation readiness.
 
-The preflight validates factor identity, direction, evidence, observations, strict ISO dates, finite values, duplicate symbol/date pairs, expected universe size, turnover, and cost ratio.
+The preflight validates config identity, supported mode, evidence, runtime-disabled safety, PIT requirement, dataset shape, A-share/CN market metadata, strict date ranges, instrument uniqueness, benchmark frequency and cost settings, benchmark market compatibility, and R28 factor metric handoff.
 
-It computes sample count, coverage ratio, IC, RankIC, hit rate, turnover, max drawdown, and cost-aware score. `PASS` is returned only when all metrics pass, `MANUAL_REVIEW` is returned when warnings exist without failures, and `FAIL` is returned for critical validation flags or failed metrics.
+Only fully clean configs return `READY`. Critical flags or failed checks return `BLOCKED`. Warning-only configs return `MANUAL_REVIEW`.
 
 ## Risks
 
-- R28 is preflight only; it does not implement or prove alpha, statistical significance, Qlib evaluation, or a live factor agent.
-- Simple deterministic metrics are not a replacement for mature analytics frameworks.
-- Future Qlib or external analytics work must remain behind explicit preflight and adapter boundaries.
+- R29 is preflight only; it does not implement or prove Qlib runtime compatibility.
+- Qlib remains optional and is not imported or installed.
+- Future Qlib/qrun work must remain behind explicit preflight, fixture, and adapter boundaries.
 
 ## Recommended Next Step
 
-Run closure review for R28. A future phase can define Qlib Evaluation Preflight or richer external analytics adapters while keeping this deterministic preflight as the factor-evidence boundary.
+Run closure review for R29. A future phase can define R30 final readiness / release hardening or a Qlib fixture-format preflight while keeping runtime execution disabled until explicitly approved.
