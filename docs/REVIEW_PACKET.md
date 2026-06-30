@@ -2,22 +2,22 @@
 
 ## Task Name
 
-R22: Paper Ledger Dry-Run Integration.
+R23: Multi-day Paper Replay.
 
 ## Changed Files
 
-- `docs/PAPER_LEDGER_DRY_RUN_INTEGRATION.md`
+- `docs/MULTI_DAY_PAPER_REPLAY.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/paper_ledger_dry_run/__init__.py`
-- `src/quantpilot_core/paper_ledger_dry_run/contracts.py`
-- `src/quantpilot_core/paper_ledger_dry_run/dry_run.py`
-- `src/quantpilot_core/paper_ledger_dry_run/preflight.py`
-- `tests/paper_ledger_dry_run/test_paper_ledger_dry_run.py`
+- `src/quantpilot_core/multi_day_paper_replay/__init__.py`
+- `src/quantpilot_core/multi_day_paper_replay/contracts.py`
+- `src/quantpilot_core/multi_day_paper_replay/preflight.py`
+- `src/quantpilot_core/multi_day_paper_replay/replay.py`
+- `tests/multi_day_paper_replay/test_multi_day_paper_replay.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R22 paper ledger dry-run contracts, instruction validation, and in-memory simulation.
-- Tests changed: Yes. Added R22 offline dry-run integration tests.
+- `src/` changed: Yes. Added standard-library-only R23 multi-day paper replay contracts, input validation, and in-memory replay orchestration.
+- Tests changed: Yes. Added R23 offline multi-day replay tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -52,11 +52,11 @@ R22: Paper Ledger Dry-Run Integration.
 
 ## Language / Runtime Decision
 
-R22 keeps new `src/` code on Python standard library only. It adds typed contracts, candidate-instruction validation, conservative fee estimates, and deterministic in-memory cash/position simulation.
+R23 keeps new `src/` code on Python standard library only. It adds typed contracts, replay input validation, daily in-memory account-state construction, and deterministic cash/position/sellable carry-forward.
 
-R22 does not connect to brokers, mutate real accounts, write paper ledger persistence, place live orders, call DeepSeek, perform network calls, run Qlib, or run RQAlpha.
+R23 does not connect to brokers, mutate real accounts, write paper ledger persistence, place live orders, call DeepSeek, perform network calls, run Qlib, or run RQAlpha.
 
-R22 reuses R20 account profile preflight and consumes R21 `PaperLedgerCandidateInstruction` objects as its only bridge input.
+R23 consumes R21 `PaperLedgerCandidateInstruction` objects and reuses R22 dry-run logic day by day.
 
 ## Validation Commands and Results
 
@@ -68,7 +68,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/paper_ledger_dry_run`
+`python -m pytest tests/multi_day_paper_replay`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -80,14 +80,14 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/paper_ledger_dry_run`
+`.venv/bin/python -m pytest tests/multi_day_paper_replay`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 18 items
-18 passed in 0.01s
+collected 16 items
+16 passed in 0.02s
 ```
 
 `.venv/bin/python -m pytest`
@@ -96,24 +96,24 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 463 items
-463 passed in 0.20s
+collected 479 items
+479 passed in 0.23s
 ```
 
-## R22 Paper Ledger Dry-Run Integration Summary
+## R23 Multi-day Paper Replay Summary
 
-R22 adds an offline deterministic dry-run integration for R21 paper-ledger candidate instructions.
+R23 adds an offline deterministic multi-day replay for daily batches of R21 paper candidate instructions.
 
-The dry-run validates instruction shape, A-share lot size, evidence, notional consistency, account preflight status, account trading status, cash sufficiency, sellable quantity, duplicate proposal IDs, and fail-fast behavior.
+The replay validates day ordering, strict date shape, duplicate trading dates, duplicate proposal IDs across replay, account preflight, and A-share T+1 sellability. It carries simulated cash, total positions, and sellable quantities forward across trading days.
 
-Accepted instructions simulate cash and position deltas only. Rejected instructions emit structured risk flags. Partial dry-runs can continue after rejected instructions unless `fail_fast=True`.
+Blocked days or instructions do not mutate replay state. Partial replay can continue from the last valid state unless `fail_fast=True`.
 
 ## Risks
 
-- R22 is simulation-only; it does not write the existing paper ledger or prove execution quality.
-- Future multi-day replay still needs explicit sandbox gates and review.
-- Fee estimates are conservative paper checks, not broker-confirmed charges.
+- R23 is replay-only; it does not write the existing paper ledger or prove execution quality.
+- Future attribution/readiness gates still need explicit review.
+- Fee estimates and daily prices remain candidate-instruction assumptions, not broker-confirmed facts.
 
 ## Recommended Next Step
 
-Run closure review for R22. A future phase can connect accepted dry-run results to multi-day Market Reality Sandbox replay under additional gates.
+Run closure review for R23. A future phase can add Performance Attribution Flywheel or Small-Capital Readiness Gate logic on top of the structured replay result.
