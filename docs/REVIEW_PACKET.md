@@ -2,23 +2,22 @@
 
 ## Task Name
 
-P32: Offline Qlib Runtime Spike.
+P33: Broker SDK Research in Isolated Branch.
 
 ## Changed Files
 
-- `docs/OFFLINE_QLIB_RUNTIME_SPIKE.md`
+- `docs/BROKER_SDK_RESEARCH.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/offline_qlib_runtime_spike/__init__.py`
-- `src/quantpilot_core/offline_qlib_runtime_spike/contracts.py`
-- `src/quantpilot_core/offline_qlib_runtime_spike/optional_runner.py`
-- `src/quantpilot_core/offline_qlib_runtime_spike/report.py`
-- `src/quantpilot_core/offline_qlib_runtime_spike/validation.py`
-- `tests/offline_qlib_runtime_spike/test_offline_qlib_runtime_spike.py`
+- `src/quantpilot_core/broker_sdk_research/__init__.py`
+- `src/quantpilot_core/broker_sdk_research/contracts.py`
+- `src/quantpilot_core/broker_sdk_research/report.py`
+- `src/quantpilot_core/broker_sdk_research/validation.py`
+- `tests/broker_sdk_research/test_broker_sdk_research.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only P32 offline Qlib runtime spike contracts, validation, report generation, and optional manual runner boundary.
-- Tests changed: Yes. Added P32 offline Qlib runtime spike tests.
+- `src/` changed: Yes. Added standard-library-only P33 broker SDK research contracts, metadata validation, and deterministic research report generation.
+- Tests changed: Yes. Added P33 offline broker SDK research tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -56,11 +55,11 @@ P32: Offline Qlib Runtime Spike.
 
 ## Language / Runtime Decision
 
-P32 keeps new `src/` code on Python standard library only. It adds deterministic offline Qlib runtime plan contracts, local-only dataset boundary validation, explicit/fixture calendar validation, benchmark boundary validation, R28-compatible factor metric handoff checks, readiness report generation, and an optional manual runner interface.
+P33 keeps new `src/` code on Python standard library only. It adds metadata-only broker SDK research contracts, candidate safety validation, A-share constraint validation, deterministic priority ranking, and manual investigation checklist generation.
 
-P32 does not run Qlib, run qrun, run agents, connect to brokers, mutate accounts, place orders, import broker SDKs, call DeepSeek, call OpenAI, perform network calls in tests, train models, update live strategy weights, or run RQAlpha.
+P33 does not install or import broker SDKs, connect to brokers, read real accounts, place orders, create credential handling, call DeepSeek, call OpenAI, perform network calls in tests, train models, update live strategy weights, run Qlib/qrun, or run RQAlpha.
 
-P32 verifies whether QuantPilot's existing factor metric / Qlib evaluation preflight handoff can be represented as a Qlib-compatible offline runtime plan without making Qlib a required dependency.
+P33 compares broker integration candidates as research metadata only: vn.py style, QMT / MiniQMT style, easytrader style, broker native SDK, and manual CSV / semi-manual boundary.
 
 ## Validation Commands and Results
 
@@ -72,7 +71,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/offline_qlib_runtime_spike`
+`python -m pytest tests/broker_sdk_research`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -84,14 +83,14 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/offline_qlib_runtime_spike`
+`.venv/bin/python -m pytest tests/broker_sdk_research`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 14 items
-14 passed in 0.03s
+collected 16 items
+16 passed in 0.01s
 ```
 
 `.venv/bin/python -m pytest`
@@ -100,24 +99,31 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 631 items
-631 passed in 0.31s
+collected 647 items
+647 passed in 0.32s
 ```
 
-## P32 Offline Qlib Runtime Spike Summary
+## P33 Broker SDK Research Summary
 
-P32 adds an offline deterministic runtime-plan boundary for future Qlib evaluation work.
+P33 adds an isolated, metadata-only research boundary for A-share broker SDK candidates.
 
-The preflight validates local-only dataset paths, explicit or fixture-backed calendars, benchmark declarations, R28-compatible factor metric handoff fields, network-disabled defaults, manual-only runtime execution, integration boundary evidence, and forbidden-scope evidence.
+The research validator checks license, source, maintenance status, supported market, account-read and order-submit boundaries, sandbox/paper declaration, credential handling, default network safety, vendor SDK import safety, live order-path safety, manual approval, A-share constraints, integration evidence, and forbidden-scope evidence.
 
-Only clean offline plans return `READY`. Blocking checks return `NOT_READY`. Warning-only plans return `MANUAL_REVIEW`.
+The report emits deterministic research priorities, blockers, warnings, manual investigation checklist items, integration boundary evidence, and forbidden-scope evidence.
 
 ## Risks
 
-- P32 is an offline runtime spike boundary only; it does not prove production Qlib runtime compatibility.
-- Qlib remains optional and is not a required dependency.
-- Optional manual runtime checks remain operator-gated and are not used by default tests.
+- P33 is research-only; it does not approve or implement broker connectivity.
+- Future broker work must remain in a separate isolated branch and behind manual approval.
+- Credential handling, account reads, live order paths, and vendor SDK imports remain forbidden in default runtime.
 
 ## Recommended Next Step
 
-Run closure review for P32. A future phase can prepare offline runtime fixtures once P31 stability evidence and P32 runtime-plan evidence are both ready or explicitly manual-reviewed.
+Run closure review for P33. A future isolated branch may perform manual investigation for exactly one selected candidate while keeping credentials, account reads, and order submission outside the repository runtime.
+
+## Code Evidence Snapshot
+
+- `contracts.py`: defines metadata-only candidate contracts including `BrokerSdkCandidate`, `BrokerCapabilityProfile`, `BrokerPermissionBoundary`, `SandboxAvailabilityProfile`, `AccountReadBoundary`, `OrderSubmissionBoundary`, and `BrokerResearchReport`.
+- `validation.py`: blocks missing license/source/maintenance, default account-read or order-submit permissions, missing sandbox/paper declaration, repository credential handling, default network dependency, vendor SDK import requirement, live order path, missing manual approval, and missing A-share constraints.
+- `report.py`: builds candidate reports, deterministic priority ranking, blockers, warnings, manual investigation checklist, integration boundary evidence, and forbidden-scope evidence.
+- `tests`: cover valid metadata, missing license/source/maintenance classification, live order path rejection, credential handling rejection, vendor SDK import rejection, missing sandbox declaration, missing A-share constraints, priority ranking, forbidden scope evidence, and offline deterministic report shape.
