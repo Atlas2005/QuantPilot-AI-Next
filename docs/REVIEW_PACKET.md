@@ -2,24 +2,25 @@
 
 ## Task Name
 
-P36: Daily Paper Trading Loop with Tradability Metrics.
+P37: Alpha, Sizing, and ETF Universe Tuning Loop.
 
 ## Changed Files
 
-- `docs/DAILY_PAPER_TRADING_LOOP_TRADABILITY_METRICS.md`
+- `docs/ALPHA_SIZING_ETF_UNIVERSE_TUNING_LOOP.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/daily_paper_trading_loop_tradability_metrics/__init__.py`
-- `src/quantpilot_core/daily_paper_trading_loop_tradability_metrics/contracts.py`
-- `src/quantpilot_core/daily_paper_trading_loop_tradability_metrics/loop.py`
-- `src/quantpilot_core/daily_paper_trading_loop_tradability_metrics/metrics.py`
-- `src/quantpilot_core/daily_paper_trading_loop_tradability_metrics/report.py`
-- `tests/daily_paper_trading_loop_tradability_metrics/test_daily_paper_trading_loop_tradability_metrics.py`
+- `src/quantpilot_core/alpha_sizing_etf_universe_tuning_loop/__init__.py`
+- `src/quantpilot_core/alpha_sizing_etf_universe_tuning_loop/contracts.py`
+- `src/quantpilot_core/alpha_sizing_etf_universe_tuning_loop/report.py`
+- `src/quantpilot_core/alpha_sizing_etf_universe_tuning_loop/sizing.py`
+- `src/quantpilot_core/alpha_sizing_etf_universe_tuning_loop/tuning.py`
+- `src/quantpilot_core/alpha_sizing_etf_universe_tuning_loop/universe.py`
+- `tests/alpha_sizing_etf_universe_tuning_loop/test_alpha_sizing_etf_universe_tuning_loop.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only daily paper trading loop contracts, loop execution, metrics aggregation, and report generation.
-- Tests changed: Yes. Added deterministic P36 daily paper trading loop tests.
-- Documentation changed: Yes. Added P36 documentation and updated this review packet.
+- `src/` changed: Yes. Added standard-library-only P37 ETF universe, sizing, tuning, and report boundary.
+- Tests changed: Yes. Added deterministic P37 tests.
+- Documentation changed: Yes. Added P37 documentation and updated this review packet.
 - Dependencies changed: No.
 - Packages installed: No.
 - Packages uninstalled: No.
@@ -42,18 +43,30 @@ P36: Daily Paper Trading Loop with Tradability Metrics.
 - Real alpha evidence produced: No.
 - Profitability claim made: No.
 
-## Language / Runtime Decision
+## Value Orientation
 
-P36 keeps new implementation code on Python standard library only. It reuses the P34 deterministic tradability and fill simulation rather than creating another backtest engine, broker route, or generic preflight wall.
+P37 expands the tradable universe from A-share stocks only to A-share stocks plus exchange-listed ETFs, then tunes alpha and sizing toward actual tradability.
 
-The daily loop consumes deterministic multi-day signals, simulates A-share order intent fillability, updates local paper cash and positions, aggregates tradability/cost/PnL/capital metrics, and recommends the next improvement target.
+The patch does not add another generic safety/preflight wall. It keeps the active barrier at or below `140%`, separates ETF rules from stock rules, and produces deterministic recommendations that can feed the daily paper loop.
 
-## Safety Barrier
+## ETF Coverage Summary
+
+- ETF category is explicit and mandatory.
+- ETF candidates cannot silently become stock candidates.
+- ETF minimum trade unit is `100` units.
+- ETF minimum tick is `0.001`.
+- Equity ETFs default to `T+1`.
+- Bond, gold, cross-border, and money-market ETFs may use `T+0` only when explicitly declared.
+- ETF fee model is separate from the stock stamp-duty model.
+- Universe reports stock and ETF counts separately.
+- ETF candidates can be prioritized for small-capital diversification without hard-blocking stock candidates.
+
+## Safety Barrier Status
 
 - Pre-P34 estimated barrier: `185.0%`
-- P34/P35/P36 active barrier: `140.0%`
+- P34/P35/P36/P37 active barrier: `140.0%`
 - Target: `<= 140%`
-- P36 does not raise the safety barrier. It measures fillability under the pruned gate set.
+- P37 does not raise the safety barrier. It improves fillability and candidate selection under the pruned gate set.
 
 ## Validation Commands and Results
 
@@ -61,14 +74,14 @@ The daily loop consumes deterministic multi-day signals, simulates A-share order
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/daily_paper_trading_loop_tradability_metrics`
+`.venv/bin/python -m pytest tests/alpha_sizing_etf_universe_tuning_loop`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 13 items
-13 passed in 0.02s
+collected 19 items
+19 passed in 0.02s
 ```
 
 `.venv/bin/python -m pytest`
@@ -77,30 +90,32 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 692 items
-692 passed in 0.35s
+collected 711 items
+711 passed in 0.35s
 ```
 
-## P36 Summary
+## P37 Summary
 
-P36 adds a deterministic daily paper trading loop with tradability metrics.
+P37 adds a deterministic alpha, sizing, and ETF universe tuning loop.
 
-It answers whether deterministic signals can produce order intents across multiple days, whether at least one simulated fill occurs, how cash and positions move after local paper fills, what costs/taxes/slippage were incurred, whether net PnL after cost is positive/zero/negative, which days had zero trades, and what exact rejection reasons explain those zero-trade days.
+It accepts valid stock and ETF candidates, rejects invalid ETF candidates with missing categories, builds ETF-specific rule profiles, recommends valid 100-unit sizing, scores alpha/sizing/tradability/cost-after-fill, and reports whether ETF inclusion improves small-capital tradability.
 
 ## Risks
 
-- P36 is deterministic paper simulation only; it does not approve live trading.
-- PnL, turnover, drawdown, and cost figures are local estimates, not broker execution facts.
-- The loop relies on P34 simulation rules and fixture-like inputs; production data quality and broker behavior remain outside this patch.
+- P37 is deterministic tuning only; it does not approve live trading.
+- ETF rule profiles are conservative local representations and not broker execution guarantees.
+- Cost drag and alpha quality scores are deterministic estimates, not real performance evidence.
+- The next daily paper loop should validate whether ETF inclusion improves fill rate and net PnL after cost.
 
 ## Recommended Next Step
 
-Use P36 daily paper loop output to tune alpha quality, sizing, tradability constraints, cost model realism, or deterministic data quality before any broker-facing phase proceeds.
+Feed P37 mixed stock/ETF sizing recommendations into the P36 daily paper loop and compare fill rate, capital usage, cost drag, and net PnL after cost against the stock-only fixture.
 
 ## Code Evidence Snapshot
 
-- `contracts.py`: defines daily loop input, day result, loop report, tradability metrics, adjustment recommendation, and zero-trade diagnosis summary.
-- `loop.py`: runs deterministic day-by-day fill simulation, updates local paper cash/positions, and emits daily recommendations.
-- `metrics.py`: aggregates fill rate, costs, net PnL, capital usage, turnover, drawdown, zero-trade reasons, and suspected overblocking days.
-- `report.py`: builds the value-oriented P36 report and selects the next improvement target.
-- `tests`: cover deterministic multi-day input, all day outputs, intents, fills, cash/position updates, cost aggregation, fill rate, zero-trade diagnosis, net PnL, capital usage, turnover/drawdown, overblocking counts, safety barrier limit, deterministic ordering, and forbidden runtime behavior.
+- `contracts.py`: defines instrument types, ETF categories, tradable instruments, rule profiles, alpha quality, sizing candidates, tuning decisions, universe selection, and report contracts.
+- `universe.py`: validates stocks and ETFs separately, rejects unknown types and ETFs without categories, builds ETF-specific rule profiles, and reports stock/ETF counts.
+- `sizing.py`: rounds recommendations to valid trade units, estimates capital usage, cost drag, tradability score, and zero-trade risk reduction.
+- `tuning.py`: combines alpha quality, sizing, tradability, and cost-after-fill scores into deterministic recommended actions.
+- `report.py`: builds the P37 value report, preserves the `<= 140%` safety barrier, and answers ETF/sizing/cost improvement questions.
+- `tests`: cover stock and ETF acceptance, missing ETF category rejection, ETF-not-stock behavior, ETF settlement/tick/unit/fee rules, separate counts, small-capital ETF preference, sizing zero-trade reduction, cost drag, safety barrier, deterministic ordering, and forbidden runtime behavior.
