@@ -2,21 +2,22 @@
 
 ## Task Name
 
-R18: PIT Data & Feature Store Preflight.
+R19: News / Event Agent Preflight.
 
 ## Changed Files
 
-- `docs/PIT_DATA_FEATURE_STORE_PREFLIGHT.md`
+- `docs/NEWS_EVENT_AGENT_PREFLIGHT.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/pit_feature_store_preflight/__init__.py`
-- `src/quantpilot_core/pit_feature_store_preflight/contracts.py`
-- `src/quantpilot_core/pit_feature_store_preflight/preflight.py`
-- `tests/pit_feature_store_preflight/test_pit_feature_store_preflight.py`
+- `src/quantpilot_core/news_event_agent_preflight/__init__.py`
+- `src/quantpilot_core/news_event_agent_preflight/contracts.py`
+- `src/quantpilot_core/news_event_agent_preflight/pit_bridge.py`
+- `src/quantpilot_core/news_event_agent_preflight/preflight.py`
+- `tests/news_event_agent_preflight/test_news_event_agent_preflight.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R18 PIT feature-store contracts and preflight validation.
-- Tests changed: Yes. Added R18 PIT feature-store preflight tests.
+- `src/` changed: Yes. Added standard-library-only R19 news/event contracts, validation, and PIT bridge.
+- Tests changed: Yes. Added R19 offline news/event preflight tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -33,6 +34,8 @@ R18: PIT Data & Feature Store Preflight.
 - Raw data committed: No.
 - Any data source approved: No.
 - Full data provider implementation added: No.
+- Real news crawling added: No.
+- DeepSeek/API call added: No.
 - Real alpha evidence produced: No.
 - Statistical significance claimed: No.
 - External analytics installed/imported: No.
@@ -45,26 +48,42 @@ R18: PIT Data & Feature Store Preflight.
 
 ## Language / Runtime Decision
 
-R18 keeps new `src/` code on Python standard library only. It adds typed contracts and deterministic preflight validation for point-in-time feature records.
+R19 keeps new `src/` code on Python standard library only. It adds typed contracts, deterministic validation, and an in-memory bridge from structured event findings to R18 PIT feature records.
 
-R18 does not implement a feature-store engine, feature materialization runtime, data provider, factor computation engine, broker integration, live trading, order execution, RQAlpha execution, Qlib execution, or model runtime call.
+R19 does not crawl news, call DeepSeek, call provider APIs, implement a live agent runtime, implement feature-store materialization, add broker integration, add live trading, add order generation, run Qlib, or run RQAlpha.
 
-R18 respects R1.1 open-source integration guardrails by keeping generic feature storage, analytics, and materialization as future adapter candidates rather than self-built infrastructure in this patch.
+R19 reuses R18 PIT validation as the event-derived feature boundary, so future news/event agents cannot bypass point-in-time visibility checks.
 
 ## Validation Commands and Results
+
+`python -m compileall src`
+
+Result: not run because bare `python` is not available in this shell.
+
+```text
+zsh:1: command not found: python
+```
+
+`python -m pytest tests/news_event_agent_preflight`
+
+Result: not run because bare `python` is not available in this shell.
+
+```text
+zsh:1: command not found: python
+```
 
 `.venv/bin/python -m compileall src`
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/pit_feature_store_preflight tests/smoke/test_no_forbidden_scope.py`
+`.venv/bin/python -m pytest tests/news_event_agent_preflight`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 11 items
-11 passed in 0.03s
+collected 15 items
+15 passed in 0.01s
 ```
 
 `.venv/bin/python -m pytest`
@@ -73,24 +92,32 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 390 items
-390 passed in 0.18s
+collected 405 items
+405 passed in 0.19s
 ```
 
-## R18 PIT Data & Feature Store Preflight Summary
+## R19 News / Event Agent Preflight Summary
 
-R18 adds a point-in-time data and feature-store preflight layer.
+R19 adds an offline deterministic preflight for structured news/event findings.
 
-The preflight validates feature-set metadata, strict ISO date shape, finite numeric feature values, evidence references, and lookahead-safe relationships among observation date, available date, and as-of date.
+The preflight validates event metadata, temporal availability, sentiment score bounds, confidence bounds, impact score bounds, affected-symbol requirements, rumor/critical risk flags, and structured-output requirements.
 
-Accepted records can feed only sandbox-oriented research preflight. Invalid manifests, missing records, non-finite feature values, missing evidence, and lookahead-prone date relationships are rejected with deterministic reason strings.
+The PIT bridge emits deterministic feature keys for each affected symbol:
+
+- `news.sentiment`
+- `news.risk_level_numeric`
+- `news.impact_score`
+- `news.event_type_numeric`
+- `news.confidence`
+
+The emitted records are validated by R18 PIT preflight and blocked when they are not available as of the requested time.
 
 ## Risks
 
-- R18 is a contract and preflight layer only; it does not prove compatibility with any future feature-store engine.
-- Future materialization/storage choices still require open-source candidate review and adapter boundaries.
-- PIT safety depends on future upstream adapters preserving truthful observation and availability timestamps.
+- R19 is a contract/preflight layer only; it does not prove real news source quality or model extraction quality.
+- Future model output must still be forced through these structured contracts before sandbox use.
+- Event-derived feature quality depends on truthful event, known, and trading-availability timestamps from future adapters.
 
 ## Recommended Next Step
 
-Run closure review for R18. A future phase can evaluate a feature materialization or feature-store adapter candidate while keeping this PIT contract as the sandbox-facing boundary.
+Run closure review for R19. The next phase can harden Account Profile / Broker Config preflight or add a Stats Agent preflight, depending on project priority.
