@@ -2,22 +2,22 @@
 
 ## Task Name
 
-R26: Broker Sandbox Adapter Preflight.
+R27: Multi-Agent Orchestrator Preflight.
 
 ## Changed Files
 
-- `docs/BROKER_SANDBOX_ADAPTER_PREFLIGHT.md`
+- `docs/MULTI_AGENT_ORCHESTRATOR_PREFLIGHT.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/broker_sandbox_adapter_preflight/__init__.py`
-- `src/quantpilot_core/broker_sandbox_adapter_preflight/adapter.py`
-- `src/quantpilot_core/broker_sandbox_adapter_preflight/contracts.py`
-- `src/quantpilot_core/broker_sandbox_adapter_preflight/preflight.py`
-- `tests/broker_sandbox_adapter_preflight/test_broker_sandbox_adapter_preflight.py`
+- `src/quantpilot_core/multi_agent_orchestrator_preflight/__init__.py`
+- `src/quantpilot_core/multi_agent_orchestrator_preflight/contracts.py`
+- `src/quantpilot_core/multi_agent_orchestrator_preflight/orchestrator.py`
+- `src/quantpilot_core/multi_agent_orchestrator_preflight/preflight.py`
+- `tests/multi_agent_orchestrator_preflight/test_multi_agent_orchestrator_preflight.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R26 broker sandbox adapter preflight contracts, validation, conversion, and handoff decision logic.
-- Tests changed: Yes. Added R26 offline broker sandbox adapter preflight tests.
+- `src/` changed: Yes. Added standard-library-only R27 multi-agent orchestrator preflight contracts, validation, stage result building, and deterministic plan decision logic.
+- Tests changed: Yes. Added R27 offline multi-agent orchestrator preflight tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -55,11 +55,11 @@ R26: Broker Sandbox Adapter Preflight.
 
 ## Language / Runtime Decision
 
-R26 keeps new `src/` code on Python standard library only. It adds deterministic broker-sandbox handoff contracts, readiness checks, account/broker permission checks, mode semantics, and candidate-instruction conversion.
+R27 keeps new `src/` code on Python standard library only. It adds deterministic multi-agent orchestrator preflight contracts, canonical stage ordering, hard-gate validation, manual-review handling, and broker-sandbox gating.
 
-R26 does not connect to brokers, mutate accounts, place orders, import broker SDKs, call DeepSeek, perform network calls, train models, update live strategy weights, run Qlib, or run RQAlpha.
+R27 does not run agents, connect to brokers, mutate accounts, place orders, import broker SDKs, call DeepSeek, perform network calls, train models, update live strategy weights, run Qlib, or run RQAlpha.
 
-R26 consumes R21/R22 candidate instructions, R20 account profiles, and R25 readiness results.
+R27 builds on the R16-R26 control surfaces by checking whether the intended pipeline state is coherent before any future runtime orchestration is introduced.
 
 ## Validation Commands and Results
 
@@ -71,7 +71,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/broker_sandbox_adapter_preflight`
+`python -m pytest tests/multi_agent_orchestrator_preflight`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -83,14 +83,14 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/broker_sandbox_adapter_preflight`
+`.venv/bin/python -m pytest tests/multi_agent_orchestrator_preflight`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 19 items
-19 passed in 0.02s
+collected 17 items
+17 passed in 0.02s
 ```
 
 `.venv/bin/python -m pytest`
@@ -99,24 +99,24 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 529 items
-529 passed in 0.24s
+collected 546 items
+546 passed in 0.24s
 ```
 
-## R26 Broker Sandbox Adapter Preflight Summary
+## R27 Multi-Agent Orchestrator Preflight Summary
 
-R26 adds an offline deterministic preflight for broker sandbox handoff records.
+R27 adds an offline deterministic preflight for the future multi-agent orchestration control plane.
 
-The preflight validates readiness PASS, account status, broker permissions, A-share capability, query-only behavior, adapter mode, evidence, notional consistency, A-share lot size, cash sufficiency, and sellable quantity.
+The preflight validates plan evidence, supported stage names and statuses, duplicate stages, required canonical stages, stage evidence, canonical ordering, required stage failure behavior, manual-review behavior, optional warning behavior, and broker sandbox gating behind small-capital readiness.
 
-Only valid `BROKER_SANDBOX` instructions can be accepted for sandbox handoff. `PAPER_ONLY`, `READ_ONLY_CHECK`, and `HOLD` do not claim executable broker readiness.
+Only plans with all required gates passed and no blocking risk flags return `READY`. Required manual-review stages return `MANUAL_REVIEW` when allowed and `BLOCKED` when manual review is disabled.
 
 ## Risks
 
-- R26 is preflight only; it does not implement or prove any broker adapter.
-- Future broker sandbox work must still remain behind readiness, account, and manual review gates.
-- Broker-specific rule gaps remain unknown until a future adapter design phase.
+- R27 is preflight only; it does not implement or prove a live multi-agent runtime.
+- Future runtime orchestration must still remain behind these deterministic gate checks.
+- Future broker sandbox work remains blocked behind small-capital readiness and R26/R27 preflights.
 
 ## Recommended Next Step
 
-Run closure review for R26. A future phase can define a broker sandbox adapter interface or Multi-Agent Orchestrator preflight while keeping this preflight as the handoff boundary.
+Run closure review for R27. A future phase can define runtime orchestrator adapters, stats/factor stages, or Qlib/RQAlpha preflight fixtures while keeping this deterministic preflight as the orchestration boundary.
