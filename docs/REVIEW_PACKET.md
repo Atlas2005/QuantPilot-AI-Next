@@ -2,28 +2,22 @@
 
 ## Task Name
 
-R7: Real A-share Small Sample Data Gate.
+R18: PIT Data & Feature Store Preflight.
 
 ## Changed Files
 
-- `docs/REAL_A_SHARE_SMALL_SAMPLE_DATA_GATE.md`
-- `data/small_sample_data_gate/mock_small_sample_data_gate_request.json`
-- `src/quantpilot_core/small_sample_data_gate/__init__.py`
-- `src/quantpilot_core/small_sample_data_gate/contracts.py`
-- `src/quantpilot_core/small_sample_data_gate/gate.py`
-- `tests/small_sample_data_gate/test_small_sample_data_gate_contracts.py`
-- `tests/small_sample_data_gate/test_small_sample_data_gate.py`
-- `README.md`
-- `docs/CURRENT_PROJECT_STATE.md`
-- `docs/DECISIONS.md`
-- `docs/NEXT_CHAT_HANDOFF.md`
+- `docs/PIT_DATA_FEATURE_STORE_PREFLIGHT.md`
 - `docs/REVIEW_PACKET.md`
+- `src/quantpilot_core/pit_feature_store_preflight/__init__.py`
+- `src/quantpilot_core/pit_feature_store_preflight/contracts.py`
+- `src/quantpilot_core/pit_feature_store_preflight/preflight.py`
+- `tests/pit_feature_store_preflight/test_pit_feature_store_preflight.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R7 Real A-share Small Sample Data Gate contracts and validation helpers.
-- Tests changed: Yes. Added R7 Real A-share Small Sample Data Gate contract and validation tests.
-- Local fixture changed: Yes. Added `data/small_sample_data_gate/mock_small_sample_data_gate_request.json`.
+- `src/` changed: Yes. Added standard-library-only R18 PIT feature-store contracts and preflight validation.
+- Tests changed: Yes. Added R18 PIT feature-store preflight tests.
+- Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
 - Manual probe scripts changed: No.
@@ -51,64 +45,52 @@ R7: Real A-share Small Sample Data Gate.
 
 ## Language / Runtime Decision
 
-R7 keeps new `src/` code on Python standard library only. No provider, analytics, backtest, broker, or agent framework package is a project dependency.
+R18 keeps new `src/` code on Python standard library only. It adds typed contracts and deterministic preflight validation for point-in-time feature records.
 
-R7 adds small-sample data gate contracts and manifest validation helpers only. It does not implement a full data provider, market data ingestion, provider API calls, simulator, backtest engine, broker integration, live trading, or order execution path.
+R18 does not implement a feature-store engine, feature materialization runtime, data provider, factor computation engine, broker integration, live trading, order execution, RQAlpha execution, Qlib execution, or model runtime call.
 
-R7 respects R1.1 open-source integration guardrails by keeping AkShare, Baostock, Tushare, and similar projects as adapter candidates, not replaced self-built providers.
-
-R7 uses a local mock manifest fixture only and defines the review evidence needed before any future small-sample dataset can enter sandbox replay preparation.
+R18 respects R1.1 open-source integration guardrails by keeping generic feature storage, analytics, and materialization as future adapter candidates rather than self-built infrastructure in this patch.
 
 ## Validation Commands and Results
 
-`python -m compileall src`
+`.venv/bin/python -m compileall src`
 
-Result: passed in the active `.venv`.
+Result: passed.
 
-`python -m pytest`
+`.venv/bin/python -m pytest tests/pit_feature_store_preflight tests/smoke/test_no_forbidden_scope.py`
 
-Result: passed in the active `.venv`.
+Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 252 items
-252 passed in 0.12s
+collected 11 items
+11 passed in 0.03s
 ```
 
-`git status -sb`
+`.venv/bin/python -m pytest`
 
-Result:
+Result: passed.
 
 ```text
-## r7-real-a-share-small-sample-data-gate
- M README.md
- M docs/CURRENT_PROJECT_STATE.md
- M docs/DECISIONS.md
- M docs/NEXT_CHAT_HANDOFF.md
- M docs/REVIEW_PACKET.md
-?? data/small_sample_data_gate/
-?? docs/REAL_A_SHARE_SMALL_SAMPLE_DATA_GATE.md
-?? src/quantpilot_core/small_sample_data_gate/
-?? tests/small_sample_data_gate/
+platform darwin -- Python 3.12.10, pytest-9.1.1
+collected 390 items
+390 passed in 0.18s
 ```
 
-## R7 Real A-share Small Sample Data Gate Summary
+## R18 PIT Data & Feature Store Preflight Summary
 
-R7 adds a real A-share small-sample data gate.
+R18 adds a point-in-time data and feature-store preflight layer.
 
-R7 defines the manifest contract, validation rules, and audit result required before any future small-sample dataset can be considered for sandbox replay preparation.
+The preflight validates feature-set metadata, strict ISO date shape, finite numeric feature values, evidence references, and lookahead-safe relationships among observation date, available date, and as-of date.
 
-R7 does not fetch or include real market data, call provider APIs, implement data provider adapters, add broker integration, live trading, order execution, or write production data assets.
-
-R7 does not reinvent data providers. Mature provider projects remain adapter candidates.
+Accepted records can feed only sandbox-oriented research preflight. Invalid manifests, missing records, non-finite feature values, missing evidence, and lookahead-prone date relationships are rejected with deterministic reason strings.
 
 ## Risks
 
-- Matrix risk labels are preliminary and require future upstream/license review.
-- Architecture targets may still need contract design before implementation.
-- R7 gate contracts are manifest/validation shapes only; they do not install, select, approve, or call external packages.
-- The Phase 7E readiness gate still blocks real alpha validation until updated, reviewed, and explicitly approved.
+- R18 is a contract and preflight layer only; it does not prove compatibility with any future feature-store engine.
+- Future materialization/storage choices still require open-source candidate review and adapter boundaries.
+- PIT safety depends on future upstream adapters preserving truthful observation and availability timestamps.
 
 ## Recommended Next Step
 
-ChatGPT should perform R7 closure review. The next phase may define sandbox replay preparation using approved fixture or small-sample manifests only after review.
+Run closure review for R18. A future phase can evaluate a feature materialization or feature-store adapter candidate while keeping this PIT contract as the sandbox-facing boundary.
