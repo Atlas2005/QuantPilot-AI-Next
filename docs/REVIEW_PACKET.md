@@ -2,22 +2,22 @@
 
 ## Task Name
 
-R27: Multi-Agent Orchestrator Preflight.
+R28: Stats Agent / Factor Metrics Preflight.
 
 ## Changed Files
 
-- `docs/MULTI_AGENT_ORCHESTRATOR_PREFLIGHT.md`
+- `docs/STATS_AGENT_FACTOR_METRICS_PREFLIGHT.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/multi_agent_orchestrator_preflight/__init__.py`
-- `src/quantpilot_core/multi_agent_orchestrator_preflight/contracts.py`
-- `src/quantpilot_core/multi_agent_orchestrator_preflight/orchestrator.py`
-- `src/quantpilot_core/multi_agent_orchestrator_preflight/preflight.py`
-- `tests/multi_agent_orchestrator_preflight/test_multi_agent_orchestrator_preflight.py`
+- `src/quantpilot_core/stats_agent_factor_metrics_preflight/__init__.py`
+- `src/quantpilot_core/stats_agent_factor_metrics_preflight/contracts.py`
+- `src/quantpilot_core/stats_agent_factor_metrics_preflight/metrics.py`
+- `src/quantpilot_core/stats_agent_factor_metrics_preflight/preflight.py`
+- `tests/stats_agent_factor_metrics_preflight/test_stats_agent_factor_metrics_preflight.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R27 multi-agent orchestrator preflight contracts, validation, stage result building, and deterministic plan decision logic.
-- Tests changed: Yes. Added R27 offline multi-agent orchestrator preflight tests.
+- `src/` changed: Yes. Added standard-library-only R28 stats-agent factor metrics contracts, validation, deterministic metric helpers, metric records, and preflight decision logic.
+- Tests changed: Yes. Added R28 offline stats-agent factor metrics preflight tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -55,11 +55,11 @@ R27: Multi-Agent Orchestrator Preflight.
 
 ## Language / Runtime Decision
 
-R27 keeps new `src/` code on Python standard library only. It adds deterministic multi-agent orchestrator preflight contracts, canonical stage ordering, hard-gate validation, manual-review handling, and broker-sandbox gating.
+R28 keeps new `src/` code on Python standard library only. It adds deterministic factor metric evidence validation, IC, RankIC, hit-rate, turnover, drawdown, coverage, sample-count, and cost-aware score records for future Stats Agent / Factor Agent consumption.
 
-R27 does not run agents, connect to brokers, mutate accounts, place orders, import broker SDKs, call DeepSeek, perform network calls, train models, update live strategy weights, run Qlib, or run RQAlpha.
+R28 does not run agents, connect to brokers, mutate accounts, place orders, import broker SDKs, call DeepSeek, perform network calls, train models, update live strategy weights, run Qlib, or run RQAlpha.
 
-R27 builds on the R16-R26 control surfaces by checking whether the intended pipeline state is coherent before any future runtime orchestration is introduced.
+R28 builds on the R16-R27 control surfaces by adding an offline factor-evidence preflight layer before future Qlib Evaluation or Multi-Agent Orchestrator runtime work.
 
 ## Validation Commands and Results
 
@@ -71,7 +71,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/multi_agent_orchestrator_preflight`
+`python -m pytest tests/stats_agent_factor_metrics_preflight`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -83,14 +83,14 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/multi_agent_orchestrator_preflight`
+`.venv/bin/python -m pytest tests/stats_agent_factor_metrics_preflight`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
 collected 17 items
-17 passed in 0.02s
+17 passed in 0.03s
 ```
 
 `.venv/bin/python -m pytest`
@@ -99,24 +99,24 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 546 items
-546 passed in 0.24s
+collected 563 items
+563 passed in 0.26s
 ```
 
-## R27 Multi-Agent Orchestrator Preflight Summary
+## R28 Stats Agent / Factor Metrics Preflight Summary
 
-R27 adds an offline deterministic preflight for the future multi-agent orchestration control plane.
+R28 adds an offline deterministic preflight for factor metric evidence that future Stats Agent, Factor Agent, Qlib Evaluation, Supervisor, and Multi-Agent Orchestrator stages can consume.
 
-The preflight validates plan evidence, supported stage names and statuses, duplicate stages, required canonical stages, stage evidence, canonical ordering, required stage failure behavior, manual-review behavior, optional warning behavior, and broker sandbox gating behind small-capital readiness.
+The preflight validates factor identity, direction, evidence, observations, strict ISO dates, finite values, duplicate symbol/date pairs, expected universe size, turnover, and cost ratio.
 
-Only plans with all required gates passed and no blocking risk flags return `READY`. Required manual-review stages return `MANUAL_REVIEW` when allowed and `BLOCKED` when manual review is disabled.
+It computes sample count, coverage ratio, IC, RankIC, hit rate, turnover, max drawdown, and cost-aware score. `PASS` is returned only when all metrics pass, `MANUAL_REVIEW` is returned when warnings exist without failures, and `FAIL` is returned for critical validation flags or failed metrics.
 
 ## Risks
 
-- R27 is preflight only; it does not implement or prove a live multi-agent runtime.
-- Future runtime orchestration must still remain behind these deterministic gate checks.
-- Future broker sandbox work remains blocked behind small-capital readiness and R26/R27 preflights.
+- R28 is preflight only; it does not implement or prove alpha, statistical significance, Qlib evaluation, or a live factor agent.
+- Simple deterministic metrics are not a replacement for mature analytics frameworks.
+- Future Qlib or external analytics work must remain behind explicit preflight and adapter boundaries.
 
 ## Recommended Next Step
 
-Run closure review for R27. A future phase can define runtime orchestrator adapters, stats/factor stages, or Qlib/RQAlpha preflight fixtures while keeping this deterministic preflight as the orchestration boundary.
+Run closure review for R28. A future phase can define Qlib Evaluation Preflight or richer external analytics adapters while keeping this deterministic preflight as the factor-evidence boundary.
