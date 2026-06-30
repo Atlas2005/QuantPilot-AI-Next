@@ -2,22 +2,23 @@
 
 ## Task Name
 
-P33: Broker SDK Research in Isolated Branch.
+P34: Gate Pruning and Tradability Fill Loop.
 
 ## Changed Files
 
-- `docs/BROKER_SDK_RESEARCH.md`
+- `docs/GATE_PRUNING_TRADABILITY_FILL_LOOP.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/broker_sdk_research/__init__.py`
-- `src/quantpilot_core/broker_sdk_research/contracts.py`
-- `src/quantpilot_core/broker_sdk_research/report.py`
-- `src/quantpilot_core/broker_sdk_research/validation.py`
-- `tests/broker_sdk_research/test_broker_sdk_research.py`
+- `src/quantpilot_core/gate_pruning_tradability_fill_loop/__init__.py`
+- `src/quantpilot_core/gate_pruning_tradability_fill_loop/contracts.py`
+- `src/quantpilot_core/gate_pruning_tradability_fill_loop/gate_audit.py`
+- `src/quantpilot_core/gate_pruning_tradability_fill_loop/report.py`
+- `src/quantpilot_core/gate_pruning_tradability_fill_loop/simulation.py`
+- `tests/gate_pruning_tradability_fill_loop/test_gate_pruning_tradability_fill_loop.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only P33 broker SDK research contracts, metadata validation, and deterministic research report generation.
-- Tests changed: Yes. Added P33 offline broker SDK research tests.
+- `src/` changed: Yes. Added standard-library-only P34 gate pruning, tradability, and deterministic fill simulation loop.
+- Tests changed: Yes. Added P34 offline gate pruning and tradability fill loop tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -55,11 +56,18 @@ P33: Broker SDK Research in Isolated Branch.
 
 ## Language / Runtime Decision
 
-P33 keeps new `src/` code on Python standard library only. It adds metadata-only broker SDK research contracts, candidate safety validation, A-share constraint validation, deterministic priority ranking, and manual investigation checklist generation.
+P34 keeps new `src/` code on Python standard library only. It adds active gate pruning, order-intent generation, A-share tradability checks, deterministic simulated fills, zero-trade diagnosis, cost/tax/slippage estimation, capital-use reporting, and overblocking detection.
 
-P33 does not install or import broker SDKs, connect to brokers, read real accounts, place orders, create credential handling, call DeepSeek, call OpenAI, perform network calls in tests, train models, update live strategy weights, run Qlib/qrun, or run RQAlpha.
+P34 does not install or import broker SDKs, connect to brokers, read real accounts, place orders, create credential handling, call DeepSeek, call OpenAI, perform network calls in tests, train models, update live strategy weights, run Qlib/qrun, or run RQAlpha.
 
-P33 compares broker integration candidates as research metadata only: vn.py style, QMT / MiniQMT style, easytrader style, broker native SDK, and manual CSV / semi-manual boundary.
+P34 is not another generic preflight wall. It reduces overblocking and measures fillability while preserving true hard risk gates.
+
+## Safety Barrier Before / After
+
+- Before: `185.0%`
+- After: `140.0%`
+- Target: `<= 140%`
+- Hard blocks preserved: PIT/no leakage, 100-share lot, T+1 sellable quantity, price limit, suspension, insufficient cash, insufficient position, credential leakage, disabled real-broker path before approved small-capital stage.
 
 ## Validation Commands and Results
 
@@ -71,7 +79,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/broker_sdk_research`
+`python -m pytest tests/gate_pruning_tradability_fill_loop`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -83,7 +91,7 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/broker_sdk_research`
+`.venv/bin/python -m pytest tests/gate_pruning_tradability_fill_loop`
 
 Result: passed.
 
@@ -99,31 +107,32 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 647 items
-647 passed in 0.32s
+collected 663 items
+663 passed in 0.34s
 ```
 
-## P33 Broker SDK Research Summary
+## P34 Gate Pruning and Tradability Fill Loop Summary
 
-P33 adds an isolated, metadata-only research boundary for A-share broker SDK candidates.
+P34 reduces excessive safety/preflight overblocking and verifies whether signals can become executable order intents and deterministic simulated fills.
 
-The research validator checks license, source, maintenance status, supported market, account-read and order-submit boundaries, sandbox/paper declaration, credential handling, default network safety, vendor SDK import safety, live order-path safety, manual approval, A-share constraints, integration evidence, and forbidden-scope evidence.
+The gate audit keeps true trade/capital hard risks as hard blocks, downgrades non-critical release/orchestration/metric checks, and freezes research-only expansion. The fill simulation applies A-share lot, T+1, price limit, suspension, cash, position, commission, stamp duty, and slippage checks.
 
-The report emits deterministic research priorities, blockers, warnings, manual investigation checklist items, integration boundary evidence, and forbidden-scope evidence.
+P34 reports raw signals, order intents, hard rejections, warnings, fillable orders, simulated fills, zero-trade reasons, costs, capital-used ratio, net PnL after cost estimate, suspected overblocking, and next recommended action.
 
 ## Risks
 
-- P33 is research-only; it does not approve or implement broker connectivity.
-- Future broker work must remain in a separate isolated branch and behind manual approval.
-- Credential handling, account reads, live order paths, and vendor SDK imports remain forbidden in default runtime.
+- P34 uses deterministic simulated fills only; it does not approve live trading.
+- Fill estimates are local approximations and not production execution guarantees.
+- True hard gates remain hard blocks; only non-critical overblocking is downgraded or frozen.
 
 ## Recommended Next Step
 
-Run closure review for P33. A future isolated branch may perform manual investigation for exactly one selected candidate while keeping credentials, account reads, and order submission outside the repository runtime.
+Run closure review for P34. The next phase should use zero-trade diagnostics and fillability metrics to improve signal quality, sizing, and top hard-rejection causes before broker-facing work resumes.
 
 ## Code Evidence Snapshot
 
-- `contracts.py`: defines metadata-only candidate contracts including `BrokerSdkCandidate`, `BrokerCapabilityProfile`, `BrokerPermissionBoundary`, `SandboxAvailabilityProfile`, `AccountReadBoundary`, `OrderSubmissionBoundary`, and `BrokerResearchReport`.
-- `validation.py`: blocks missing license/source/maintenance, default account-read or order-submit permissions, missing sandbox/paper declaration, repository credential handling, default network dependency, vendor SDK import requirement, live order path, missing manual approval, and missing A-share constraints.
-- `report.py`: builds candidate reports, deterministic priority ranking, blockers, warnings, manual investigation checklist, integration boundary evidence, and forbidden-scope evidence.
-- `tests`: cover valid metadata, missing license/source/maintenance classification, live order path rejection, credential handling rejection, vendor SDK import rejection, missing sandbox declaration, missing A-share constraints, priority ranking, forbidden scope evidence, and offline deterministic report shape.
+- `contracts.py`: defines gate pruning records, trade signals, order intents, tradability checks, simulated fills, rejection reasons, and fill simulation reports.
+- `gate_audit.py`: preserves true hard risk gates, downgrades non-critical overblocking, freezes research-only/generic safety expansion, and reduces the barrier from `185.0%` to `140.0%`.
+- `simulation.py`: converts signals to order intents, applies A-share tradability rules, computes commission/stamp duty/slippage, estimates net PnL after cost, diagnoses zero-trade reasons, and flags suspected overblocking.
+- `report.py`: exposes a combined pruning and fill-loop helper without broker/network/model runtime behavior.
+- `tests`: cover barrier reduction, hard gate preservation, downgrades, frozen research gates, fillable buys, T+1 sell rejection, odd lot rejection, suspension, price limit, cash rejection, fees/taxes/slippage, zero-trade diagnosis, mixed fill/rejection reports, suspected overblocking, deterministic ordering, and no broker/network/LLM behavior.
