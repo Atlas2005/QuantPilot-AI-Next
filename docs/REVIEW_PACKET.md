@@ -2,23 +2,23 @@
 
 ## Task Name
 
-R30: Final Readiness / Release Hardening.
+P31: Real Data Stability Trial.
 
 ## Changed Files
 
-- `docs/FINAL_READINESS_RELEASE_HARDENING.md`
+- `docs/REAL_DATA_STABILITY_TRIAL.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/final_readiness_release_hardening/__init__.py`
-- `src/quantpilot_core/final_readiness_release_hardening/checks.py`
-- `src/quantpilot_core/final_readiness_release_hardening/contracts.py`
-- `src/quantpilot_core/final_readiness_release_hardening/preflight.py`
-- `src/quantpilot_core/final_readiness_release_hardening/report.py`
-- `tests/final_readiness_release_hardening/test_final_readiness_release_hardening.py`
+- `src/quantpilot_core/real_data_stability_trial/__init__.py`
+- `src/quantpilot_core/real_data_stability_trial/contracts.py`
+- `src/quantpilot_core/real_data_stability_trial/manual_runner.py`
+- `src/quantpilot_core/real_data_stability_trial/report.py`
+- `src/quantpilot_core/real_data_stability_trial/validation.py`
+- `tests/real_data_stability_trial/test_real_data_stability_trial.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R30 final readiness / release hardening contracts, default inventories, explicit module/doc checks, forbidden-scope evidence checks, and deterministic final readiness reporting.
-- Tests changed: Yes. Added R30 offline final readiness / release hardening tests.
+- `src/` changed: Yes. Added standard-library-only P31 real data stability trial contracts, validation, report building, and optional manual runner boundary.
+- Tests changed: Yes. Added P31 offline real data stability trial tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -56,11 +56,11 @@ R30: Final Readiness / Release Hardening.
 
 ## Language / Runtime Decision
 
-R30 keeps new `src/` code on Python standard library only. It adds deterministic final readiness inventories, explicit module import checks, explicit document existence checks, forbidden-scope evidence checks, and a structured release readiness report.
+P31 keeps new `src/` code on Python standard library only. It adds deterministic A-share sample universe validation, provider trial config validation, provider row shape checks, OHLCV numeric sanity checks, provider stability reports, fallback compatibility warnings, and an optional manual runner interface.
 
-R30 does not run Qlib, import Qlib, run qrun, run agents, connect to brokers, mutate accounts, place orders, import broker SDKs, call DeepSeek, perform network calls, train models, update live strategy weights, or run RQAlpha.
+P31 does not run Qlib, run qrun, run agents, connect to brokers, mutate accounts, place orders, import broker SDKs, call DeepSeek, perform network calls in tests, train models, update live strategy weights, or run RQAlpha.
 
-R30 closes the preflight/sandbox MVP by verifying that required modules, required docs, and safety evidence are present before any post-MVP real-data, Qlib runtime, broker research, or small-capital shadow-trial work.
+P31 starts the post-R30 real-data stability phase while keeping provider-specific real network access optional/manual only.
 
 ## Validation Commands and Results
 
@@ -72,7 +72,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/final_readiness_release_hardening`
+`python -m pytest tests/real_data_stability_trial`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -84,14 +84,14 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/final_readiness_release_hardening`
+`.venv/bin/python -m pytest tests/real_data_stability_trial`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 15 items
-15 passed in 0.05s
+collected 20 items
+20 passed in 0.03s
 ```
 
 `.venv/bin/python -m pytest`
@@ -100,24 +100,24 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 597 items
-597 passed in 0.28s
+collected 617 items
+617 passed in 0.30s
 ```
 
-## R30 Final Readiness / Release Hardening Summary
+## P31 Real Data Stability Trial Summary
 
-R30 adds an offline deterministic final readiness report for the preflight/sandbox MVP.
+P31 adds an offline deterministic real data stability trial layer for supplied provider rows and fixed A-share sample universes.
 
-The preflight inventories required modules and documents, validates release checklist evidence, performs explicit module import checks, verifies listed docs exist, and evaluates caller-provided forbidden-scope evidence without scanning the whole repository.
+The trial validates universe metadata, provider configs, provider row shape, required field coverage, symbol/date coverage, missing-row ratio, duplicate rows, OHLCV numeric sanity, network/manual-review boundaries, and provider fallback compatibility across reports.
 
-Only fully clean inputs return `READY`. Critical validation flags or failed checks return `BLOCKED`. Warning-only checks return `MANUAL_REVIEW`.
+Only clean provider evidence returns `STABLE`. Critical validation flags or failed checks return `UNSTABLE`. Warning-only checks return `MANUAL_REVIEW`.
 
 ## Risks
 
-- R30 is final readiness / release hardening only; it does not approve real capital usage.
-- Repository-wide forbidden-scope scanning is intentionally left to future CI hardening with reviewed exclusions.
-- Real data stability, offline Qlib runtime, broker SDK research, small-capital shadow trial, and human approval workflows remain future work.
+- P31 validates supplied rows only; it does not approve a production data provider.
+- AkShare and BaoStock remain optional and are not required dependencies.
+- Optional manual network trials remain operator-gated and are not used by default tests.
 
 ## Recommended Next Step
 
-Run closure review for R30. Post-R30 work can move to real data stability trials, isolated offline Qlib runtime spikes, broker SDK research branches, manual small-capital shadow trials, and human approval workflow design.
+Run closure review for P31. P32 can use P31 stability evidence to prepare an offline Qlib runtime spike while keeping provider network access, Qlib runtime, and broker work behind explicit manual gates.
