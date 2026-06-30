@@ -2,22 +2,22 @@
 
 ## Task Name
 
-R20: Account Profile / Broker Config Preflight.
+R21: AI Action Proposal -> Paper Ledger Bridge.
 
 ## Changed Files
 
-- `docs/ACCOUNT_PROFILE_BROKER_CONFIG_PREFLIGHT.md`
+- `docs/AI_ACTION_PROPOSAL_PAPER_LEDGER_BRIDGE.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/account_profile_preflight/__init__.py`
-- `src/quantpilot_core/account_profile_preflight/contracts.py`
-- `src/quantpilot_core/account_profile_preflight/limits.py`
-- `src/quantpilot_core/account_profile_preflight/preflight.py`
-- `tests/account_profile_preflight/test_account_profile_preflight.py`
+- `src/quantpilot_core/ai_action_paper_bridge/__init__.py`
+- `src/quantpilot_core/ai_action_paper_bridge/bridge.py`
+- `src/quantpilot_core/ai_action_paper_bridge/contracts.py`
+- `src/quantpilot_core/ai_action_paper_bridge/preflight.py`
+- `tests/ai_action_paper_bridge/test_ai_action_paper_bridge.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R20 account profile and broker config contracts, limit helpers, and preflight validation.
-- Tests changed: Yes. Added R20 offline account profile preflight tests.
+- `src/` changed: Yes. Added standard-library-only R21 AI action proposal bridge contracts, proposal validation, fee estimation, and account-aware bridge checks.
+- Tests changed: Yes. Added R21 offline bridge tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -38,7 +38,8 @@ R20: Account Profile / Broker Config Preflight.
 - DeepSeek/API call added: No.
 - Real account API read: No.
 - Broker connection added: No.
-- Order generation added: No.
+- Paper ledger write added: No.
+- Live order path added: No.
 - Real alpha evidence produced: No.
 - Statistical significance claimed: No.
 - External analytics installed/imported: No.
@@ -51,11 +52,11 @@ R20: Account Profile / Broker Config Preflight.
 
 ## Language / Runtime Decision
 
-R20 keeps new `src/` code on Python standard library only. It adds typed contracts, deterministic account/broker validation, sellable quantity normalization, and concentration weight calculations.
+R21 keeps new `src/` code on Python standard library only. It adds typed contracts, deterministic proposal validation, conservative cost estimates, and a bridge from structured AI proposals to in-memory paper-ledger candidate instructions.
 
-R20 does not connect to brokers, read account APIs, generate orders, place trades, call DeepSeek, perform network calls, run Qlib, or run RQAlpha.
+R21 does not connect to brokers, write to the paper ledger, read account APIs, generate live orders, place trades, call DeepSeek, perform network calls, run Qlib, or run RQAlpha.
 
-R20 strengthens the capital/account-aware boundary that future AI action proposal, paper ledger, and Market Reality Sandbox flows must satisfy before any downstream dry path proceeds.
+R21 reuses R20 account profile preflight so proposal acceptance is constrained by explicit account status, permissions, cash, sellable quantity, fees, and risk limits.
 
 ## Validation Commands and Results
 
@@ -67,7 +68,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/account_profile_preflight`
+`python -m pytest tests/ai_action_paper_bridge`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -79,14 +80,14 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/account_profile_preflight`
+`.venv/bin/python -m pytest tests/ai_action_paper_bridge`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 21 items
-21 passed in 0.01s
+collected 19 items
+19 passed in 0.01s
 ```
 
 `.venv/bin/python -m pytest`
@@ -95,30 +96,24 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 426 items
-426 passed in 0.19s
+collected 445 items
+445 passed in 0.20s
 ```
 
-## R20 Account Profile / Broker Config Preflight Summary
+## R21 AI Action Proposal -> Paper Ledger Bridge Summary
 
-R20 adds an offline deterministic preflight for explicit account and broker configuration.
+R21 adds an offline deterministic bridge for structured AI action proposals.
 
-The preflight validates account identity, evidence, cash shape, positions, fees, broker capabilities, permissions, risk limits, and concentration limits.
+The bridge validates proposal structure, confidence, rationale, evidence, A-share lot size, account status, broker permissions, available cash, sellable quantity, max order value, and conservative fee estimates.
 
-The result returns structured risk flags plus deterministic normalized maps:
-
-- sellable quantity by symbol
-- position weight by symbol
-- industry weight
-
-Critical flags make the preflight fail.
+Accepted proposals emit `PaperLedgerCandidateInstruction` objects only. `HOLD` proposals emit no instruction. Low-confidence proposals require manual review. Critical account or proposal failures block the bridge.
 
 ## Risks
 
-- R20 is a contract/preflight layer only; it does not prove broker compatibility or account API correctness.
-- Future adapters must still map real or paper account snapshots into these contracts before sandbox use.
-- Fee and slippage settings are configurable assumptions, not execution evidence.
+- R21 is a candidate-instruction bridge only; it does not write to the paper ledger or prove execution quality.
+- Future ledger integration still needs sandbox gates and explicit review.
+- Cost estimates are conservative paper checks, not broker-confirmed charges.
 
 ## Recommended Next Step
 
-Run closure review for R20. The next phase can connect account profile preflight to an AI Action Proposal -> Paper Ledger Bridge while keeping the bridge offline and sandbox-only.
+Run closure review for R21. A future phase can connect accepted candidate instructions to the paper ledger dry path under additional Market Reality Sandbox gates.
