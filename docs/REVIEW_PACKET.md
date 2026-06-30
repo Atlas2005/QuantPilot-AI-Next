@@ -2,103 +2,73 @@
 
 ## Task Name
 
-P35: Qlib Offline Tradability Evaluation Fixture.
+P36: Daily Paper Trading Loop with Tradability Metrics.
 
 ## Changed Files
 
-- `docs/QLIB_OFFLINE_TRADABILITY_EVALUATION_FIXTURE.md`
+- `docs/DAILY_PAPER_TRADING_LOOP_TRADABILITY_METRICS.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/qlib_offline_tradability_evaluation_fixture/__init__.py`
-- `src/quantpilot_core/qlib_offline_tradability_evaluation_fixture/contracts.py`
-- `src/quantpilot_core/qlib_offline_tradability_evaluation_fixture/evaluation.py`
-- `src/quantpilot_core/qlib_offline_tradability_evaluation_fixture/fixture.py`
-- `src/quantpilot_core/qlib_offline_tradability_evaluation_fixture/report.py`
-- `tests/qlib_offline_tradability_evaluation_fixture/test_qlib_offline_tradability_evaluation_fixture.py`
+- `src/quantpilot_core/daily_paper_trading_loop_tradability_metrics/__init__.py`
+- `src/quantpilot_core/daily_paper_trading_loop_tradability_metrics/contracts.py`
+- `src/quantpilot_core/daily_paper_trading_loop_tradability_metrics/loop.py`
+- `src/quantpilot_core/daily_paper_trading_loop_tradability_metrics/metrics.py`
+- `src/quantpilot_core/daily_paper_trading_loop_tradability_metrics/report.py`
+- `tests/daily_paper_trading_loop_tradability_metrics/test_daily_paper_trading_loop_tradability_metrics.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only P35 Qlib offline tradability evaluation fixture contracts, deterministic fixtures, evaluation, and report generation.
-- Tests changed: Yes. Added P35 offline Qlib tradability evaluation fixture tests.
-- Local fixture changed: No.
-- Integration matrix changed: No.
-- Open-source decision table changed: No.
-- Manual probe scripts changed: No.
+- `src/` changed: Yes. Added standard-library-only daily paper trading loop contracts, loop execution, metrics aggregation, and report generation.
+- Tests changed: Yes. Added deterministic P36 daily paper trading loop tests.
+- Documentation changed: Yes. Added P36 documentation and updated this review packet.
 - Dependencies changed: No.
 - Packages installed: No.
 - Packages uninstalled: No.
 - `pyproject.toml` changed: No.
 - Market data/API used during implementation: No.
 - Provider API called during implementation: No.
+- Network calls in default tests: No.
 - Production data assets written: No.
-- Manual probes run: No.
 - Real data fetched: No.
-- Raw data committed: No.
-- Any data source approved: No.
-- Full data provider implementation added: No.
-- Real news crawling added: No.
 - DeepSeek/API call added: No.
+- OpenAI/API call added: No.
 - Model training added: No.
 - Live strategy weight update added: No.
 - Real account API read: No.
 - Broker connection added: No.
 - Vendor broker SDK imported: No.
-- Paper ledger persistence write added: No.
+- Broker credentials handling added: No.
 - Live order path added: No.
+- Real order placement added: No.
 - Real alpha evidence produced: No.
-- Statistical significance claimed: No.
-- External analytics installed/imported: No.
-- Broker/live/order submission path created: No.
-- Real backtest/model/agent implementation added: No.
-- Full backtest/risk/factor/calendar/accounting engine added: No.
-- External frameworks installed/imported in `src/`: No.
-- Final technical selections made: No.
 - Profitability claim made: No.
 
 ## Language / Runtime Decision
 
-P35 keeps new `src/` code on Python standard library only. It adds deterministic A-share-like daily bars, deterministic signals, Qlib-compatible metadata, P34 fill-loop evaluation, fill-rate reporting, cost-after-fill evaluation, zero-trade diagnosis, and next-improvement targeting.
+P36 keeps new implementation code on Python standard library only. It reuses the P34 deterministic tradability and fill simulation rather than creating another backtest engine, broker route, or generic preflight wall.
 
-P35 does not install or import broker SDKs, connect to brokers, read real accounts, place orders, create credential handling, call DeepSeek, call OpenAI, perform network calls in tests, train models, update live strategy weights, run Qlib/qrun, or run RQAlpha.
+The daily loop consumes deterministic multi-day signals, simulates A-share order intent fillability, updates local paper cash and positions, aggregates tradability/cost/PnL/capital metrics, and recommends the next improvement target.
 
-P35 moves from gate pruning to offline tradability evaluation. It does not add another generic safety/preflight wall.
+## Safety Barrier
 
-## Safety Barrier Before / After
-
-- Before P34: `185.0%`
-- P34/P35 active barrier: `140.0%`
+- Pre-P34 estimated barrier: `185.0%`
+- P34/P35/P36 active barrier: `140.0%`
 - Target: `<= 140%`
-- P35 keeps the safety barrier at or below target while measuring fillability.
+- P36 does not raise the safety barrier. It measures fillability under the pruned gate set.
 
 ## Validation Commands and Results
-
-`python -m compileall src`
-
-Result: not run because bare `python` is not available in this shell.
-
-```text
-zsh:1: command not found: python
-```
-
-`python -m pytest tests/qlib_offline_tradability_evaluation_fixture`
-
-Result: not run because bare `python` is not available in this shell.
-
-```text
-zsh:1: command not found: python
-```
 
 `.venv/bin/python -m compileall src`
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/qlib_offline_tradability_evaluation_fixture`
+`.venv/bin/python -m pytest tests/daily_paper_trading_loop_tradability_metrics`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 16 items
-16 passed in 0.02s
+collected 13 items
+13 passed in 0.02s
 ```
 
 `.venv/bin/python -m pytest`
@@ -107,32 +77,30 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 679 items
-679 passed in 0.34s
+collected 692 items
+692 passed in 0.35s
 ```
 
-## P35 Qlib Offline Tradability Evaluation Fixture Summary
+## P36 Summary
 
-P35 creates deterministic local fixture objects for Qlib-compatible offline tradability evaluation.
+P36 adds a deterministic daily paper trading loop with tradability metrics.
 
-The fixture includes A-share-like daily bars, deterministic signals, expected order intents, expected simulated fills, expected fee/slippage/tax, and expected zero-trade diagnosis. Evaluation reuses P34 fill simulation and emits fill rate, cost-after-fill, net PnL after cost, capital-used ratio, drawdown/turnover estimates, and Qlib compatibility notes.
-
-P35 answers whether signals became order intents, whether intents became simulated fills, whether fill rate was positive, whether net PnL after cost was positive/zero/negative, and what should improve next.
+It answers whether deterministic signals can produce order intents across multiple days, whether at least one simulated fill occurs, how cash and positions move after local paper fills, what costs/taxes/slippage were incurred, whether net PnL after cost is positive/zero/negative, which days had zero trades, and what exact rejection reasons explain those zero-trade days.
 
 ## Risks
 
-- P35 uses deterministic local fixtures only; it does not approve live trading.
-- Qlib compatibility is metadata-only; Qlib is not imported, required, or run.
-- Fill estimates are local approximations and not production execution guarantees.
+- P36 is deterministic paper simulation only; it does not approve live trading.
+- PnL, turnover, drawdown, and cost figures are local estimates, not broker execution facts.
+- The loop relies on P34 simulation rules and fixture-like inputs; production data quality and broker behavior remain outside this patch.
 
 ## Recommended Next Step
 
-Run closure review for P35. The next phase should use offline fixture results to improve alpha quality, sizing, liquidity/tradability, cost model accuracy, or data fixture quality before any optional runtime spike proceeds.
+Use P36 daily paper loop output to tune alpha quality, sizing, tradability constraints, cost model realism, or deterministic data quality before any broker-facing phase proceeds.
 
 ## Code Evidence Snapshot
 
-- `contracts.py`: defines offline daily bars, tradability fixture dataset, signal fixture, evaluation window, Qlib-compatible plan, evaluation result, and evaluation report.
-- `fixture.py`: creates deterministic local A-share-like bars, deterministic signals, expected order/fill/cost diagnostics, zero-trade fixture, evaluation window, and Qlib-compatible metadata.
-- `evaluation.py`: validates local-only metadata, reuses P34 fill simulation, computes fill rate, costs, PnL after costs, capital used ratio, drawdown/turnover estimates, and compatibility notes.
-- `report.py`: answers produced-signals/intents/fills, fill-rate positivity, PnL sign, safety barrier status, overblocking status, and next-improvement target.
-- `tests`: cover deterministic bars/signals, intent/fill generation, cost/tax/slippage, fill rate, zero-trade reasons, local-only dataset acceptance, remote URI rejection, no Qlib requirement/import, no default qrun/runtime execution, Qlib compatibility metadata, deterministic ordering, safety barrier <= 140, and no broker/network/LLM behavior.
+- `contracts.py`: defines daily loop input, day result, loop report, tradability metrics, adjustment recommendation, and zero-trade diagnosis summary.
+- `loop.py`: runs deterministic day-by-day fill simulation, updates local paper cash/positions, and emits daily recommendations.
+- `metrics.py`: aggregates fill rate, costs, net PnL, capital usage, turnover, drawdown, zero-trade reasons, and suspected overblocking days.
+- `report.py`: builds the value-oriented P36 report and selects the next improvement target.
+- `tests`: cover deterministic multi-day input, all day outputs, intents, fills, cash/position updates, cost aggregation, fill rate, zero-trade diagnosis, net PnL, capital usage, turnover/drawdown, overblocking counts, safety barrier limit, deterministic ordering, and forbidden runtime behavior.
