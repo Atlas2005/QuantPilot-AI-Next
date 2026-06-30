@@ -2,22 +2,23 @@
 
 ## Task Name
 
-R24: Performance Attribution Flywheel Preflight.
+R25: Small-Capital Readiness Gate.
 
 ## Changed Files
 
-- `docs/PERFORMANCE_ATTRIBUTION_FLYWHEEL_PREFLIGHT.md`
+- `docs/SMALL_CAPITAL_READINESS_GATE.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/performance_attribution_preflight/__init__.py`
-- `src/quantpilot_core/performance_attribution_preflight/attribution.py`
-- `src/quantpilot_core/performance_attribution_preflight/contracts.py`
-- `src/quantpilot_core/performance_attribution_preflight/preflight.py`
-- `tests/performance_attribution_preflight/test_performance_attribution_preflight.py`
+- `src/quantpilot_core/small_capital_readiness_gate/__init__.py`
+- `src/quantpilot_core/small_capital_readiness_gate/contracts.py`
+- `src/quantpilot_core/small_capital_readiness_gate/gate.py`
+- `src/quantpilot_core/small_capital_readiness_gate/metrics.py`
+- `src/quantpilot_core/small_capital_readiness_gate/preflight.py`
+- `tests/small_capital_readiness_gate/test_small_capital_readiness_gate.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R24 performance attribution contracts, input validation, attribution aggregation, and feedback record generation.
-- Tests changed: Yes. Added R24 offline attribution preflight tests.
+- `src/` changed: Yes. Added standard-library-only R25 readiness gate contracts, metric calculations, input validation, and decision logic.
+- Tests changed: Yes. Added R25 offline small-capital readiness gate tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -54,11 +55,11 @@ R24: Performance Attribution Flywheel Preflight.
 
 ## Language / Runtime Decision
 
-R24 keeps new `src/` code on Python standard library only. It adds deterministic replay-output validation, proposal/symbol/source/day attribution, estimated cost derivation, and feedback records.
+R25 keeps new `src/` code on Python standard library only. It adds deterministic readiness metrics and a PASS / FAIL / MANUAL_REVIEW decision over R23 replay and R24 attribution outputs.
 
-R24 does not connect to brokers, mutate real accounts, write paper ledger persistence, place live orders, call DeepSeek, perform network calls, train models, update live strategy weights, run Qlib, or run RQAlpha.
+R25 does not connect to brokers, mutate real accounts, write paper ledger persistence, place live orders, call DeepSeek, perform network calls, train models, update live strategy weights, run Qlib, or run RQAlpha.
 
-R24 consumes R23 `PaperReplayResult` objects as its only input.
+R25 consumes R23 `PaperReplayResult` and R24 `PerformanceAttributionResult` objects as its only evidence inputs.
 
 ## Validation Commands and Results
 
@@ -70,7 +71,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/performance_attribution_preflight`
+`python -m pytest tests/small_capital_readiness_gate`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -82,14 +83,14 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/performance_attribution_preflight`
+`.venv/bin/python -m pytest tests/small_capital_readiness_gate`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 15 items
-15 passed in 0.02s
+collected 16 items
+16 passed in 0.02s
 ```
 
 `.venv/bin/python -m pytest`
@@ -98,24 +99,24 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 494 items
-494 passed in 0.22s
+collected 510 items
+510 passed in 0.23s
 ```
 
-## R24 Performance Attribution Flywheel Preflight Summary
+## R25 Small-Capital Readiness Gate Summary
 
-R24 adds an offline deterministic attribution preflight over R23 replay outputs.
+R25 adds an offline deterministic readiness gate over replay and attribution evidence.
 
-The attribution layer validates replay shape, flattens instruction results into proposal attribution records, aggregates by symbol, source, and day, derives estimated costs, and emits feedback records for proposals, symbols, days, and risk rules.
+The gate computes replay-day count, blocked-day ratio, blocked-instruction ratio, accepted-instruction count, critical-risk count, estimated-cost ratio, negative-feedback ratio, cash-drawdown ratio, and optional position concentration.
 
-This creates reviewable feedback data for future agent evaluation without model training or live adaptation.
+Hard metric failures return `FAIL`. Warning metrics without hard failures return `MANUAL_REVIEW`. Full pass returns `PASS`.
 
 ## Risks
 
-- R24 is attribution preflight only; it does not prove trading edge or update any strategy.
-- Cash-delta based outcomes are simulation signals, not realized PnL.
-- Future readiness gates must still decide how to interpret feedback records.
+- R25 is a readiness preflight only; it does not approve live trading or broker use.
+- Metric thresholds are conservative defaults and may need review before any broker sandbox phase.
+- Replay and attribution quality still depend on upstream dry-run and evidence quality.
 
 ## Recommended Next Step
 
-Run closure review for R24. A future phase can build a Small-Capital Readiness Gate or Multi-Agent Orchestrator preflight on top of the attribution output.
+Run closure review for R25. A future phase can introduce a broker sandbox adapter preflight or Multi-Agent Orchestrator preflight gated behind this readiness decision.
