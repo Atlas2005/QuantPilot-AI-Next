@@ -2,22 +2,22 @@
 
 ## Task Name
 
-R21: AI Action Proposal -> Paper Ledger Bridge.
+R22: Paper Ledger Dry-Run Integration.
 
 ## Changed Files
 
-- `docs/AI_ACTION_PROPOSAL_PAPER_LEDGER_BRIDGE.md`
+- `docs/PAPER_LEDGER_DRY_RUN_INTEGRATION.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/ai_action_paper_bridge/__init__.py`
-- `src/quantpilot_core/ai_action_paper_bridge/bridge.py`
-- `src/quantpilot_core/ai_action_paper_bridge/contracts.py`
-- `src/quantpilot_core/ai_action_paper_bridge/preflight.py`
-- `tests/ai_action_paper_bridge/test_ai_action_paper_bridge.py`
+- `src/quantpilot_core/paper_ledger_dry_run/__init__.py`
+- `src/quantpilot_core/paper_ledger_dry_run/contracts.py`
+- `src/quantpilot_core/paper_ledger_dry_run/dry_run.py`
+- `src/quantpilot_core/paper_ledger_dry_run/preflight.py`
+- `tests/paper_ledger_dry_run/test_paper_ledger_dry_run.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R21 AI action proposal bridge contracts, proposal validation, fee estimation, and account-aware bridge checks.
-- Tests changed: Yes. Added R21 offline bridge tests.
+- `src/` changed: Yes. Added standard-library-only R22 paper ledger dry-run contracts, instruction validation, and in-memory simulation.
+- Tests changed: Yes. Added R22 offline dry-run integration tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -38,7 +38,7 @@ R21: AI Action Proposal -> Paper Ledger Bridge.
 - DeepSeek/API call added: No.
 - Real account API read: No.
 - Broker connection added: No.
-- Paper ledger write added: No.
+- Paper ledger persistence write added: No.
 - Live order path added: No.
 - Real alpha evidence produced: No.
 - Statistical significance claimed: No.
@@ -52,11 +52,11 @@ R21: AI Action Proposal -> Paper Ledger Bridge.
 
 ## Language / Runtime Decision
 
-R21 keeps new `src/` code on Python standard library only. It adds typed contracts, deterministic proposal validation, conservative cost estimates, and a bridge from structured AI proposals to in-memory paper-ledger candidate instructions.
+R22 keeps new `src/` code on Python standard library only. It adds typed contracts, candidate-instruction validation, conservative fee estimates, and deterministic in-memory cash/position simulation.
 
-R21 does not connect to brokers, write to the paper ledger, read account APIs, generate live orders, place trades, call DeepSeek, perform network calls, run Qlib, or run RQAlpha.
+R22 does not connect to brokers, mutate real accounts, write paper ledger persistence, place live orders, call DeepSeek, perform network calls, run Qlib, or run RQAlpha.
 
-R21 reuses R20 account profile preflight so proposal acceptance is constrained by explicit account status, permissions, cash, sellable quantity, fees, and risk limits.
+R22 reuses R20 account profile preflight and consumes R21 `PaperLedgerCandidateInstruction` objects as its only bridge input.
 
 ## Validation Commands and Results
 
@@ -68,7 +68,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/ai_action_paper_bridge`
+`python -m pytest tests/paper_ledger_dry_run`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -80,14 +80,14 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/ai_action_paper_bridge`
+`.venv/bin/python -m pytest tests/paper_ledger_dry_run`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 19 items
-19 passed in 0.01s
+collected 18 items
+18 passed in 0.01s
 ```
 
 `.venv/bin/python -m pytest`
@@ -96,24 +96,24 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 445 items
-445 passed in 0.20s
+collected 463 items
+463 passed in 0.20s
 ```
 
-## R21 AI Action Proposal -> Paper Ledger Bridge Summary
+## R22 Paper Ledger Dry-Run Integration Summary
 
-R21 adds an offline deterministic bridge for structured AI action proposals.
+R22 adds an offline deterministic dry-run integration for R21 paper-ledger candidate instructions.
 
-The bridge validates proposal structure, confidence, rationale, evidence, A-share lot size, account status, broker permissions, available cash, sellable quantity, max order value, and conservative fee estimates.
+The dry-run validates instruction shape, A-share lot size, evidence, notional consistency, account preflight status, account trading status, cash sufficiency, sellable quantity, duplicate proposal IDs, and fail-fast behavior.
 
-Accepted proposals emit `PaperLedgerCandidateInstruction` objects only. `HOLD` proposals emit no instruction. Low-confidence proposals require manual review. Critical account or proposal failures block the bridge.
+Accepted instructions simulate cash and position deltas only. Rejected instructions emit structured risk flags. Partial dry-runs can continue after rejected instructions unless `fail_fast=True`.
 
 ## Risks
 
-- R21 is a candidate-instruction bridge only; it does not write to the paper ledger or prove execution quality.
-- Future ledger integration still needs sandbox gates and explicit review.
-- Cost estimates are conservative paper checks, not broker-confirmed charges.
+- R22 is simulation-only; it does not write the existing paper ledger or prove execution quality.
+- Future multi-day replay still needs explicit sandbox gates and review.
+- Fee estimates are conservative paper checks, not broker-confirmed charges.
 
 ## Recommended Next Step
 
-Run closure review for R21. A future phase can connect accepted candidate instructions to the paper ledger dry path under additional Market Reality Sandbox gates.
+Run closure review for R22. A future phase can connect accepted dry-run results to multi-day Market Reality Sandbox replay under additional gates.
