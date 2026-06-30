@@ -2,22 +2,22 @@
 
 ## Task Name
 
-R19: News / Event Agent Preflight.
+R20: Account Profile / Broker Config Preflight.
 
 ## Changed Files
 
-- `docs/NEWS_EVENT_AGENT_PREFLIGHT.md`
+- `docs/ACCOUNT_PROFILE_BROKER_CONFIG_PREFLIGHT.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/news_event_agent_preflight/__init__.py`
-- `src/quantpilot_core/news_event_agent_preflight/contracts.py`
-- `src/quantpilot_core/news_event_agent_preflight/pit_bridge.py`
-- `src/quantpilot_core/news_event_agent_preflight/preflight.py`
-- `tests/news_event_agent_preflight/test_news_event_agent_preflight.py`
+- `src/quantpilot_core/account_profile_preflight/__init__.py`
+- `src/quantpilot_core/account_profile_preflight/contracts.py`
+- `src/quantpilot_core/account_profile_preflight/limits.py`
+- `src/quantpilot_core/account_profile_preflight/preflight.py`
+- `tests/account_profile_preflight/test_account_profile_preflight.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R19 news/event contracts, validation, and PIT bridge.
-- Tests changed: Yes. Added R19 offline news/event preflight tests.
+- `src/` changed: Yes. Added standard-library-only R20 account profile and broker config contracts, limit helpers, and preflight validation.
+- Tests changed: Yes. Added R20 offline account profile preflight tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -36,6 +36,9 @@ R19: News / Event Agent Preflight.
 - Full data provider implementation added: No.
 - Real news crawling added: No.
 - DeepSeek/API call added: No.
+- Real account API read: No.
+- Broker connection added: No.
+- Order generation added: No.
 - Real alpha evidence produced: No.
 - Statistical significance claimed: No.
 - External analytics installed/imported: No.
@@ -48,11 +51,11 @@ R19: News / Event Agent Preflight.
 
 ## Language / Runtime Decision
 
-R19 keeps new `src/` code on Python standard library only. It adds typed contracts, deterministic validation, and an in-memory bridge from structured event findings to R18 PIT feature records.
+R20 keeps new `src/` code on Python standard library only. It adds typed contracts, deterministic account/broker validation, sellable quantity normalization, and concentration weight calculations.
 
-R19 does not crawl news, call DeepSeek, call provider APIs, implement a live agent runtime, implement feature-store materialization, add broker integration, add live trading, add order generation, run Qlib, or run RQAlpha.
+R20 does not connect to brokers, read account APIs, generate orders, place trades, call DeepSeek, perform network calls, run Qlib, or run RQAlpha.
 
-R19 reuses R18 PIT validation as the event-derived feature boundary, so future news/event agents cannot bypass point-in-time visibility checks.
+R20 strengthens the capital/account-aware boundary that future AI action proposal, paper ledger, and Market Reality Sandbox flows must satisfy before any downstream dry path proceeds.
 
 ## Validation Commands and Results
 
@@ -64,7 +67,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/news_event_agent_preflight`
+`python -m pytest tests/account_profile_preflight`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -76,14 +79,14 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/news_event_agent_preflight`
+`.venv/bin/python -m pytest tests/account_profile_preflight`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 15 items
-15 passed in 0.01s
+collected 21 items
+21 passed in 0.01s
 ```
 
 `.venv/bin/python -m pytest`
@@ -92,32 +95,30 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 405 items
-405 passed in 0.19s
+collected 426 items
+426 passed in 0.19s
 ```
 
-## R19 News / Event Agent Preflight Summary
+## R20 Account Profile / Broker Config Preflight Summary
 
-R19 adds an offline deterministic preflight for structured news/event findings.
+R20 adds an offline deterministic preflight for explicit account and broker configuration.
 
-The preflight validates event metadata, temporal availability, sentiment score bounds, confidence bounds, impact score bounds, affected-symbol requirements, rumor/critical risk flags, and structured-output requirements.
+The preflight validates account identity, evidence, cash shape, positions, fees, broker capabilities, permissions, risk limits, and concentration limits.
 
-The PIT bridge emits deterministic feature keys for each affected symbol:
+The result returns structured risk flags plus deterministic normalized maps:
 
-- `news.sentiment`
-- `news.risk_level_numeric`
-- `news.impact_score`
-- `news.event_type_numeric`
-- `news.confidence`
+- sellable quantity by symbol
+- position weight by symbol
+- industry weight
 
-The emitted records are validated by R18 PIT preflight and blocked when they are not available as of the requested time.
+Critical flags make the preflight fail.
 
 ## Risks
 
-- R19 is a contract/preflight layer only; it does not prove real news source quality or model extraction quality.
-- Future model output must still be forced through these structured contracts before sandbox use.
-- Event-derived feature quality depends on truthful event, known, and trading-availability timestamps from future adapters.
+- R20 is a contract/preflight layer only; it does not prove broker compatibility or account API correctness.
+- Future adapters must still map real or paper account snapshots into these contracts before sandbox use.
+- Fee and slippage settings are configurable assumptions, not execution evidence.
 
 ## Recommended Next Step
 
-Run closure review for R19. The next phase can harden Account Profile / Broker Config preflight or add a Stats Agent preflight, depending on project priority.
+Run closure review for R20. The next phase can connect account profile preflight to an AI Action Proposal -> Paper Ledger Bridge while keeping the bridge offline and sandbox-only.
