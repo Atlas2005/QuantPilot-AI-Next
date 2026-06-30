@@ -2,30 +2,32 @@
 
 ## Task Name
 
-P38: Mixed Stock ETF Daily Paper Evaluation.
+P39: Real Provider Mixed ETF Paper Replay.
 
 ## Changed Files
 
-- `docs/MIXED_STOCK_ETF_DAILY_PAPER_EVALUATION.md`
+- `docs/REAL_PROVIDER_MIXED_ETF_PAPER_REPLAY.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/mixed_stock_etf_daily_paper_evaluation/__init__.py`
-- `src/quantpilot_core/mixed_stock_etf_daily_paper_evaluation/comparison.py`
-- `src/quantpilot_core/mixed_stock_etf_daily_paper_evaluation/contracts.py`
-- `src/quantpilot_core/mixed_stock_etf_daily_paper_evaluation/report.py`
-- `src/quantpilot_core/mixed_stock_etf_daily_paper_evaluation/scenarios.py`
-- `tests/mixed_stock_etf_daily_paper_evaluation/test_mixed_stock_etf_daily_paper_evaluation.py`
+- `src/quantpilot_core/real_provider_mixed_etf_paper_replay/__init__.py`
+- `src/quantpilot_core/real_provider_mixed_etf_paper_replay/comparison.py`
+- `src/quantpilot_core/real_provider_mixed_etf_paper_replay/contracts.py`
+- `src/quantpilot_core/real_provider_mixed_etf_paper_replay/replay.py`
+- `src/quantpilot_core/real_provider_mixed_etf_paper_replay/report.py`
+- `src/quantpilot_core/real_provider_mixed_etf_paper_replay/sample_bridge.py`
+- `tests/real_provider_mixed_etf_paper_replay/test_real_provider_mixed_etf_paper_replay.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only P38 stock-only versus mixed stock/ETF daily paper evaluation.
-- Tests changed: Yes. Added deterministic P38 tests.
-- Documentation changed: Yes. Added P38 documentation and updated this review packet.
+- `src/` changed: Yes. Added standard-library-only P39 provider-like local sample bridge, replay, comparison, and report boundary.
+- Tests changed: Yes. Added deterministic P39 tests.
+- Documentation changed: Yes. Added P39 documentation and updated this review packet.
 - Dependencies changed: No.
 - Packages installed: No.
 - Packages uninstalled: No.
 - `pyproject.toml` changed: No.
 - Market data/API used during implementation: No.
 - Provider API called during implementation: No.
+- Live/remote provider fetch in default tests: No.
 - Network calls in default tests: No.
 - Production data assets written: No.
 - Real data fetched: No.
@@ -45,35 +47,44 @@ P38: Mixed Stock ETF Daily Paper Evaluation.
 
 ## Value Orientation
 
-P38 compares stock-only daily paper evaluation against mixed stock+ETF daily paper evaluation.
+P39 moves from deterministic fixture-only mixed stock/ETF comparison toward provider-gated local sample replay.
 
-It measures whether ETF inclusion improves fillability, zero-trade days, capital usage, cost drag, diversification proxy, and net PnL after cost. This moves the project toward controlled automated A-share/ETF trading rather than adding another review wall.
+It validates provider-like local sample quality, replays accepted mixed stock/ETF samples through the daily paper loop, compares replay output against the P38 mixed baseline, and reports whether ETF inclusion remains useful with provider-like local inputs.
 
-## ETF Impact Summary
+## Provider Sample Quality Summary
 
-- Mixed stock+ETF fill-rate delta: `+0.666667`.
-- Mixed stock+ETF zero-trade-day delta: `-2`.
-- Mixed stock+ETF capital-usage delta: `+0.00677`.
-- Mixed stock+ETF cost-drag delta: `-0.004205`.
-- Mixed stock+ETF net-PnL-after-cost delta: `+32.5738`.
-- ETF small-capital suitability: improved in the deterministic P38 fixture.
+- Local-only sample source is required.
+- Stock and ETF rows are both required for mixed replay.
+- ETF category is explicit and mandatory.
+- Required OHLCV-like fields are validated.
+- Dates must be sorted.
+- Duplicate symbol/date rows are rejected.
+- Rows beyond the evaluation window are rejected.
+- Missing close or volume blocks replay.
+
+## ETF Replay Impact Summary
+
+- Provider-like replay preserves mixed stock+ETF fillability in the deterministic local fixture.
+- Provider-like replay produces simulated fills in the deterministic local fixture.
+- Provider-like replay reports cost/tax/slippage and net PnL after cost.
+- Provider-like replay comparison notes include fill-rate, zero-trade, cost-drag, capital-usage, and net-PnL deltas versus the P38 mixed baseline.
 
 ## Capital Path Suitability Summary
 
-P38 reports suitability for:
+P39 reports suitability for:
 
 - `1000` CNY stage
 - `10000` CNY stage
 - `100000` CNY stage
 
-Each stage states whether ETF inclusion helps, whether stock-only remains viable, whether mixed stock+ETF is viable, and whether mixed universe should become the default next-stage paper loop.
+Each stage states whether ETF inclusion helps, whether stock-only remains viable, whether mixed stock+ETF is viable, and whether mixed stock+ETF should remain the default next-stage paper loop.
 
 ## Safety Barrier Status
 
 - Pre-P34 estimated barrier: `185.0%`
-- P34/P35/P36/P37/P38 active barrier: `140.0%`
+- P34 through P39 active barrier: `140.0%`
 - Target: `<= 140%`
-- P38 does not raise the safety barrier. It compares daily paper tradability under the pruned gate set.
+- P39 does not raise the safety barrier. It moves the mixed ETF loop toward provider-gated local sample replay under the pruned gate set.
 
 ## Validation Commands and Results
 
@@ -81,14 +92,14 @@ Each stage states whether ETF inclusion helps, whether stock-only remains viable
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/mixed_stock_etf_daily_paper_evaluation`
+`.venv/bin/python -m pytest tests/real_provider_mixed_etf_paper_replay`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 18 items
-18 passed in 0.03s
+collected 21 items
+21 passed in 0.03s
 ```
 
 `.venv/bin/python -m pytest`
@@ -97,29 +108,30 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 729 items
-729 passed in 0.36s
+collected 750 items
+750 passed in 0.37s
 ```
 
-## P38 Summary
+## P39 Summary
 
-P38 adds deterministic stock-only and mixed stock+ETF daily paper scenarios, evaluates both through the P36 daily paper loop, computes ETF impact deltas, reports capital-path suitability for `1000`, `10000`, and `100000` CNY stages, and determines whether mixed stock+ETF should become the next default paper loop.
+P39 adds a provider-like local sample bridge for mixed stock/ETF daily bars, validates sample quality, converts accepted samples into a mixed daily paper replay, compares replay output against the P38 mixed baseline, and reports capital-stage suitability for `1000`, `10000`, and `100000` CNY stages.
 
 ## Risks
 
-- P38 uses deterministic local scenarios only; it does not approve live trading.
-- ETF impact is measured on fixtures, not production market data.
+- P39 uses deterministic local provider-like samples only; it does not approve live trading.
+- Provider replay quality depends on future approved sample governance.
 - Cost drag and PnL are local estimates, not broker execution facts.
-- Mixed stock+ETF default recommendation should be rechecked as real provider-gated samples mature.
+- Real provider adapters remain optional and are not called by default tests.
 
 ## Recommended Next Step
 
-Use P38 results to set the next paper loop default, then tune ETF selection, sizing, cost model realism, and alpha quality based on the measured stock-only versus mixed stock+ETF deltas.
+Use P39 results to improve provider sample quality and then run the mixed stock/ETF daily paper loop on approved provider-gated small samples with alpha, sizing, and cost-model tuning.
 
 ## Code Evidence Snapshot
 
-- `contracts.py`: defines scenario types, scenario/result contracts, ETF impact summary, capital path suitability, and comparison report.
-- `scenarios.py`: builds deterministic stock-only and mixed stock+ETF scenarios with the same capital/window and no external data or broker dependency.
-- `comparison.py`: evaluates scenarios through the P36 daily paper loop and computes fill-rate, zero-trade, capital usage, cost drag, PnL, diversification, and capital-stage suitability deltas.
-- `report.py`: builds the P38 value report, keeps safety barrier at `<= 140%`, and recommends whether mixed stock+ETF should become the next default.
-- `tests`: cover deterministic scenarios, same capital/window, ETF presence/absence, metric deltas, ETF impact, capital-stage suitability, mixed default recommendation, stock-only viability, safety barrier, deterministic ordering, and forbidden runtime behavior.
+- `contracts.py`: defines source types, replay input, mixed sample, validation result, replay result, and report contracts.
+- `sample_bridge.py`: validates local-only source, OHLCV fields, ETF category, sorted dates, duplicate rows, future rows, close/volume presence, and mixed stock/ETF coverage.
+- `replay.py`: converts accepted provider-like samples into P36 daily paper input and reports replay metrics.
+- `comparison.py`: compares provider replay to the P38 mixed baseline and reports capital-stage suitability.
+- `report.py`: builds the P39 report, keeps safety barrier at `<= 140%`, and selects the next improvement target.
+- `tests`: cover accepted local sample, rejected remote source, missing ETF category, missing fields, duplicate rows, unsorted dates, future rows, missing close/volume, mixed sample requirement, replay metrics, baseline comparison, capital stages, safety barrier, deterministic ordering, and forbidden runtime behavior.
