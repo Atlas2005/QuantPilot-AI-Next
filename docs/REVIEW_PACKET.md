@@ -2,23 +2,23 @@
 
 ## Task Name
 
-P34: Gate Pruning and Tradability Fill Loop.
+P35: Qlib Offline Tradability Evaluation Fixture.
 
 ## Changed Files
 
-- `docs/GATE_PRUNING_TRADABILITY_FILL_LOOP.md`
+- `docs/QLIB_OFFLINE_TRADABILITY_EVALUATION_FIXTURE.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/gate_pruning_tradability_fill_loop/__init__.py`
-- `src/quantpilot_core/gate_pruning_tradability_fill_loop/contracts.py`
-- `src/quantpilot_core/gate_pruning_tradability_fill_loop/gate_audit.py`
-- `src/quantpilot_core/gate_pruning_tradability_fill_loop/report.py`
-- `src/quantpilot_core/gate_pruning_tradability_fill_loop/simulation.py`
-- `tests/gate_pruning_tradability_fill_loop/test_gate_pruning_tradability_fill_loop.py`
+- `src/quantpilot_core/qlib_offline_tradability_evaluation_fixture/__init__.py`
+- `src/quantpilot_core/qlib_offline_tradability_evaluation_fixture/contracts.py`
+- `src/quantpilot_core/qlib_offline_tradability_evaluation_fixture/evaluation.py`
+- `src/quantpilot_core/qlib_offline_tradability_evaluation_fixture/fixture.py`
+- `src/quantpilot_core/qlib_offline_tradability_evaluation_fixture/report.py`
+- `tests/qlib_offline_tradability_evaluation_fixture/test_qlib_offline_tradability_evaluation_fixture.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only P34 gate pruning, tradability, and deterministic fill simulation loop.
-- Tests changed: Yes. Added P34 offline gate pruning and tradability fill loop tests.
+- `src/` changed: Yes. Added standard-library-only P35 Qlib offline tradability evaluation fixture contracts, deterministic fixtures, evaluation, and report generation.
+- Tests changed: Yes. Added P35 offline Qlib tradability evaluation fixture tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -56,18 +56,18 @@ P34: Gate Pruning and Tradability Fill Loop.
 
 ## Language / Runtime Decision
 
-P34 keeps new `src/` code on Python standard library only. It adds active gate pruning, order-intent generation, A-share tradability checks, deterministic simulated fills, zero-trade diagnosis, cost/tax/slippage estimation, capital-use reporting, and overblocking detection.
+P35 keeps new `src/` code on Python standard library only. It adds deterministic A-share-like daily bars, deterministic signals, Qlib-compatible metadata, P34 fill-loop evaluation, fill-rate reporting, cost-after-fill evaluation, zero-trade diagnosis, and next-improvement targeting.
 
-P34 does not install or import broker SDKs, connect to brokers, read real accounts, place orders, create credential handling, call DeepSeek, call OpenAI, perform network calls in tests, train models, update live strategy weights, run Qlib/qrun, or run RQAlpha.
+P35 does not install or import broker SDKs, connect to brokers, read real accounts, place orders, create credential handling, call DeepSeek, call OpenAI, perform network calls in tests, train models, update live strategy weights, run Qlib/qrun, or run RQAlpha.
 
-P34 is not another generic preflight wall. It reduces overblocking and measures fillability while preserving true hard risk gates.
+P35 moves from gate pruning to offline tradability evaluation. It does not add another generic safety/preflight wall.
 
 ## Safety Barrier Before / After
 
-- Before: `185.0%`
-- After: `140.0%`
+- Before P34: `185.0%`
+- P34/P35 active barrier: `140.0%`
 - Target: `<= 140%`
-- Hard blocks preserved: PIT/no leakage, 100-share lot, T+1 sellable quantity, price limit, suspension, insufficient cash, insufficient position, credential leakage, disabled real-broker path before approved small-capital stage.
+- P35 keeps the safety barrier at or below target while measuring fillability.
 
 ## Validation Commands and Results
 
@@ -79,7 +79,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/gate_pruning_tradability_fill_loop`
+`python -m pytest tests/qlib_offline_tradability_evaluation_fixture`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -91,14 +91,14 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/gate_pruning_tradability_fill_loop`
+`.venv/bin/python -m pytest tests/qlib_offline_tradability_evaluation_fixture`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
 collected 16 items
-16 passed in 0.01s
+16 passed in 0.02s
 ```
 
 `.venv/bin/python -m pytest`
@@ -107,32 +107,32 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 663 items
-663 passed in 0.34s
+collected 679 items
+679 passed in 0.34s
 ```
 
-## P34 Gate Pruning and Tradability Fill Loop Summary
+## P35 Qlib Offline Tradability Evaluation Fixture Summary
 
-P34 reduces excessive safety/preflight overblocking and verifies whether signals can become executable order intents and deterministic simulated fills.
+P35 creates deterministic local fixture objects for Qlib-compatible offline tradability evaluation.
 
-The gate audit keeps true trade/capital hard risks as hard blocks, downgrades non-critical release/orchestration/metric checks, and freezes research-only expansion. The fill simulation applies A-share lot, T+1, price limit, suspension, cash, position, commission, stamp duty, and slippage checks.
+The fixture includes A-share-like daily bars, deterministic signals, expected order intents, expected simulated fills, expected fee/slippage/tax, and expected zero-trade diagnosis. Evaluation reuses P34 fill simulation and emits fill rate, cost-after-fill, net PnL after cost, capital-used ratio, drawdown/turnover estimates, and Qlib compatibility notes.
 
-P34 reports raw signals, order intents, hard rejections, warnings, fillable orders, simulated fills, zero-trade reasons, costs, capital-used ratio, net PnL after cost estimate, suspected overblocking, and next recommended action.
+P35 answers whether signals became order intents, whether intents became simulated fills, whether fill rate was positive, whether net PnL after cost was positive/zero/negative, and what should improve next.
 
 ## Risks
 
-- P34 uses deterministic simulated fills only; it does not approve live trading.
+- P35 uses deterministic local fixtures only; it does not approve live trading.
+- Qlib compatibility is metadata-only; Qlib is not imported, required, or run.
 - Fill estimates are local approximations and not production execution guarantees.
-- True hard gates remain hard blocks; only non-critical overblocking is downgraded or frozen.
 
 ## Recommended Next Step
 
-Run closure review for P34. The next phase should use zero-trade diagnostics and fillability metrics to improve signal quality, sizing, and top hard-rejection causes before broker-facing work resumes.
+Run closure review for P35. The next phase should use offline fixture results to improve alpha quality, sizing, liquidity/tradability, cost model accuracy, or data fixture quality before any optional runtime spike proceeds.
 
 ## Code Evidence Snapshot
 
-- `contracts.py`: defines gate pruning records, trade signals, order intents, tradability checks, simulated fills, rejection reasons, and fill simulation reports.
-- `gate_audit.py`: preserves true hard risk gates, downgrades non-critical overblocking, freezes research-only/generic safety expansion, and reduces the barrier from `185.0%` to `140.0%`.
-- `simulation.py`: converts signals to order intents, applies A-share tradability rules, computes commission/stamp duty/slippage, estimates net PnL after cost, diagnoses zero-trade reasons, and flags suspected overblocking.
-- `report.py`: exposes a combined pruning and fill-loop helper without broker/network/model runtime behavior.
-- `tests`: cover barrier reduction, hard gate preservation, downgrades, frozen research gates, fillable buys, T+1 sell rejection, odd lot rejection, suspension, price limit, cash rejection, fees/taxes/slippage, zero-trade diagnosis, mixed fill/rejection reports, suspected overblocking, deterministic ordering, and no broker/network/LLM behavior.
+- `contracts.py`: defines offline daily bars, tradability fixture dataset, signal fixture, evaluation window, Qlib-compatible plan, evaluation result, and evaluation report.
+- `fixture.py`: creates deterministic local A-share-like bars, deterministic signals, expected order/fill/cost diagnostics, zero-trade fixture, evaluation window, and Qlib-compatible metadata.
+- `evaluation.py`: validates local-only metadata, reuses P34 fill simulation, computes fill rate, costs, PnL after costs, capital used ratio, drawdown/turnover estimates, and compatibility notes.
+- `report.py`: answers produced-signals/intents/fills, fill-rate positivity, PnL sign, safety barrier status, overblocking status, and next-improvement target.
+- `tests`: cover deterministic bars/signals, intent/fill generation, cost/tax/slippage, fill rate, zero-trade reasons, local-only dataset acceptance, remote URI rejection, no Qlib requirement/import, no default qrun/runtime execution, Qlib compatibility metadata, deterministic ordering, safety barrier <= 140, and no broker/network/LLM behavior.
