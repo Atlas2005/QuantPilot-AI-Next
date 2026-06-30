@@ -2,25 +2,24 @@
 
 ## Task Name
 
-P37: Alpha, Sizing, and ETF Universe Tuning Loop.
+P38: Mixed Stock ETF Daily Paper Evaluation.
 
 ## Changed Files
 
-- `docs/ALPHA_SIZING_ETF_UNIVERSE_TUNING_LOOP.md`
+- `docs/MIXED_STOCK_ETF_DAILY_PAPER_EVALUATION.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/alpha_sizing_etf_universe_tuning_loop/__init__.py`
-- `src/quantpilot_core/alpha_sizing_etf_universe_tuning_loop/contracts.py`
-- `src/quantpilot_core/alpha_sizing_etf_universe_tuning_loop/report.py`
-- `src/quantpilot_core/alpha_sizing_etf_universe_tuning_loop/sizing.py`
-- `src/quantpilot_core/alpha_sizing_etf_universe_tuning_loop/tuning.py`
-- `src/quantpilot_core/alpha_sizing_etf_universe_tuning_loop/universe.py`
-- `tests/alpha_sizing_etf_universe_tuning_loop/test_alpha_sizing_etf_universe_tuning_loop.py`
+- `src/quantpilot_core/mixed_stock_etf_daily_paper_evaluation/__init__.py`
+- `src/quantpilot_core/mixed_stock_etf_daily_paper_evaluation/comparison.py`
+- `src/quantpilot_core/mixed_stock_etf_daily_paper_evaluation/contracts.py`
+- `src/quantpilot_core/mixed_stock_etf_daily_paper_evaluation/report.py`
+- `src/quantpilot_core/mixed_stock_etf_daily_paper_evaluation/scenarios.py`
+- `tests/mixed_stock_etf_daily_paper_evaluation/test_mixed_stock_etf_daily_paper_evaluation.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only P37 ETF universe, sizing, tuning, and report boundary.
-- Tests changed: Yes. Added deterministic P37 tests.
-- Documentation changed: Yes. Added P37 documentation and updated this review packet.
+- `src/` changed: Yes. Added standard-library-only P38 stock-only versus mixed stock/ETF daily paper evaluation.
+- Tests changed: Yes. Added deterministic P38 tests.
+- Documentation changed: Yes. Added P38 documentation and updated this review packet.
 - Dependencies changed: No.
 - Packages installed: No.
 - Packages uninstalled: No.
@@ -42,31 +41,39 @@ P37: Alpha, Sizing, and ETF Universe Tuning Loop.
 - Real order placement added: No.
 - Real alpha evidence produced: No.
 - Profitability claim made: No.
+- Generic preflight-only gate added: No.
 
 ## Value Orientation
 
-P37 expands the tradable universe from A-share stocks only to A-share stocks plus exchange-listed ETFs, then tunes alpha and sizing toward actual tradability.
+P38 compares stock-only daily paper evaluation against mixed stock+ETF daily paper evaluation.
 
-The patch does not add another generic safety/preflight wall. It keeps the active barrier at or below `140%`, separates ETF rules from stock rules, and produces deterministic recommendations that can feed the daily paper loop.
+It measures whether ETF inclusion improves fillability, zero-trade days, capital usage, cost drag, diversification proxy, and net PnL after cost. This moves the project toward controlled automated A-share/ETF trading rather than adding another review wall.
 
-## ETF Coverage Summary
+## ETF Impact Summary
 
-- ETF category is explicit and mandatory.
-- ETF candidates cannot silently become stock candidates.
-- ETF minimum trade unit is `100` units.
-- ETF minimum tick is `0.001`.
-- Equity ETFs default to `T+1`.
-- Bond, gold, cross-border, and money-market ETFs may use `T+0` only when explicitly declared.
-- ETF fee model is separate from the stock stamp-duty model.
-- Universe reports stock and ETF counts separately.
-- ETF candidates can be prioritized for small-capital diversification without hard-blocking stock candidates.
+- Mixed stock+ETF fill-rate delta: `+0.666667`.
+- Mixed stock+ETF zero-trade-day delta: `-2`.
+- Mixed stock+ETF capital-usage delta: `+0.00677`.
+- Mixed stock+ETF cost-drag delta: `-0.004205`.
+- Mixed stock+ETF net-PnL-after-cost delta: `+32.5738`.
+- ETF small-capital suitability: improved in the deterministic P38 fixture.
+
+## Capital Path Suitability Summary
+
+P38 reports suitability for:
+
+- `1000` CNY stage
+- `10000` CNY stage
+- `100000` CNY stage
+
+Each stage states whether ETF inclusion helps, whether stock-only remains viable, whether mixed stock+ETF is viable, and whether mixed universe should become the default next-stage paper loop.
 
 ## Safety Barrier Status
 
 - Pre-P34 estimated barrier: `185.0%`
-- P34/P35/P36/P37 active barrier: `140.0%`
+- P34/P35/P36/P37/P38 active barrier: `140.0%`
 - Target: `<= 140%`
-- P37 does not raise the safety barrier. It improves fillability and candidate selection under the pruned gate set.
+- P38 does not raise the safety barrier. It compares daily paper tradability under the pruned gate set.
 
 ## Validation Commands and Results
 
@@ -74,14 +81,14 @@ The patch does not add another generic safety/preflight wall. It keeps the activ
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/alpha_sizing_etf_universe_tuning_loop`
+`.venv/bin/python -m pytest tests/mixed_stock_etf_daily_paper_evaluation`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 19 items
-19 passed in 0.02s
+collected 18 items
+18 passed in 0.03s
 ```
 
 `.venv/bin/python -m pytest`
@@ -90,32 +97,29 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 711 items
-711 passed in 0.35s
+collected 729 items
+729 passed in 0.36s
 ```
 
-## P37 Summary
+## P38 Summary
 
-P37 adds a deterministic alpha, sizing, and ETF universe tuning loop.
-
-It accepts valid stock and ETF candidates, rejects invalid ETF candidates with missing categories, builds ETF-specific rule profiles, recommends valid 100-unit sizing, scores alpha/sizing/tradability/cost-after-fill, and reports whether ETF inclusion improves small-capital tradability.
+P38 adds deterministic stock-only and mixed stock+ETF daily paper scenarios, evaluates both through the P36 daily paper loop, computes ETF impact deltas, reports capital-path suitability for `1000`, `10000`, and `100000` CNY stages, and determines whether mixed stock+ETF should become the next default paper loop.
 
 ## Risks
 
-- P37 is deterministic tuning only; it does not approve live trading.
-- ETF rule profiles are conservative local representations and not broker execution guarantees.
-- Cost drag and alpha quality scores are deterministic estimates, not real performance evidence.
-- The next daily paper loop should validate whether ETF inclusion improves fill rate and net PnL after cost.
+- P38 uses deterministic local scenarios only; it does not approve live trading.
+- ETF impact is measured on fixtures, not production market data.
+- Cost drag and PnL are local estimates, not broker execution facts.
+- Mixed stock+ETF default recommendation should be rechecked as real provider-gated samples mature.
 
 ## Recommended Next Step
 
-Feed P37 mixed stock/ETF sizing recommendations into the P36 daily paper loop and compare fill rate, capital usage, cost drag, and net PnL after cost against the stock-only fixture.
+Use P38 results to set the next paper loop default, then tune ETF selection, sizing, cost model realism, and alpha quality based on the measured stock-only versus mixed stock+ETF deltas.
 
 ## Code Evidence Snapshot
 
-- `contracts.py`: defines instrument types, ETF categories, tradable instruments, rule profiles, alpha quality, sizing candidates, tuning decisions, universe selection, and report contracts.
-- `universe.py`: validates stocks and ETFs separately, rejects unknown types and ETFs without categories, builds ETF-specific rule profiles, and reports stock/ETF counts.
-- `sizing.py`: rounds recommendations to valid trade units, estimates capital usage, cost drag, tradability score, and zero-trade risk reduction.
-- `tuning.py`: combines alpha quality, sizing, tradability, and cost-after-fill scores into deterministic recommended actions.
-- `report.py`: builds the P37 value report, preserves the `<= 140%` safety barrier, and answers ETF/sizing/cost improvement questions.
-- `tests`: cover stock and ETF acceptance, missing ETF category rejection, ETF-not-stock behavior, ETF settlement/tick/unit/fee rules, separate counts, small-capital ETF preference, sizing zero-trade reduction, cost drag, safety barrier, deterministic ordering, and forbidden runtime behavior.
+- `contracts.py`: defines scenario types, scenario/result contracts, ETF impact summary, capital path suitability, and comparison report.
+- `scenarios.py`: builds deterministic stock-only and mixed stock+ETF scenarios with the same capital/window and no external data or broker dependency.
+- `comparison.py`: evaluates scenarios through the P36 daily paper loop and computes fill-rate, zero-trade, capital usage, cost drag, PnL, diversification, and capital-stage suitability deltas.
+- `report.py`: builds the P38 value report, keeps safety barrier at `<= 140%`, and recommends whether mixed stock+ETF should become the next default.
+- `tests`: cover deterministic scenarios, same capital/window, ETF presence/absence, metric deltas, ETF impact, capital-stage suitability, mixed default recommendation, stock-only viability, safety barrier, deterministic ordering, and forbidden runtime behavior.
