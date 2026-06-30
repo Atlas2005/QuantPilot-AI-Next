@@ -2,23 +2,23 @@
 
 ## Task Name
 
-P31: Real Data Stability Trial.
+P32: Offline Qlib Runtime Spike.
 
 ## Changed Files
 
-- `docs/REAL_DATA_STABILITY_TRIAL.md`
+- `docs/OFFLINE_QLIB_RUNTIME_SPIKE.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/real_data_stability_trial/__init__.py`
-- `src/quantpilot_core/real_data_stability_trial/contracts.py`
-- `src/quantpilot_core/real_data_stability_trial/manual_runner.py`
-- `src/quantpilot_core/real_data_stability_trial/report.py`
-- `src/quantpilot_core/real_data_stability_trial/validation.py`
-- `tests/real_data_stability_trial/test_real_data_stability_trial.py`
+- `src/quantpilot_core/offline_qlib_runtime_spike/__init__.py`
+- `src/quantpilot_core/offline_qlib_runtime_spike/contracts.py`
+- `src/quantpilot_core/offline_qlib_runtime_spike/optional_runner.py`
+- `src/quantpilot_core/offline_qlib_runtime_spike/report.py`
+- `src/quantpilot_core/offline_qlib_runtime_spike/validation.py`
+- `tests/offline_qlib_runtime_spike/test_offline_qlib_runtime_spike.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only P31 real data stability trial contracts, validation, report building, and optional manual runner boundary.
-- Tests changed: Yes. Added P31 offline real data stability trial tests.
+- `src/` changed: Yes. Added standard-library-only P32 offline Qlib runtime spike contracts, validation, report generation, and optional manual runner boundary.
+- Tests changed: Yes. Added P32 offline Qlib runtime spike tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -56,11 +56,11 @@ P31: Real Data Stability Trial.
 
 ## Language / Runtime Decision
 
-P31 keeps new `src/` code on Python standard library only. It adds deterministic A-share sample universe validation, provider trial config validation, provider row shape checks, OHLCV numeric sanity checks, provider stability reports, fallback compatibility warnings, and an optional manual runner interface.
+P32 keeps new `src/` code on Python standard library only. It adds deterministic offline Qlib runtime plan contracts, local-only dataset boundary validation, explicit/fixture calendar validation, benchmark boundary validation, R28-compatible factor metric handoff checks, readiness report generation, and an optional manual runner interface.
 
-P31 does not run Qlib, run qrun, run agents, connect to brokers, mutate accounts, place orders, import broker SDKs, call DeepSeek, perform network calls in tests, train models, update live strategy weights, or run RQAlpha.
+P32 does not run Qlib, run qrun, run agents, connect to brokers, mutate accounts, place orders, import broker SDKs, call DeepSeek, call OpenAI, perform network calls in tests, train models, update live strategy weights, or run RQAlpha.
 
-P31 starts the post-R30 real-data stability phase while keeping provider-specific real network access optional/manual only.
+P32 verifies whether QuantPilot's existing factor metric / Qlib evaluation preflight handoff can be represented as a Qlib-compatible offline runtime plan without making Qlib a required dependency.
 
 ## Validation Commands and Results
 
@@ -72,7 +72,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/real_data_stability_trial`
+`python -m pytest tests/offline_qlib_runtime_spike`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -84,14 +84,14 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/real_data_stability_trial`
+`.venv/bin/python -m pytest tests/offline_qlib_runtime_spike`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 20 items
-20 passed in 0.03s
+collected 14 items
+14 passed in 0.03s
 ```
 
 `.venv/bin/python -m pytest`
@@ -100,24 +100,24 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 617 items
-617 passed in 0.30s
+collected 631 items
+631 passed in 0.31s
 ```
 
-## P31 Real Data Stability Trial Summary
+## P32 Offline Qlib Runtime Spike Summary
 
-P31 adds an offline deterministic real data stability trial layer for supplied provider rows and fixed A-share sample universes.
+P32 adds an offline deterministic runtime-plan boundary for future Qlib evaluation work.
 
-The trial validates universe metadata, provider configs, provider row shape, required field coverage, symbol/date coverage, missing-row ratio, duplicate rows, OHLCV numeric sanity, network/manual-review boundaries, and provider fallback compatibility across reports.
+The preflight validates local-only dataset paths, explicit or fixture-backed calendars, benchmark declarations, R28-compatible factor metric handoff fields, network-disabled defaults, manual-only runtime execution, integration boundary evidence, and forbidden-scope evidence.
 
-Only clean provider evidence returns `STABLE`. Critical validation flags or failed checks return `UNSTABLE`. Warning-only checks return `MANUAL_REVIEW`.
+Only clean offline plans return `READY`. Blocking checks return `NOT_READY`. Warning-only plans return `MANUAL_REVIEW`.
 
 ## Risks
 
-- P31 validates supplied rows only; it does not approve a production data provider.
-- AkShare and BaoStock remain optional and are not required dependencies.
-- Optional manual network trials remain operator-gated and are not used by default tests.
+- P32 is an offline runtime spike boundary only; it does not prove production Qlib runtime compatibility.
+- Qlib remains optional and is not a required dependency.
+- Optional manual runtime checks remain operator-gated and are not used by default tests.
 
 ## Recommended Next Step
 
-Run closure review for P31. P32 can use P31 stability evidence to prepare an offline Qlib runtime spike while keeping provider network access, Qlib runtime, and broker work behind explicit manual gates.
+Run closure review for P32. A future phase can prepare offline runtime fixtures once P31 stability evidence and P32 runtime-plan evidence are both ready or explicitly manual-reviewed.
