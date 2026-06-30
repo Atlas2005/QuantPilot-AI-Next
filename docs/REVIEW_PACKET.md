@@ -2,22 +2,22 @@
 
 ## Task Name
 
-R23: Multi-day Paper Replay.
+R24: Performance Attribution Flywheel Preflight.
 
 ## Changed Files
 
-- `docs/MULTI_DAY_PAPER_REPLAY.md`
+- `docs/PERFORMANCE_ATTRIBUTION_FLYWHEEL_PREFLIGHT.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/multi_day_paper_replay/__init__.py`
-- `src/quantpilot_core/multi_day_paper_replay/contracts.py`
-- `src/quantpilot_core/multi_day_paper_replay/preflight.py`
-- `src/quantpilot_core/multi_day_paper_replay/replay.py`
-- `tests/multi_day_paper_replay/test_multi_day_paper_replay.py`
+- `src/quantpilot_core/performance_attribution_preflight/__init__.py`
+- `src/quantpilot_core/performance_attribution_preflight/attribution.py`
+- `src/quantpilot_core/performance_attribution_preflight/contracts.py`
+- `src/quantpilot_core/performance_attribution_preflight/preflight.py`
+- `tests/performance_attribution_preflight/test_performance_attribution_preflight.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only R23 multi-day paper replay contracts, input validation, and in-memory replay orchestration.
-- Tests changed: Yes. Added R23 offline multi-day replay tests.
+- `src/` changed: Yes. Added standard-library-only R24 performance attribution contracts, input validation, attribution aggregation, and feedback record generation.
+- Tests changed: Yes. Added R24 offline attribution preflight tests.
 - Local fixture changed: No.
 - Integration matrix changed: No.
 - Open-source decision table changed: No.
@@ -36,6 +36,8 @@ R23: Multi-day Paper Replay.
 - Full data provider implementation added: No.
 - Real news crawling added: No.
 - DeepSeek/API call added: No.
+- Model training added: No.
+- Live strategy weight update added: No.
 - Real account API read: No.
 - Broker connection added: No.
 - Paper ledger persistence write added: No.
@@ -52,11 +54,11 @@ R23: Multi-day Paper Replay.
 
 ## Language / Runtime Decision
 
-R23 keeps new `src/` code on Python standard library only. It adds typed contracts, replay input validation, daily in-memory account-state construction, and deterministic cash/position/sellable carry-forward.
+R24 keeps new `src/` code on Python standard library only. It adds deterministic replay-output validation, proposal/symbol/source/day attribution, estimated cost derivation, and feedback records.
 
-R23 does not connect to brokers, mutate real accounts, write paper ledger persistence, place live orders, call DeepSeek, perform network calls, run Qlib, or run RQAlpha.
+R24 does not connect to brokers, mutate real accounts, write paper ledger persistence, place live orders, call DeepSeek, perform network calls, train models, update live strategy weights, run Qlib, or run RQAlpha.
 
-R23 consumes R21 `PaperLedgerCandidateInstruction` objects and reuses R22 dry-run logic day by day.
+R24 consumes R23 `PaperReplayResult` objects as its only input.
 
 ## Validation Commands and Results
 
@@ -68,7 +70,7 @@ Result: not run because bare `python` is not available in this shell.
 zsh:1: command not found: python
 ```
 
-`python -m pytest tests/multi_day_paper_replay`
+`python -m pytest tests/performance_attribution_preflight`
 
 Result: not run because bare `python` is not available in this shell.
 
@@ -80,14 +82,14 @@ zsh:1: command not found: python
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/multi_day_paper_replay`
+`.venv/bin/python -m pytest tests/performance_attribution_preflight`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 16 items
-16 passed in 0.02s
+collected 15 items
+15 passed in 0.02s
 ```
 
 `.venv/bin/python -m pytest`
@@ -96,24 +98,24 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 479 items
-479 passed in 0.23s
+collected 494 items
+494 passed in 0.22s
 ```
 
-## R23 Multi-day Paper Replay Summary
+## R24 Performance Attribution Flywheel Preflight Summary
 
-R23 adds an offline deterministic multi-day replay for daily batches of R21 paper candidate instructions.
+R24 adds an offline deterministic attribution preflight over R23 replay outputs.
 
-The replay validates day ordering, strict date shape, duplicate trading dates, duplicate proposal IDs across replay, account preflight, and A-share T+1 sellability. It carries simulated cash, total positions, and sellable quantities forward across trading days.
+The attribution layer validates replay shape, flattens instruction results into proposal attribution records, aggregates by symbol, source, and day, derives estimated costs, and emits feedback records for proposals, symbols, days, and risk rules.
 
-Blocked days or instructions do not mutate replay state. Partial replay can continue from the last valid state unless `fail_fast=True`.
+This creates reviewable feedback data for future agent evaluation without model training or live adaptation.
 
 ## Risks
 
-- R23 is replay-only; it does not write the existing paper ledger or prove execution quality.
-- Future attribution/readiness gates still need explicit review.
-- Fee estimates and daily prices remain candidate-instruction assumptions, not broker-confirmed facts.
+- R24 is attribution preflight only; it does not prove trading edge or update any strategy.
+- Cash-delta based outcomes are simulation signals, not realized PnL.
+- Future readiness gates must still decide how to interpret feedback records.
 
 ## Recommended Next Step
 
-Run closure review for R23. A future phase can add Performance Attribution Flywheel or Small-Capital Readiness Gate logic on top of the structured replay result.
+Run closure review for R24. A future phase can build a Small-Capital Readiness Gate or Multi-Agent Orchestrator preflight on top of the attribution output.
