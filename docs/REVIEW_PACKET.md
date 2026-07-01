@@ -2,27 +2,26 @@
 
 ## Task Name
 
-P41: Qlib Real Offline Workflow Spike.
+P42: Controlled Optional Qlib Runtime Spike.
 
 ## Changed Files
 
-- `docs/QLIB_REAL_OFFLINE_WORKFLOW_SPIKE.md`
+- `docs/CONTROLLED_OPTIONAL_QLIB_RUNTIME_SPIKE.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/qlib_real_offline_workflow_spike/__init__.py`
-- `src/quantpilot_core/qlib_real_offline_workflow_spike/comparison.py`
-- `src/quantpilot_core/qlib_real_offline_workflow_spike/contracts.py`
-- `src/quantpilot_core/qlib_real_offline_workflow_spike/dataset_bridge.py`
-- `src/quantpilot_core/qlib_real_offline_workflow_spike/evaluation.py`
-- `src/quantpilot_core/qlib_real_offline_workflow_spike/factor_mapping.py`
-- `src/quantpilot_core/qlib_real_offline_workflow_spike/report.py`
-- `src/quantpilot_core/qlib_real_offline_workflow_spike/workflow_config.py`
-- `tests/qlib_real_offline_workflow_spike/test_qlib_real_offline_workflow_spike.py`
+- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/__init__.py`
+- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/comparison.py`
+- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/contracts.py`
+- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/execution_plan.py`
+- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/report.py`
+- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/result_import.py`
+- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/runtime_detection.py`
+- `tests/controlled_optional_qlib_runtime_spike/test_controlled_optional_qlib_runtime_spike.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only P41 Qlib-style local dataset, workflow config, factor mapping, evaluation, comparison, and report boundary.
-- Tests changed: Yes. Added deterministic P41 tests.
-- Documentation changed: Yes. Added P41 documentation and updated this review packet.
+- `src/` changed: Yes. Added standard-library-only P42 optional runtime detection, manual plan, result import, comparison, and report boundary.
+- Tests changed: Yes. Added deterministic P42 tests.
+- Documentation changed: Yes. Added P42 documentation and updated this review packet.
 - Dependencies changed: No.
 - Packages installed: No.
 - Packages uninstalled: No.
@@ -53,39 +52,46 @@ P41: Qlib Real Offline Workflow Spike.
 
 ## Value Orientation
 
-P41 moves Qlib from metadata-only handoff to a Qlib-style offline workflow spike.
+P42 creates a controlled optional Qlib runtime and result import boundary.
 
-It builds glue around Qlib boundaries instead of reinventing Qlib: local dataset spec, workflow config, factor candidates, deterministic offline evaluation, optional runtime status, and comparison against the P40 AI-shadow-adjusted mixed ETF replay baseline.
+It advances open-source integration by preparing manual-local Qlib execution and local result import without making the optional dependency required or running qrun by default.
 
 ## Open-Source Integration Summary
 
-- Qlib is the primary external framework boundary for this stage.
-- Qlib remains optional and is not required for default tests.
-- qrun is disabled by default.
-- Dataset/workflow metadata is structured for later optional runtime execution.
-- P41 does not install dependencies or run a real Qlib backtest.
+- Qlib remains the primary external framework boundary.
+- Runtime detection checks optional availability without importing Qlib in default tests.
+- Manual execution plan is local-only and user-confirmed.
+- Result import boundary can ingest manually produced local runtime-like records.
+- No dependencies are installed and no runtime execution occurs by default.
 
-## Qlib Runtime Status Summary
+## Qlib Runtime Detection Summary
 
-Default behavior reports optional runtime status explicitly and keeps runtime execution disabled by default. If Qlib is unavailable, P41 reports `UNAVAILABLE_OPTIONAL_DEPENDENCY` while default tests still pass.
+P42 reports:
 
-## Dataset / Workflow / Factor / Evaluation Summary
+- unavailable optional dependency when Qlib is absent
+- available but disabled by default when Qlib appears present
+- manual execution only when explicitly requested
 
-- Dataset bridge validates mixed A-share stock and ETF coverage, explicit instrument kind, ETF category, OHLCV fields, date uniqueness, future rows, close/volume, and deterministic date normalization.
-- Workflow config includes dataset, universe, benchmark, label placeholder, factor list, train/validation/test placeholders, cost model assumptions, execution assumptions, runtime status, and disabled-by-default runtime flag.
-- Factor mapping creates momentum, volatility, liquidity, cost drag, ETF category, capital fit, and AI shadow preference proxies.
-- Offline evaluation computes candidate, cost-adjusted, tradability, and small-capital fit scores without claiming real profitability.
+Network, broker, LLM, and qrun remain disabled by default.
 
-## Comparison Against P40
+## Manual Execution Plan Summary
 
-P41 compares Qlib-style offline evaluation with the P40 AI-shadow-adjusted mixed ETF replay baseline and reports mixed stock+ETF support, factor alignment, cost-aware agreement, optional runtime readiness, and promotion blockers.
+The plan includes dataset id, workflow config summary, disabled-by-default qrun flag, manual-local-only flag, user confirmation requirement, no-network/no-broker/no-account requirements, result import path placeholder, warnings, and a statement that default pytest does not execute Qlib.
+
+## Runtime Result Import Summary
+
+The import boundary validates local source, dataset/workflow match, IC/RankIC or missing reason, cost-aware metric or missing reason, explicit benchmark, mixed stock+ETF coverage, manual/import-only mode, warnings, and absence of profitability claims.
+
+## Comparison Against P41/P40 Summary
+
+P42 compares imported runtime-like records against the P41 offline evaluation proxy and P40 replay metadata, then reports score delta, cost-aware agreement, factor-signal agreement, ETF coverage preservation, and promotion decision.
 
 ## Safety Barrier Status
 
 - Pre-P34 estimated barrier: `185.0%`
-- P34 through P41 active barrier: `140.0%`
+- P34 through P42 active barrier: `140.0%`
 - Target: `<= 140%`
-- P41 does not raise the safety barrier. It advances Qlib integration through offline workflow glue under the pruned gate set.
+- P42 does not raise the safety barrier.
 
 ## Validation Commands and Results
 
@@ -93,14 +99,14 @@ P41 compares Qlib-style offline evaluation with the P40 AI-shadow-adjusted mixed
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/qlib_real_offline_workflow_spike`
+`.venv/bin/python -m pytest tests/controlled_optional_qlib_runtime_spike`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
 collected 26 items
-26 passed in 0.04s
+26 passed in 0.06s
 ```
 
 `.venv/bin/python -m pytest`
@@ -109,33 +115,31 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 804 items
-804 passed in 0.40s
+collected 830 items
+830 passed in 0.44s
 ```
 
-## P41 Summary
+## P42 Summary
 
-P41 adds a Qlib-style local dataset bridge, workflow config metadata, factor candidate mapping, deterministic offline evaluation, comparison against P40 AI-shadow-adjusted replay, and report generation.
+P42 adds optional runtime detection, manual Qlib execution planning, local runtime-like result import validation, comparison against P41/P40, and controlled promotion decision logic.
 
 ## Risks
 
-- P41 is not a real Qlib backtest.
-- Optional Qlib dependency is not installed or required.
-- qrun is disabled by default.
-- Scores are deterministic workflow-readiness proxies, not real alpha evidence.
-- Provider sample quality and factor quality still need larger approved samples.
+- P42 does not execute a real Qlib run.
+- Imported runtime-like records are deterministic local fixtures in tests.
+- Real optional runtime trial still requires a separate environment and manual approval.
+- Scores are not profitability evidence.
 
 ## Recommended Next Step
 
-Install an isolated optional Qlib environment outside default pytest and run a controlled manual Qlib runtime spike using the P41 dataset/workflow metadata.
+Prepare an isolated optional Qlib environment and manually generate a local runtime result record for import through the P42 boundary.
 
 ## Code Evidence Snapshot
 
-- `contracts.py`: defines runtime status, dataset source, instrument kind, dataset spec, field mapping, factor, workflow, evaluation, comparison, and report contracts.
-- `dataset_bridge.py`: validates and normalizes local mixed stock/ETF records into a Qlib-style dataset spec.
-- `workflow_config.py`: builds Qlib-style workflow metadata and detects optional runtime status without requiring Qlib.
-- `factor_mapping.py`: maps existing alpha/AI/replay concepts into Qlib-style factor candidates with leakage-control notes.
-- `evaluation.py`: computes deterministic offline proxy scores and avoids profitability claims.
-- `comparison.py`: compares P41 evaluation with P40 AI-adjusted replay and reports promotion blockers.
-- `report.py`: builds the P41 report, keeps safety barrier at `<= 140%`, and selects the next improvement target.
-- `tests`: cover dataset validation, workflow config, runtime status, factor mapping, offline evaluation, P40 comparison, promotion blockers, safety barrier, deterministic ordering, and forbidden runtime behavior.
+- `contracts.py`: defines optional runtime state, execution mode, detection, plan, result import, comparison, and report contracts.
+- `runtime_detection.py`: detects optional availability without importing Qlib and keeps default execution disabled.
+- `execution_plan.py`: builds a local-only, user-confirmed manual plan with qrun disabled by default.
+- `result_import.py`: validates local runtime-like records and rejects mismatches, missing metrics, missing benchmark, unsafe execution modes, and profitability claims.
+- `comparison.py`: compares imported records against P41/P40 direction and computes promotion decisions.
+- `report.py`: builds the P42 report, keeps safety barrier at `<= 140%`, and selects next improvement target.
+- `tests`: cover runtime detection, manual plan, result import validation, comparison, promotion decisions, safety barrier, deterministic ordering, and forbidden runtime behavior.
