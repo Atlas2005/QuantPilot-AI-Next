@@ -14,10 +14,14 @@ dependencies = []
 dev = [
     "pytest>=8,<9",
 ]
+replay = [
+    "vectorbt>=0.26,<0.29",
+    "pandas>=2,<3",
+    "numpy>=1.26,<3",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-

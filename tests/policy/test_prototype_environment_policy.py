@@ -1,4 +1,5 @@
 from pathlib import Path
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,10 +16,9 @@ def test_gitignore_includes_prototype_and_artifact_paths() -> None:
     assert "local_artifacts/" in gitignore
 
 
-def test_pyproject_does_not_include_prototype_frameworks() -> None:
+def test_pyproject_does_not_include_prototype_frameworks_as_required_dependencies() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8").lower()
     forbidden = [
-        "vectorbt",
         "backtrader",
         "rqalpha",
         "qlib",
@@ -34,6 +34,14 @@ def test_pyproject_does_not_include_prototype_frameworks() -> None:
 
     for name in forbidden:
         assert name not in pyproject
+
+
+def test_vectorbt_is_optional_replay_dependency_only() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert pyproject["project"]["dependencies"] == []
+    replay = pyproject["project"]["optional-dependencies"]["replay"]
+    assert any(item.startswith("vectorbt") for item in replay)
 
 
 def test_helper_scripts_exist() -> None:

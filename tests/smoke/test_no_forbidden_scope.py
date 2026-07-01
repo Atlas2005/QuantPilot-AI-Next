@@ -78,9 +78,16 @@ def test_src_does_not_contain_forbidden_scope_patterns() -> None:
     violations: list[str] = []
 
     for path in SRC_ROOT.rglob("*.py"):
+        relative = path.relative_to(SRC_ROOT)
         text = path.read_text(encoding="utf-8").lower()
         for pattern in FORBIDDEN_PATTERNS:
+            if relative.parts[:2] == ("quantpilot_core", "vectorbt_replay_adapter") and pattern in {
+                "import vectorbt",
+                "from vectorbt",
+                "vectorbt.",
+            }:
+                continue
             if pattern in text:
-                violations.append(f"{path.relative_to(SRC_ROOT)}: {pattern}")
+                violations.append(f"{relative}: {pattern}")
 
     assert violations == []
