@@ -8,7 +8,7 @@ from quantpilot_core.ai_open_source_provider_small_sample_mixed_etf_replay.contr
     AIShadowDecisionSet,
     ApprovedProviderSampleValidationResult,
 )
-from quantpilot_core.real_provider_mixed_etf_paper_replay import ProviderMixedEtfReplayReport
+from quantpilot_core.provider_vectorbt_replay import ProviderVectorbtReplayResult
 
 
 REQUIRED_ROLES = tuple(role.value for role in AIShadowAgentRole)
@@ -23,7 +23,7 @@ UNSAFE_MARKERS = {
 
 def generate_ai_shadow_decision_set(
     validation: ApprovedProviderSampleValidationResult,
-    baseline_replay: ProviderMixedEtfReplayReport,
+    provider_vectorbt_replay: ProviderVectorbtReplayResult,
 ) -> AIShadowDecisionSet:
     """Generate deterministic local shadow-agent outputs without runtime calls."""
 
@@ -80,7 +80,7 @@ def generate_ai_shadow_decision_set(
             AIShadowAgentRole.COST_EXECUTION,
             "keep_mixed_universe",
             0.0,
-            0.95 if baseline_replay.provider_replay.cost_tax_slippage_total > 10 else 1.0,
+            0.95 if (provider_vectorbt_replay.turnover_proxy or 0.0) > 0.75 else 1.0,
             "alpha_must_clear_cost_after_fill",
             "reduce_turnover_if_cost_drag_high",
             "cost_review_required",

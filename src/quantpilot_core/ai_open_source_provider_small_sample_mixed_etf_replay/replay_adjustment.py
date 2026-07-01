@@ -7,7 +7,7 @@ from quantpilot_core.ai_open_source_provider_small_sample_mixed_etf_replay.contr
     AIShadowDecisionSet,
     ReplayAdjustmentPlan,
 )
-from quantpilot_core.real_provider_mixed_etf_paper_replay import ProviderMixedEtfReplayReport
+from quantpilot_core.provider_vectorbt_replay import ProviderVectorbtReplayResult
 
 
 FORBIDDEN_ACTION_MARKERS = {
@@ -24,7 +24,7 @@ FORBIDDEN_ACTION_MARKERS = {
 
 def build_replay_adjustment_plan(
     decisions: AIShadowDecisionSet,
-    baseline_replay: ProviderMixedEtfReplayReport,
+    provider_vectorbt_replay: ProviderVectorbtReplayResult,
 ) -> ReplayAdjustmentPlan:
     """Convert AI shadow recommendations into bounded replay adjustments."""
 
@@ -35,9 +35,9 @@ def build_replay_adjustment_plan(
     etf_delta = sum(item.recommended_etf_weight_adjustment for item in safe_recommendations)
     multiplier_raw = _average_multiplier(safe_recommendations)
     multiplier = max(0.50, min(1.50, round(multiplier_raw, 4)))
-    require_provider_sample = bool(baseline_replay.provider_replay.validation.blockers)
-    require_alpha = baseline_replay.provider_replay.net_pnl_after_cost <= 0
-    reduce_turnover = baseline_replay.provider_replay.cost_tax_slippage_total > 10
+    require_provider_sample = bool(provider_vectorbt_replay.provider_validation.blockers)
+    require_alpha = (provider_vectorbt_replay.total_return or 0.0) <= 0
+    reduce_turnover = (provider_vectorbt_replay.turnover_proxy or 0.0) > 0.75
     return ReplayAdjustmentPlan(
         prefer_mixed_stock_etf_universe=True,
         etf_preference_delta=round(max(-0.25, min(0.25, etf_delta)), 4),
@@ -51,24 +51,24 @@ def build_replay_adjustment_plan(
 
 
 def build_ai_adjusted_replay_result(
-    baseline_replay: ProviderMixedEtfReplayReport,
+    provider_vectorbt_replay: ProviderVectorbtReplayResult,
     decisions: AIShadowDecisionSet,
 ) -> AIAdjustedReplayResult:
     """Compute deterministic paper metric deltas from the bounded adjustment plan."""
 
-    plan = build_replay_adjustment_plan(decisions, baseline_replay)
-    base = baseline_replay.provider_replay
+    plan = build_replay_adjustment_plan(decisions, provider_vectorbt_replay)
     position_effect = plan.position_size_multiplier - 1.0
     etf_effect = plan.etf_preference_delta
-    fill_rate_delta = 0.0 if base.fill_rate >= 1.0 else round(min(0.05, 1.0 - base.fill_rate), 6)
-    zero_trade_delta = -1 if base.zero_trade_day_count > 0 and plan.prefer_mixed_stock_etf_universe else 0
-    capital_delta = round(max(position_effect, 0.0) * base.capital_used_average, 6)
+    trade_count = provider_vectorbt_replay.trade_count or 0
+    fill_rate_delta = 0.0 if trade_count > 0 else 0.05
+    zero_trade_delta = 0 if trade_count > 0 else -1
+    capital_delta = round(max(position_effect, 0.0) * (provider_vectorbt_replay.turnover_proxy or 0.0), 6)
     cost_drag_delta = -0.0005 if plan.reduce_turnover else 0.0
-    net_delta = round((position_effect * max(base.net_pnl_after_cost, 0.0)) + (etf_effect * 10.0), 4)
+    net_delta = round((position_effect * max(provider_vectorbt_replay.total_return or 0.0, 0.0)) + (etf_effect * 10.0), 4)
     turnover_delta = round(position_effect * 0.01, 6)
     improved = net_delta >= 0 and fill_rate_delta >= 0 and not plan.require_provider_sample_improvement
     return AIAdjustedReplayResult(
-        baseline_replay=baseline_replay,
+        provider_vectorbt_replay=provider_vectorbt_replay,
         adjustment_plan=plan,
         fill_rate_delta=fill_rate_delta,
         zero_trade_day_delta=zero_trade_delta,
@@ -81,8 +81,7 @@ def build_ai_adjusted_replay_result(
         meta_review_blocked_or_downgraded=bool(
             decisions.meta_blocked_roles or decisions.meta_downgraded_roles
         ),
-        mixed_stock_etf_remains_default=baseline_replay.etf_inclusion_remained_useful
-        and plan.prefer_mixed_stock_etf_universe,
+        mixed_stock_etf_remains_default=trade_count > 0 and plan.prefer_mixed_stock_etf_universe,
     )
 
 

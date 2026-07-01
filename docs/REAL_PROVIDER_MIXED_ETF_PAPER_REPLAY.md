@@ -4,6 +4,8 @@ P39 moves QuantPilot-AI-Next from deterministic fixture-only mixed stock/ETF com
 
 This phase still uses offline deterministic tests. It does not fetch live provider data, connect to brokers, read accounts, place orders, call LLM runtimes, install packages, or require optional runtime frameworks.
 
+R3D supersedes this path as the default provider replay direction. The P36/P39 provider replay implementation is legacy/reference compatibility only. Prefer `quantpilot_core.provider_vectorbt_replay` for provider replay.
+
 ## Objective
 
 P39 answers:
@@ -36,7 +38,9 @@ Default tests use only deterministic in-repo fixtures constructed in test code. 
 
 ## Replay Logic
 
-Accepted samples are converted into a mixed stock/ETF daily paper replay using the existing P36 daily paper loop concepts.
+Accepted samples in the legacy P39 path are converted into a mixed stock/ETF daily paper replay using the existing P36 daily paper loop concepts.
+
+This is no longer the preferred provider replay engine. Generic replay and portfolio metrics should move to mature open-source engines such as vectorbt, RQAlpha, or Qlib where suitable. QuantPilot should keep project-specific glue for provider sample validation, A-share/account/capital rules, broker and execution adapters, and AI orchestration.
 
 P39 computes:
 
@@ -93,4 +97,4 @@ The point is to advance toward controlled automated A-share/ETF paper evaluation
 
 ## Recommended Next Step
 
-Use P39 replay results to improve provider sample quality and then feed approved provider-gated stock/ETF samples into the next daily paper loop with alpha, sizing, and cost-model tuning.
+Use `provider_vectorbt_replay` as the primary provider replay path. Keep this P39 report only for legacy/reference comparison or migration audit while replacing generic replay/fill/portfolio metric mechanics with vectorbt/RQAlpha/Qlib-backed paths where suitable.

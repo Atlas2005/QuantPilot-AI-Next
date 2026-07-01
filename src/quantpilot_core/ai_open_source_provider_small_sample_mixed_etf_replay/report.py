@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from quantpilot_core.ai_open_source_provider_small_sample_mixed_etf_replay.ai_shadow_agents import (
     generate_ai_shadow_decision_set,
@@ -20,9 +20,12 @@ from quantpilot_core.ai_open_source_provider_small_sample_mixed_etf_replay.open_
 from quantpilot_core.ai_open_source_provider_small_sample_mixed_etf_replay.replay_adjustment import (
     build_ai_adjusted_replay_result,
 )
-from quantpilot_core.real_provider_mixed_etf_paper_replay import (
-    build_provider_mixed_etf_replay_report,
+from quantpilot_core.provider_vectorbt_replay import (
+    replay_provider_mixed_etf_sample_with_vectorbt,
 )
+
+
+ReplayRunner = Callable[[Any], Any]
 
 
 def build_p40_ai_provider_replay_report(
@@ -30,6 +33,7 @@ def build_p40_ai_provider_replay_report(
     records: tuple[dict[str, Any], ...],
     *,
     safety_barrier_percent: float = 140.0,
+    replay_runner: ReplayRunner | None = None,
 ) -> P40AIProviderReplayReport:
     """Build the P40 AI shadow plus open-source provider replay report."""
 
@@ -37,12 +41,12 @@ def build_p40_ai_provider_replay_report(
     if validation.replay_input is None:
         raise ValueError("approved provider export must validate before P40 replay report")
 
-    baseline_replay = build_provider_mixed_etf_replay_report(
+    provider_vectorbt_replay = replay_provider_mixed_etf_sample_with_vectorbt(
         validation.replay_input,
-        safety_barrier_percent=safety_barrier_percent,
+        replay_runner=replay_runner,
     )
-    ai_decisions = generate_ai_shadow_decision_set(validation, baseline_replay)
-    adjusted = build_ai_adjusted_replay_result(baseline_replay, ai_decisions)
+    ai_decisions = generate_ai_shadow_decision_set(validation, provider_vectorbt_replay)
+    adjusted = build_ai_adjusted_replay_result(provider_vectorbt_replay, ai_decisions)
     qlib_handoff, rqalpha_handoff = build_open_source_backtest_handoffs(spec, validation)
     return P40AIProviderReplayReport(
         approved_provider_validation=validation,

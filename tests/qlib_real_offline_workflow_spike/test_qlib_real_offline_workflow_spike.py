@@ -343,7 +343,7 @@ def test_comparison_against_p40_baseline_computed() -> None:
     report = build_p41_qlib_workflow_report(provider_spec(), records(), qlib_field_mapping=qlib_mapping())
 
     assert report.comparison_against_p40_completed is True
-    assert "p40_net_delta:3.7347" in report.comparison.comparison_notes
+    assert "p40_net_delta:2.5" in report.comparison.comparison_notes
 
 
 def test_mixed_stock_etf_remains_supported() -> None:

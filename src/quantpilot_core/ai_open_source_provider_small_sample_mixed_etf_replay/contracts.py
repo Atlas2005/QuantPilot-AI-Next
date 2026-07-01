@@ -6,10 +6,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from quantpilot_core.real_provider_mixed_etf_paper_replay import (
-    ProviderMixedEtfReplayReport,
-    RealProviderReplayInput,
-)
+from quantpilot_core.provider_vectorbt_replay import ProviderVectorbtReplayResult
+from quantpilot_core.real_provider_mixed_etf_paper_replay import RealProviderReplayInput
 
 
 class OpenSourceProviderName(str, Enum):
@@ -112,7 +110,7 @@ class ReplayAdjustmentPlan:
 
 @dataclass(frozen=True)
 class AIAdjustedReplayResult:
-    baseline_replay: ProviderMixedEtfReplayReport
+    provider_vectorbt_replay: ProviderVectorbtReplayResult
     adjustment_plan: ReplayAdjustmentPlan
     fill_rate_delta: float
     zero_trade_day_delta: int
