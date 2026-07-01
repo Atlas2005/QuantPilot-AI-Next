@@ -70,10 +70,11 @@ class TushareDailyBarProvider(DailyBarProvider):
                 "Tushare-compatible client for tests or install/configure it for real fetches."
             )
         package_importer = self._importer or importlib.import_module
-        tushare = package_importer("tushare")
-        if not hasattr(tushare, "pro_api"):
+        package = package_importer("tushare")
+        factory = getattr(package, "pro_api", None)
+        if factory is None:
             raise RuntimeError("Tushare package must expose pro_api.")
-        self._client = tushare.pro_api()
+        self._client = factory()
         return self._client
 
 
