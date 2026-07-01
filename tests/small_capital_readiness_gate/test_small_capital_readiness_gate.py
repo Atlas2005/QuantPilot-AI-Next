@@ -1,5 +1,6 @@
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from enum import Enum
 
 from quantpilot_core.multi_day_paper_replay import (
     PaperReplayDayResult,
@@ -15,15 +16,6 @@ from quantpilot_core.paper_ledger_dry_run import (
     PaperLedgerDryRunInstructionStatus,
     PaperLedgerDryRunResult,
 )
-from quantpilot_core.performance_attribution_preflight import (
-    AttributionDecision,
-    AttributionOutcome,
-    FeedbackRecord,
-    PerformanceAttributionResult,
-    PerformanceAttributionRiskFlag,
-    ProposalAttributionRecord,
-    SymbolAttributionRecord,
-)
 from quantpilot_core.small_capital_readiness_gate import (
     MetricStatus,
     ReadinessDecision,
@@ -32,6 +24,67 @@ from quantpilot_core.small_capital_readiness_gate import (
     run_small_capital_readiness_gate,
     validate_readiness_inputs,
 )
+
+
+class AttributionDecision(str, Enum):
+    COMPLETED = "completed"
+
+
+class AttributionOutcome(str, Enum):
+    SIMULATED_GAIN = "simulated_gain"
+    SIMULATED_LOSS = "simulated_loss"
+
+
+@dataclass(frozen=True)
+class ProposalAttributionRecord:
+    proposal_id: str
+    symbol: str
+    trading_date: str
+    side: str
+    quantity: int
+    estimated_price: float
+    estimated_notional: float
+    status: str
+    estimated_cash_delta: float
+    estimated_position_delta: int
+    estimated_cost: float
+    outcome: str
+    reason: str
+    evidence_refs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SymbolAttributionRecord:
+    symbol: str
+    accepted_count: int
+    blocked_count: int
+    net_position_delta: int
+    net_cash_delta: float
+    estimated_total_cost: float
+    risk_flags_seen: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FeedbackRecord:
+    target_type: str
+    target_id: str
+    outcome: str
+    score: float
+    reason: str
+    evidence_refs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PerformanceAttributionResult:
+    ok: bool
+    decision: str
+    reason: str
+    proposal_records: tuple[ProposalAttributionRecord, ...]
+    symbol_records: tuple[SymbolAttributionRecord, ...]
+    source_records: tuple[object, ...]
+    day_records: tuple[object, ...]
+    feedback_records: tuple[FeedbackRecord, ...]
+    risk_flags: tuple[object, ...]
 
 
 def instruction_result(**overrides):

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from quantpilot_core.paper_ledger_dry_run import PaperLedgerDryRunInstructionStatus
-from quantpilot_core.performance_attribution_preflight import AttributionSeverity
 from quantpilot_core.small_capital_readiness_gate.contracts import (
     MetricStatus,
     ReadinessMetricRecord,
     SmallCapitalReadinessThresholds,
 )
+
+
+CRITICAL_SEVERITY = "critical"
 
 
 def compute_readiness_metrics(
@@ -111,7 +113,7 @@ def _critical_risk_flag_count(replay_result, attribution_result) -> int:
         getattr(attribution_result, "risk_flags", ())
     )
     return sum(
-        getattr(flag, "severity", None) == AttributionSeverity.CRITICAL.value
+        getattr(flag, "severity", None) == CRITICAL_SEVERITY
         for flag in flags
     )
 

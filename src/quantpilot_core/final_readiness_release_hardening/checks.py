@@ -19,47 +19,36 @@ from quantpilot_core.final_readiness_release_hardening.contracts import (
 
 
 def default_required_modules() -> tuple[RequiredModuleRecord, ...]:
-    """Return the required preflight/sandbox MVP module inventory."""
+    """Return the required executable-trading MVP module inventory."""
 
     return (
         _module("small_sample_data_gate", ReleaseArea.DATA),
         _module("real_data_provider", ReleaseArea.DATA),
         _module("provider_fallback_selector", ReleaseArea.DATA),
         _module("provider_sample_fetch_preflight", ReleaseArea.DATA),
-        _module("rqalpha_adapter_preflight", ReleaseArea.REPLAY),
         _module("paper_ledger", ReleaseArea.PAPER_LEDGER),
         _module("deepseek_multi_agent", ReleaseArea.AI_AGENT),
         _module("pit_feature_store_preflight", ReleaseArea.PIT),
-        _module("news_event_agent_preflight", ReleaseArea.AI_AGENT),
         _module("account_profile_preflight", ReleaseArea.ACCOUNT),
         _module("ai_action_paper_bridge", ReleaseArea.PAPER_LEDGER),
         _module("paper_ledger_dry_run", ReleaseArea.PAPER_LEDGER),
         _module("multi_day_paper_replay", ReleaseArea.REPLAY),
-        _module("performance_attribution_preflight", ReleaseArea.ATTRIBUTION),
         _module("small_capital_readiness_gate", ReleaseArea.READINESS),
         _module("broker_sandbox_adapter_preflight", ReleaseArea.BROKER_SANDBOX),
-        _module("multi_agent_orchestrator_preflight", ReleaseArea.ORCHESTRATOR),
-        _module("stats_agent_factor_metrics_preflight", ReleaseArea.FACTOR_STATS),
-        _module("qlib_evaluation_preflight", ReleaseArea.QLIB_PREFLIGHT),
     )
 
 
 def default_required_documents() -> tuple[RequiredDocumentRecord, ...]:
-    """Return the required preflight/sandbox MVP documentation inventory."""
+    """Return the required executable-trading MVP documentation inventory."""
 
     return (
         _document("docs/PIT_DATA_FEATURE_STORE_PREFLIGHT.md", ReleaseArea.PIT),
-        _document("docs/NEWS_EVENT_AGENT_PREFLIGHT.md", ReleaseArea.AI_AGENT),
         _document("docs/ACCOUNT_PROFILE_BROKER_CONFIG_PREFLIGHT.md", ReleaseArea.ACCOUNT),
         _document("docs/AI_ACTION_PROPOSAL_PAPER_LEDGER_BRIDGE.md", ReleaseArea.PAPER_LEDGER),
         _document("docs/PAPER_LEDGER_DRY_RUN_INTEGRATION.md", ReleaseArea.PAPER_LEDGER),
         _document("docs/MULTI_DAY_PAPER_REPLAY.md", ReleaseArea.REPLAY),
-        _document("docs/PERFORMANCE_ATTRIBUTION_FLYWHEEL_PREFLIGHT.md", ReleaseArea.ATTRIBUTION),
         _document("docs/SMALL_CAPITAL_READINESS_GATE.md", ReleaseArea.READINESS),
         _document("docs/BROKER_SANDBOX_ADAPTER_PREFLIGHT.md", ReleaseArea.BROKER_SANDBOX),
-        _document("docs/MULTI_AGENT_ORCHESTRATOR_PREFLIGHT.md", ReleaseArea.ORCHESTRATOR),
-        _document("docs/STATS_AGENT_FACTOR_METRICS_PREFLIGHT.md", ReleaseArea.FACTOR_STATS),
-        _document("docs/QLIB_EVALUATION_PREFLIGHT.md", ReleaseArea.QLIB_PREFLIGHT),
     )
 
 
