@@ -214,13 +214,13 @@ def test_kill_switched_account_blocks_buy_sell() -> None:
     assert "account_preflight:kill_switched_trade_permission_active" in codes(result)
 
 
-def test_invalid_account_preflight_blocks_whole_dry_run() -> None:
+def test_missing_account_evidence_does_not_block_whole_dry_run() -> None:
     result = run_paper_ledger_dry_run([instruction()], account(evidence_refs=()))
 
-    assert result.decision == PaperLedgerDryRunDecision.BLOCKED.value
-    assert result.instruction_results == ()
-    assert result.blocked_instruction_ids == ("proposal-001",)
-    assert "account_preflight:evidence_refs_missing" in codes(result)
+    assert result.decision == PaperLedgerDryRunDecision.ACCEPTED.value
+    assert result.instruction_results
+    assert result.blocked_instruction_ids == ()
+    assert "account_preflight:evidence_refs_missing" not in codes(result)
 
 
 def test_partial_decision_when_one_instruction_blocked_and_another_succeeds() -> None:

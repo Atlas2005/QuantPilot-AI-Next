@@ -250,15 +250,16 @@ def test_valid_replay_and_attribution_pass_all_thresholds() -> None:
     assert result.manual_review_checks == ()
 
 
-def test_fewer_than_min_replay_days_returns_fail() -> None:
+def test_fewer_than_min_replay_days_returns_manual_review_metric() -> None:
     replay = replay_result(day_results=replay_result().day_results[:4])
     result = run_small_capital_readiness_gate(replay, attribution_result())
 
-    assert result.decision == ReadinessDecision.FAIL.value
-    assert "replay_days" in result.failed_checks
+    assert result.decision == ReadinessDecision.MANUAL_REVIEW.value
+    assert "replay_days" in result.manual_review_checks
+    assert result.failed_checks == ()
 
 
-def test_high_blocked_day_ratio_returns_fail() -> None:
+def test_high_blocked_day_ratio_returns_manual_review_metric() -> None:
     days = (
         day_result(1, blocked=True),
         day_result(2, blocked=True),
@@ -267,10 +268,11 @@ def test_high_blocked_day_ratio_returns_fail() -> None:
     replay = replay_result(ok=False, decision=PaperReplayDecision.PARTIAL.value, day_results=days, blocked_days=("2026-07-01", "2026-07-02"))
     result = run_small_capital_readiness_gate(replay, attribution_result())
 
-    assert "blocked_day_ratio" in result.failed_checks
+    assert "blocked_day_ratio" in result.manual_review_checks
+    assert result.failed_checks == ()
 
 
-def test_high_blocked_instruction_ratio_returns_fail() -> None:
+def test_high_blocked_instruction_ratio_returns_manual_review_metric() -> None:
     days = (day_result(1, blocked=True), *replay_result().day_results[1:])
     replay = replay_result(ok=False, decision=PaperReplayDecision.PARTIAL.value, day_results=days, blocked_days=("2026-07-01",))
     result = run_small_capital_readiness_gate(
@@ -279,7 +281,8 @@ def test_high_blocked_instruction_ratio_returns_fail() -> None:
         SmallCapitalReadinessThresholds(max_blocked_instruction_ratio=0.10),
     )
 
-    assert "blocked_instruction_ratio" in result.failed_checks
+    assert "blocked_instruction_ratio" in result.manual_review_checks
+    assert result.failed_checks == ()
 
 
 def test_critical_risk_flag_returns_fail() -> None:
@@ -297,7 +300,7 @@ def test_critical_risk_flag_returns_fail() -> None:
     assert "critical_risk_flag_count" in result.failed_checks
 
 
-def test_high_estimated_cost_ratio_returns_fail() -> None:
+def test_high_estimated_cost_ratio_returns_manual_review_metric() -> None:
     attribution = attribution_result(
         proposal_records=tuple(
             proposal_record(index, estimated_cost=20.0)
@@ -306,26 +309,29 @@ def test_high_estimated_cost_ratio_returns_fail() -> None:
     )
     result = run_small_capital_readiness_gate(replay_result(), attribution)
 
-    assert "total_estimated_cost_ratio" in result.failed_checks
+    assert "total_estimated_cost_ratio" in result.manual_review_checks
+    assert result.failed_checks == ()
 
 
-def test_high_negative_feedback_ratio_returns_fail() -> None:
+def test_high_negative_feedback_ratio_returns_manual_review_metric() -> None:
     attribution = attribution_result(
         feedback_records=tuple(feedback(index, score=-0.5) for index in range(1, 6))
     )
     result = run_small_capital_readiness_gate(replay_result(), attribution)
 
-    assert "negative_feedback_ratio" in result.failed_checks
+    assert "negative_feedback_ratio" in result.manual_review_checks
+    assert result.failed_checks == ()
 
 
-def test_too_few_accepted_instructions_returns_fail() -> None:
+def test_too_few_accepted_instructions_returns_manual_review_metric() -> None:
     attribution = attribution_result(proposal_records=(proposal_record(1), proposal_record(2)))
     result = run_small_capital_readiness_gate(replay_result(), attribution)
 
-    assert "accepted_instruction_count" in result.failed_checks
+    assert "accepted_instruction_count" in result.manual_review_checks
+    assert result.failed_checks == ()
 
 
-def test_high_cash_drawdown_returns_fail() -> None:
+def test_high_cash_drawdown_returns_manual_review_metric() -> None:
     days = replay_result().day_results
     replay = replay_result(
         day_results=(
@@ -335,7 +341,8 @@ def test_high_cash_drawdown_returns_fail() -> None:
     )
     result = run_small_capital_readiness_gate(replay, attribution_result())
 
-    assert "cash_drawdown_ratio" in result.failed_checks
+    assert "cash_drawdown_ratio" in result.manual_review_checks
+    assert result.failed_checks == ()
 
 
 def test_insufficient_optional_concentration_data_returns_manual_review() -> None:

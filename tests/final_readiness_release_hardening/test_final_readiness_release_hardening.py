@@ -264,6 +264,16 @@ def test_default_inventories_cover_required_r30_surface() -> None:
     assert "quantpilot_core.news_event_agent_preflight" not in modules
     assert "quantpilot_core.stats_agent_factor_metrics_preflight" not in modules
     assert "quantpilot_core.performance_attribution_preflight" not in modules
+    assert "quantpilot_core.provider_sample_fetch_preflight" not in modules
+    assert "quantpilot_core.pit_feature_store_preflight" not in modules
+    assert "quantpilot_core.account_profile_preflight" not in modules
+    assert "quantpilot_core.small_sample_data_gate" not in modules
+    assert "quantpilot_core.small_capital_readiness_gate" not in modules
+    assert "quantpilot_core.broker_sandbox_adapter_preflight" not in modules
     assert "docs/QLIB_EVALUATION_PREFLIGHT.md" not in documents
     assert "docs/PERFORMANCE_ATTRIBUTION_FLYWHEEL_PREFLIGHT.md" not in documents
+    assert "docs/PIT_DATA_FEATURE_STORE_PREFLIGHT.md" not in documents
+    assert "docs/ACCOUNT_PROFILE_BROKER_CONFIG_PREFLIGHT.md" not in documents
+    assert "docs/SMALL_CAPITAL_READINESS_GATE.md" not in documents
+    assert "docs/BROKER_SANDBOX_ADAPTER_PREFLIGHT.md" not in documents
     assert forbidden and forbidden[0].forbidden_terms

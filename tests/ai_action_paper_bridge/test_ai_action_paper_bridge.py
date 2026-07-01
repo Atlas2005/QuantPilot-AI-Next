@@ -250,15 +250,15 @@ def test_low_confidence_proposal_requires_manual_review() -> None:
     assert result.accepted_instructions == ()
 
 
-def test_invalid_account_preflight_blocks_all_proposals() -> None:
+def test_missing_account_evidence_does_not_block_all_proposals() -> None:
     result = run_ai_action_paper_bridge(
         [proposal(proposal_id="p1"), proposal(proposal_id="p2")],
         account(evidence_refs=()),
     )
 
-    assert result.decision == BridgeDecision.BLOCKED.value
-    assert result.blocked_proposals == ("p1", "p2")
-    assert "account_preflight:evidence_refs_missing" in codes(result)
+    assert result.decision == BridgeDecision.ACCEPTED_FOR_PAPER.value
+    assert result.blocked_proposals == ()
+    assert "account_preflight:evidence_refs_missing" not in codes(result)
 
 
 def test_fee_estimate_includes_commission_min_stamp_transfer_and_slippage() -> None:

@@ -1,4 +1,4 @@
-"""Broker sandbox adapter preflight without broker connectivity."""
+"""Broker sandbox adapter config checks without broker connectivity."""
 
 from __future__ import annotations
 
@@ -135,10 +135,14 @@ def run_broker_sandbox_adapter_preflight(
         if any(flag.severity in {BrokerSandboxSeverity.HIGH.value, BrokerSandboxSeverity.MEDIUM.value} for flag in result.risk_flags)
     )
 
+    has_manual_severity = any(
+        flag.severity in {BrokerSandboxSeverity.HIGH.value, BrokerSandboxSeverity.MEDIUM.value}
+        for flag in all_flags
+    )
     if any(flag.severity == BrokerSandboxSeverity.CRITICAL.value for flag in all_flags):
         decision = BrokerSandboxAdapterDecision.BLOCKED.value
         reason = "critical_risk_flags"
-    elif manual_ids or readiness_decision == ReadinessDecision.MANUAL_REVIEW.value:
+    elif manual_ids or has_manual_severity:
         decision = BrokerSandboxAdapterDecision.MANUAL_REVIEW.value
         reason = "manual_review_required"
     elif accepted_ids:
@@ -166,9 +170,11 @@ def _validate_global_inputs(
 ) -> tuple[BrokerSandboxRiskFlag, ...]:
     flags: list[BrokerSandboxRiskFlag] = []
     if readiness_result is None:
-        flags.append(_critical("readiness_result_missing", "Readiness gate result is required."))
+        flags.append(_medium("readiness_result_missing", "Readiness metrics are missing; continue as adapter config warning."))
     elif readiness_result.decision == ReadinessDecision.FAIL.value:
-        flags.append(_critical("readiness_failed", "Readiness FAIL blocks broker sandbox handoff."))
+        flags.append(_medium("readiness_failed", "Readiness metrics failed; continue as adapter config warning."))
+    elif readiness_result.decision == ReadinessDecision.MANUAL_REVIEW.value:
+        flags.append(_medium("readiness_manual_review", "Readiness metrics suggest manual review."))
     if account_profile.status in {
         AccountStatus.READ_ONLY.value,
         AccountStatus.SUSPENDED.value,
@@ -199,10 +205,13 @@ def _mode_and_readiness_flags(
     if instruction.mode == BrokerSandboxAdapterMode.READ_ONLY_CHECK.value:
         flags.append(_medium("read_only_check_not_executable", "READ_ONLY_CHECK is non-executable."))
     if instruction.mode == BrokerSandboxAdapterMode.BROKER_SANDBOX.value:
-        if readiness_decision == ReadinessDecision.MANUAL_REVIEW.value:
-            flags.append(_high("readiness_manual_review", "Readiness MANUAL_REVIEW requires human review."))
-        elif readiness_decision != ReadinessDecision.PASS.value:
-            flags.append(_critical("readiness_not_pass", "BROKER_SANDBOX requires readiness PASS."))
+        if readiness_decision not in {
+            ReadinessDecision.PASS.value,
+            ReadinessDecision.MANUAL_REVIEW.value,
+            ReadinessDecision.FAIL.value,
+            None,
+        }:
+            flags.append(_medium("readiness_unknown", "BROKER_SANDBOX has unknown readiness metric context."))
     return tuple(flags)
 
 

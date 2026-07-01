@@ -174,17 +174,18 @@ def test_reversed_dates_fail_deterministically() -> None:
     assert result.reasons == ("date_range_invalid",)
 
 
-def test_insufficient_sample_size_returns_gate_failed() -> None:
+def test_insufficient_sample_size_returns_ready_with_quality_warning() -> None:
     result = run_provider_sample_fetch_preflight(
         request(provider_clients={ProviderCandidateName.AKSHARE: FetchDailyBarsClient(bars(count=3))})
     )
 
-    assert result.status is ProviderSampleFetchStatus.GATE_FAILED
+    assert result.status is ProviderSampleFetchStatus.READY
     assert result.gate_passed is False
-    assert result.reasons == ("insufficient_sample_size",)
+    assert result.reasons == ()
+    assert "sample_size_below_requested_minimum" in result.warnings
 
 
-def test_gate_failure_reasons_are_included_when_sample_data_invalid() -> None:
+def test_sample_quality_reasons_are_included_as_warnings_when_metadata_incomplete() -> None:
     result = run_provider_sample_fetch_preflight(
         request(
             provider_clients={
@@ -195,8 +196,9 @@ def test_gate_failure_reasons_are_included_when_sample_data_invalid() -> None:
         )
     )
 
-    assert result.status is ProviderSampleFetchStatus.GATE_FAILED
-    assert "symbol_mapping_audit_missing" in result.reasons
+    assert result.status is ProviderSampleFetchStatus.READY
+    assert result.reasons == ()
+    assert result.gate_passed is True
 
 
 def test_supports_fetch_daily_bars_method() -> None:

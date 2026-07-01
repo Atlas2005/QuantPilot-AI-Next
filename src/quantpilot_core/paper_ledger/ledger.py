@@ -1,4 +1,4 @@
-"""Deterministic paper ledger dry path fed by gated provider samples."""
+"""Deterministic paper ledger dry path fed by usable provider samples."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ def run_paper_ledger_from_gated_sample(
     gate_passed: bool,
     latest_close_price: float | None = None,
 ) -> PaperLedgerResult:
-    """Apply a deterministic paper fill if the sample gate passed."""
+    """Apply a deterministic paper fill if market sample input is usable."""
 
     cash_before = account.cash
     position_before = account.positions.get(order_intent.symbol, 0)
@@ -30,8 +30,8 @@ def run_paper_ledger_from_gated_sample(
             account=account,
             order_intent=order_intent,
             position_before=position_before,
-            reasons=("gate_not_passed",),
-            suggested_next_action="Pass a gated provider sample before paper ledger updates.",
+            reasons=("data_sample_unusable",),
+            suggested_next_action="Provide structurally usable market data/sample input before paper ledger updates.",
         )
 
     invalid_reasons = _validate_account_and_order(account, order_intent)
@@ -108,10 +108,10 @@ def build_paper_order_from_sample_preflight_result(
     quantity: int,
     limit_price: float,
 ) -> PaperLedgerOrderIntent:
-    """Build a deterministic order intent only from a gate-passed sample result."""
+    """Build a deterministic order intent from structurally usable sample metadata."""
 
     if not sample_result.gate_passed:
-        raise ValueError("sample preflight result must pass the gate")
+        raise ValueError("sample result must provide structurally usable market data")
     return PaperLedgerOrderIntent(
         symbol=symbol,
         side=side,

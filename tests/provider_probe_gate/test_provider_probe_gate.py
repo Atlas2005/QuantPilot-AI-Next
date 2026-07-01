@@ -36,22 +36,30 @@ def test_unknown_provider_is_rejected() -> None:
     assert ProviderProbeGateRejectionReason.UNKNOWN_PROVIDER in reasons
 
 
-def test_missing_license_review_is_rejected() -> None:
+def test_missing_license_review_is_advisory() -> None:
     request = replace(
         valid_request(),
         evidence=replace(valid_request().evidence, license_review_status=""),
     )
 
-    assert ProviderProbeGateRejectionReason.LICENSE_REVIEW_MISSING in reasons_for(request)
+    decision = decide_provider_probe_gate(request)
+
+    assert decision.status is ProviderProbeGateStatus.ALLOWED
+    assert ProviderProbeGateRejectionReason.LICENSE_REVIEW_MISSING not in decision.rejection_reasons
+    assert "license review status is missing" in " ".join(decision.messages).lower()
 
 
-def test_missing_adapter_boundary_acknowledgement_is_rejected() -> None:
+def test_missing_adapter_boundary_acknowledgement_is_advisory() -> None:
     request = replace(
         valid_request(),
         evidence=replace(valid_request().evidence, adapter_boundary_acknowledged=False),
     )
 
-    assert ProviderProbeGateRejectionReason.ADAPTER_BOUNDARY_MISSING in reasons_for(request)
+    decision = decide_provider_probe_gate(request)
+
+    assert decision.status is ProviderProbeGateStatus.ALLOWED
+    assert ProviderProbeGateRejectionReason.ADAPTER_BOUNDARY_MISSING not in decision.rejection_reasons
+    assert "adapter boundary" in " ".join(decision.messages).lower()
 
 
 def test_broker_live_trading_order_execution_flags_are_rejected() -> None:
@@ -94,7 +102,7 @@ def test_overbroad_symbol_date_row_scope_is_rejected() -> None:
     )
 
 
-def test_missing_timestamp_latency_provider_failure_requirements_are_rejected() -> None:
+def test_missing_timestamp_latency_provider_failure_requirements_are_advisory() -> None:
     request = replace(
         valid_request(),
         evidence=replace(
@@ -104,14 +112,20 @@ def test_missing_timestamp_latency_provider_failure_requirements_are_rejected() 
             provider_failure_handling_required=False,
         ),
     )
-    reasons = reasons_for(request)
+    decision = decide_provider_probe_gate(request)
+    reasons = decision.rejection_reasons
 
-    assert ProviderProbeGateRejectionReason.TIMESTAMP_AUDIT_MISSING in reasons
-    assert ProviderProbeGateRejectionReason.LATENCY_REQUIREMENT_MISSING in reasons
-    assert ProviderProbeGateRejectionReason.PROVIDER_FAILURE_HANDLING_MISSING in reasons
+    assert decision.status is ProviderProbeGateStatus.ALLOWED
+    assert ProviderProbeGateRejectionReason.TIMESTAMP_AUDIT_MISSING not in reasons
+    assert ProviderProbeGateRejectionReason.LATENCY_REQUIREMENT_MISSING not in reasons
+    assert ProviderProbeGateRejectionReason.PROVIDER_FAILURE_HANDLING_MISSING not in reasons
+    combined = " ".join(decision.messages).lower()
+    assert "timestamp audit" in combined
+    assert "latency requirement" in combined
+    assert "provider failure handling" in combined
 
 
-def test_missing_sandbox_bridge_compatibility_requirement_is_rejected() -> None:
+def test_missing_sandbox_bridge_compatibility_requirement_is_advisory() -> None:
     request = replace(
         valid_request(),
         evidence=replace(
@@ -120,10 +134,14 @@ def test_missing_sandbox_bridge_compatibility_requirement_is_rejected() -> None:
         ),
     )
 
+    decision = decide_provider_probe_gate(request)
+
+    assert decision.status is ProviderProbeGateStatus.ALLOWED
     assert (
         ProviderProbeGateRejectionReason.SANDBOX_BRIDGE_COMPATIBILITY_MISSING
-        in reasons_for(request)
+        not in decision.rejection_reasons
     )
+    assert "sandbox bridge compatibility" in " ".join(decision.messages).lower()
 
 
 def test_audit_record_is_generated() -> None:
@@ -135,11 +153,11 @@ def test_audit_record_is_generated() -> None:
     assert decision.audit_record.no_broker is True
 
 
-def test_gate_remains_safety_decision_layer_not_provider_implementation() -> None:
+def test_probe_policy_remains_manifest_validation_not_provider_implementation() -> None:
     decision = decide_provider_probe_gate(valid_request())
     combined = " ".join(decision.messages + (decision.audit_record.message,)).lower()
 
-    assert "allowed" in combined
+    assert "accepted" in combined
     assert decision.audit_record.no_external_api_call is True
     assert decision.audit_record.no_data_fetch is True
     assert decision.audit_record.no_order_execution is True

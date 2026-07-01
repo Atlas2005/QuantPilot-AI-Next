@@ -153,8 +153,8 @@ def run_a_share_constrained_paper_order(
             account=account,
             order_intent=order_intent,
             position_before=position_before,
-            reasons=("gate_not_passed",),
-            suggested_next_action="Pass a gated provider sample before A-share paper execution.",
+            reasons=("market_sample_unusable",),
+            suggested_next_action="Provide structurally usable market data/sample input before A-share paper execution.",
         )
 
     invalid_reasons = _validate_order_shape(account, order_intent)

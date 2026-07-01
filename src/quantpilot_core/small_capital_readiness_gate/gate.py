@@ -1,4 +1,4 @@
-"""Decision logic for the R25 small-capital readiness gate."""
+"""Decision logic for small-capital sizing metrics and fatal constraints."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def run_small_capital_readiness_gate(
     attribution_result,
     thresholds: SmallCapitalReadinessThresholds | None = None,
 ) -> SmallCapitalReadinessGateResult:
-    """Evaluate whether replay/attribution evidence is ready for small-capital sandbox progression."""
+    """Evaluate small-capital metrics without making them a central trading blocker."""
 
     active_thresholds = thresholds or DEFAULT_SMALL_CAPITAL_READINESS_THRESHOLDS
     validation_flags = validate_readiness_inputs(
@@ -47,17 +47,22 @@ def run_small_capital_readiness_gate(
 
     metrics = compute_readiness_metrics(replay_result, attribution_result, active_thresholds)
     passed_checks = tuple(metric.name for metric in metrics if metric.status == MetricStatus.PASS.value)
-    failed_checks = tuple(metric.name for metric in metrics if metric.status == MetricStatus.FAIL.value)
+    metric_failures = tuple(metric.name for metric in metrics if metric.status == MetricStatus.FAIL.value)
+    failed_checks = tuple(name for name in metric_failures if name == "critical_risk_flag_count")
     manual_review_checks = tuple(
-        metric.name for metric in metrics if metric.status == MetricStatus.WARNING.value
+        metric.name
+        for metric in metrics
+        if metric.status == MetricStatus.WARNING.value
+    ) + tuple(
+        name for name in metric_failures if name != "critical_risk_flag_count"
     )
 
     if failed_checks:
         decision = ReadinessDecision.FAIL.value
-        reason = "readiness_metrics_failed"
+        reason = "fatal_capital_constraint_failed"
     elif manual_review_checks:
         decision = ReadinessDecision.MANUAL_REVIEW.value
-        reason = "readiness_manual_review_required"
+        reason = "capital_sizing_metrics_warn"
     else:
         decision = ReadinessDecision.PASS.value
         reason = "ok"

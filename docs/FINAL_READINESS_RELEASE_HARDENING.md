@@ -21,19 +21,13 @@ Repository-wide scanning is intentionally not part of this package. The package 
 
 The default module inventory covers the remaining executable-trading MVP surface:
 
-- `quantpilot_core.small_sample_data_gate`
 - `quantpilot_core.real_data_provider`
 - `quantpilot_core.provider_fallback_selector`
-- `quantpilot_core.provider_sample_fetch_preflight`
 - `quantpilot_core.paper_ledger`
 - `quantpilot_core.deepseek_multi_agent`
-- `quantpilot_core.pit_feature_store_preflight`
-- `quantpilot_core.account_profile_preflight`
 - `quantpilot_core.ai_action_paper_bridge`
 - `quantpilot_core.paper_ledger_dry_run`
 - `quantpilot_core.multi_day_paper_replay`
-- `quantpilot_core.small_capital_readiness_gate`
-- `quantpilot_core.broker_sandbox_adapter_preflight`
 
 Required module checks import only the explicitly listed module paths.
 
@@ -41,13 +35,9 @@ Required module checks import only the explicitly listed module paths.
 
 The default document inventory covers:
 
-- `docs/PIT_DATA_FEATURE_STORE_PREFLIGHT.md`
-- `docs/ACCOUNT_PROFILE_BROKER_CONFIG_PREFLIGHT.md`
 - `docs/AI_ACTION_PROPOSAL_PAPER_LEDGER_BRIDGE.md`
 - `docs/PAPER_LEDGER_DRY_RUN_INTEGRATION.md`
 - `docs/MULTI_DAY_PAPER_REPLAY.md`
-- `docs/SMALL_CAPITAL_READINESS_GATE.md`
-- `docs/BROKER_SANDBOX_ADAPTER_PREFLIGHT.md`
 
 Document checks use explicit `Path.exists` checks only for the listed files.
 
@@ -87,7 +77,9 @@ It does not:
 
 ## What Remains Before Real Capital Usage
 
-This package does not approve real capital usage. Before any capital touches a broker, the project still needs:
+This package is not the capital deployment controller. Capital deployment is governed by account configuration, broker permissions, rollout mode, and explicit order-routing controls.
+
+Before any capital touches a broker, the project still needs:
 
 - real data stability trial
 - mature framework-backed replay and attribution integration
@@ -96,4 +88,4 @@ This package does not approve real capital usage. Before any capital touches a b
 - human approval workflow
 - explicit risk and account-control review
 
-Safety must not mean no trading. Missing historical Qlib, RQAlpha, DeepSeek, attribution, or orchestration preflight modules should not block paper replay or controlled trading progress.
+Safety must not mean no trading. Missing historical Qlib, RQAlpha, provider sample, PIT, account profile, small-capital readiness, attribution, broker sandbox, or orchestration preflight modules should not block paper replay or controlled trading progress.

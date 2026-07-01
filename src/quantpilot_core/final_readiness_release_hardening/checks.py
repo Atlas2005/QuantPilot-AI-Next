@@ -22,19 +22,13 @@ def default_required_modules() -> tuple[RequiredModuleRecord, ...]:
     """Return the required executable-trading MVP module inventory."""
 
     return (
-        _module("small_sample_data_gate", ReleaseArea.DATA),
         _module("real_data_provider", ReleaseArea.DATA),
         _module("provider_fallback_selector", ReleaseArea.DATA),
-        _module("provider_sample_fetch_preflight", ReleaseArea.DATA),
         _module("paper_ledger", ReleaseArea.PAPER_LEDGER),
         _module("deepseek_multi_agent", ReleaseArea.AI_AGENT),
-        _module("pit_feature_store_preflight", ReleaseArea.PIT),
-        _module("account_profile_preflight", ReleaseArea.ACCOUNT),
         _module("ai_action_paper_bridge", ReleaseArea.PAPER_LEDGER),
         _module("paper_ledger_dry_run", ReleaseArea.PAPER_LEDGER),
         _module("multi_day_paper_replay", ReleaseArea.REPLAY),
-        _module("small_capital_readiness_gate", ReleaseArea.READINESS),
-        _module("broker_sandbox_adapter_preflight", ReleaseArea.BROKER_SANDBOX),
     )
 
 
@@ -42,13 +36,9 @@ def default_required_documents() -> tuple[RequiredDocumentRecord, ...]:
     """Return the required executable-trading MVP documentation inventory."""
 
     return (
-        _document("docs/PIT_DATA_FEATURE_STORE_PREFLIGHT.md", ReleaseArea.PIT),
-        _document("docs/ACCOUNT_PROFILE_BROKER_CONFIG_PREFLIGHT.md", ReleaseArea.ACCOUNT),
         _document("docs/AI_ACTION_PROPOSAL_PAPER_LEDGER_BRIDGE.md", ReleaseArea.PAPER_LEDGER),
         _document("docs/PAPER_LEDGER_DRY_RUN_INTEGRATION.md", ReleaseArea.PAPER_LEDGER),
         _document("docs/MULTI_DAY_PAPER_REPLAY.md", ReleaseArea.REPLAY),
-        _document("docs/SMALL_CAPITAL_READINESS_GATE.md", ReleaseArea.READINESS),
-        _document("docs/BROKER_SANDBOX_ADAPTER_PREFLIGHT.md", ReleaseArea.BROKER_SANDBOX),
     )
 
 

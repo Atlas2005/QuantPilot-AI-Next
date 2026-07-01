@@ -52,7 +52,7 @@ def test_buy_accepted_when_gate_passed_and_cash_sufficient() -> None:
     assert result.position_after == 100
 
 
-def test_buy_rejected_when_gate_failed() -> None:
+def test_buy_rejected_when_market_sample_unusable() -> None:
     result = run_paper_ledger_from_gated_sample(
         PaperLedgerAccount(cash=2000.0),
         buy_order(),
@@ -61,7 +61,7 @@ def test_buy_rejected_when_gate_failed() -> None:
 
     assert result.status is PaperLedgerStatus.NO_GATE_PASS
     assert result.order_status is PaperOrderStatus.REJECTED
-    assert result.reasons == ("gate_not_passed",)
+    assert result.reasons == ("data_sample_unusable",)
     assert result.cash_after == 2000.0
     assert result.position_after == 0
 
@@ -214,7 +214,7 @@ def test_build_order_from_gate_passed_sample_result() -> None:
     assert order == buy_order()
 
 
-def test_build_order_rejects_non_gate_passed_sample_result() -> None:
+def test_build_order_rejects_structurally_unusable_sample_result() -> None:
     sample_result = ProviderSampleFetchResult(
         status=ProviderSampleFetchStatus.GATE_FAILED,
         selected_provider=None,
@@ -225,7 +225,7 @@ def test_build_order_rejects_non_gate_passed_sample_result() -> None:
         suggested_next_action="fix",
     )
 
-    with pytest.raises(ValueError, match="pass the gate"):
+    with pytest.raises(ValueError, match="structurally usable market data"):
         build_paper_order_from_sample_preflight_result(
             sample_result,
             symbol="600000",

@@ -27,17 +27,9 @@ class ReleaseSeverity(str, Enum):
 
 class ReleaseArea(str, Enum):
     DATA = "data"
-    PIT = "pit"
     AI_AGENT = "ai_agent"
-    ACCOUNT = "account"
     PAPER_LEDGER = "paper_ledger"
     REPLAY = "replay"
-    ATTRIBUTION = "attribution"
-    READINESS = "readiness"
-    BROKER_SANDBOX = "broker_sandbox"
-    ORCHESTRATOR = "orchestrator"
-    FACTOR_STATS = "factor_stats"
-    QLIB_PREFLIGHT = "qlib_preflight"
     SAFETY = "safety"
     DOCS = "docs"
 

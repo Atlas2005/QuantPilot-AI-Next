@@ -241,15 +241,15 @@ def test_invalid_iso_date_shape_is_rejected() -> None:
     assert "day[0]:trading_date_invalid" in codes(flags)
 
 
-def test_invalid_account_preflight_blocks_replay() -> None:
+def test_missing_account_evidence_does_not_block_replay() -> None:
     result = run_multi_day_paper_replay(
         (day("2026-07-01", instruction()),),
         account(evidence_refs=()),
     )
 
-    assert result.decision == PaperReplayDecision.BLOCKED.value
-    assert result.day_results == ()
-    assert "account_preflight:evidence_refs_missing" in codes(result.risk_flags)
+    assert result.decision == PaperReplayDecision.COMPLETED.value
+    assert result.day_results
+    assert "account_preflight:evidence_refs_missing" not in codes(result.risk_flags)
 
 
 def test_fail_fast_skips_later_days_after_blocked_day() -> None:
