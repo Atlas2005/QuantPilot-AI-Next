@@ -96,3 +96,27 @@ def test_src_does_not_contain_forbidden_scope_patterns() -> None:
                 violations.append(f"{relative}: {pattern}")
 
     assert violations == []
+
+
+def test_non_legacy_src_does_not_import_legacy_provider_replay_defaults() -> None:
+    allowed_prefixes = {
+        ("quantpilot_core", "real_provider_mixed_etf_paper_replay"),
+        ("quantpilot_core", "vectorbt_old_chain_metrics_comparison"),
+    }
+    forbidden_fragments = (
+        "build_provider_mixed_etf_replay_report",
+        "replay_provider_mixed_etf_sample(",
+        "replay_provider_mixed_etf_sample,",
+    )
+    violations: list[str] = []
+
+    for path in SRC_ROOT.rglob("*.py"):
+        relative = path.relative_to(SRC_ROOT)
+        if relative.parts[:2] in allowed_prefixes:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for fragment in forbidden_fragments:
+            if fragment in text:
+                violations.append(f"{relative}: {fragment}")
+
+    assert violations == []

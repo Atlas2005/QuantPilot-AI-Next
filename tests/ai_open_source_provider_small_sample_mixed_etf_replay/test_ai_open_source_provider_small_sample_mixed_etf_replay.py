@@ -20,9 +20,10 @@ from quantpilot_core.ai_open_source_provider_small_sample_mixed_etf_replay impor
     summarize_ai_adjusted_replay_impact,
     validate_approved_provider_export,
 )
-from quantpilot_core.real_provider_mixed_etf_paper_replay import (
-    build_provider_mixed_etf_replay_report,
+from quantpilot_core.provider_vectorbt_replay import (
+    replay_provider_mixed_etf_sample_with_vectorbt,
 )
+from quantpilot_core.vectorbt_replay_adapter import VectorbtReplayResult, VectorbtReplayStatus
 
 
 def schema_mapping() -> dict[str, str]:
@@ -93,10 +94,26 @@ def export_spec(
     )
 
 
-def baseline_replay_report():
+def completed_vectorbt_runner(_input_data) -> VectorbtReplayResult:
+    return VectorbtReplayResult(
+        status=VectorbtReplayStatus.COMPLETED.value,
+        reason="completed",
+        equity_curve=(100_000.0, 100_300.0, 100_250.0),
+        total_return=0.0025,
+        max_drawdown=0.0005,
+        trade_count=3,
+        turnover_proxy=0.5,
+        warnings=(),
+    )
+
+
+def provider_vectorbt_replay_result():
     validation = validate_approved_provider_export(export_spec(), sample_records())
     assert validation.replay_input is not None
-    return build_provider_mixed_etf_replay_report(validation.replay_input)
+    return replay_provider_mixed_etf_sample_with_vectorbt(
+        validation.replay_input,
+        replay_runner=completed_vectorbt_runner,
+    )
 
 
 def test_akshare_export_boundary_accepted_without_importing_package() -> None:
@@ -236,7 +253,7 @@ def test_provider_schema_mapping_explicit() -> None:
 
 def test_all_required_ai_shadow_agent_roles_produce_recommendations() -> None:
     validation = validate_approved_provider_export(export_spec(), sample_records())
-    decisions = generate_ai_shadow_decision_set(validation, baseline_replay_report())
+    decisions = generate_ai_shadow_decision_set(validation, provider_vectorbt_replay_result())
 
     assert tuple(item.role for item in decisions.recommendations) == tuple(
         role.value for role in AIShadowAgentRole
@@ -246,8 +263,8 @@ def test_all_required_ai_shadow_agent_roles_produce_recommendations() -> None:
 
 def test_recommendations_are_structured_and_deterministic() -> None:
     validation = validate_approved_provider_export(export_spec(), sample_records())
-    first = generate_ai_shadow_decision_set(validation, baseline_replay_report())
-    second = generate_ai_shadow_decision_set(validation, baseline_replay_report())
+    first = generate_ai_shadow_decision_set(validation, provider_vectorbt_replay_result())
+    second = generate_ai_shadow_decision_set(validation, provider_vectorbt_replay_result())
 
     assert first == second
     assert all(0 <= item.confidence <= 1 for item in first.recommendations)
@@ -275,8 +292,8 @@ def test_meta_review_blocks_cost_blind_suggestions() -> None:
 
 def test_replay_adjustment_plan_uses_bounded_position_size_multiplier() -> None:
     validation = validate_approved_provider_export(export_spec(), sample_records())
-    decisions = generate_ai_shadow_decision_set(validation, baseline_replay_report())
-    plan = build_replay_adjustment_plan(decisions, baseline_replay_report())
+    decisions = generate_ai_shadow_decision_set(validation, provider_vectorbt_replay_result())
+    plan = build_replay_adjustment_plan(decisions, provider_vectorbt_replay_result())
 
     assert 0.5 <= plan.position_size_multiplier <= 1.5
     assert plan.position_size_multiplier == 1.0333
@@ -285,7 +302,7 @@ def test_replay_adjustment_plan_uses_bounded_position_size_multiplier() -> None:
 
 def test_forbidden_adjustments_are_rejected() -> None:
     decisions = meta_review_shadow_recommendations((unsafe_recommendation("broker_connect"),))
-    plan = build_replay_adjustment_plan(decisions, baseline_replay_report())
+    plan = build_replay_adjustment_plan(decisions, provider_vectorbt_replay_result())
 
     assert "live_trading_suggestion" in plan.forbidden_adjustments_rejected
     assert "broker_connect" in plan.forbidden_adjustments_rejected
@@ -293,22 +310,26 @@ def test_forbidden_adjustments_are_rejected() -> None:
 
 def test_baseline_versus_ai_shadow_adjusted_replay_comparison_computed() -> None:
     validation = validate_approved_provider_export(export_spec(), sample_records())
-    decisions = generate_ai_shadow_decision_set(validation, baseline_replay_report())
-    adjusted = build_ai_adjusted_replay_result(baseline_replay_report(), decisions)
+    decisions = generate_ai_shadow_decision_set(validation, provider_vectorbt_replay_result())
+    adjusted = build_ai_adjusted_replay_result(provider_vectorbt_replay_result(), decisions)
 
     assert adjusted.ai_adjustment_improved_paper_metrics is True
     assert adjusted.mixed_stock_etf_remains_default is True
 
 
 def test_adjusted_replay_deltas_computed() -> None:
-    report = build_p40_ai_provider_replay_report(export_spec(), sample_records())
+    report = build_p40_ai_provider_replay_report(
+        export_spec(),
+        sample_records(),
+        replay_runner=completed_vectorbt_runner,
+    )
     adjusted = report.ai_adjusted_replay
 
     assert adjusted.fill_rate_delta == 0.0
     assert adjusted.zero_trade_day_delta == 0
-    assert adjusted.capital_usage_delta == 0.000336
+    assert adjusted.capital_usage_delta == 0.01665
     assert adjusted.cost_drag_delta == 0.0
-    assert adjusted.net_pnl_after_cost_delta == 3.7347
+    assert adjusted.net_pnl_after_cost_delta == 2.5001
     assert adjusted.turnover_delta == 0.000333
     assert summarize_ai_adjusted_replay_impact(adjusted)[0] == "fill_rate_delta:0.0"
 
@@ -330,13 +351,18 @@ def test_safety_barrier_remains_at_or_below_140() -> None:
         export_spec(),
         sample_records(),
         safety_barrier_percent=185.0,
+        replay_runner=completed_vectorbt_runner,
     )
 
     assert report.safety_barrier_percent <= 140.0
 
 
 def test_deterministic_report_ordering() -> None:
-    report = build_p40_ai_provider_replay_report(export_spec(), sample_records())
+    report = build_p40_ai_provider_replay_report(
+        export_spec(),
+        sample_records(),
+        replay_runner=completed_vectorbt_runner,
+    )
 
     assert tuple(item.role for item in report.ai_shadow_decisions.recommendations) == tuple(
         role.value for role in AIShadowAgentRole
@@ -345,7 +371,11 @@ def test_deterministic_report_ordering() -> None:
 
 
 def test_report_answers_p40_questions() -> None:
-    report = build_p40_ai_provider_replay_report(export_spec(), sample_records())
+    report = build_p40_ai_provider_replay_report(
+        export_spec(),
+        sample_records(),
+        replay_runner=completed_vectorbt_runner,
+    )
 
     assert report.used_approved_local_provider_export_style_data is True
     assert report.provider_boundary_modeled == OpenSourceProviderName.AKSHARE.value
@@ -376,6 +406,17 @@ def test_no_forbidden_runtime_behavior() -> None:
     assert "baostock" not in sys.modules
     assert "qlib" not in sys.modules
     assert "rqalpha" not in sys.modules
+
+
+def test_report_module_does_not_import_legacy_provider_replay_defaults() -> None:
+    report_source = Path(
+        "src/quantpilot_core/ai_open_source_provider_small_sample_mixed_etf_replay/report.py"
+    ).read_text(encoding="utf-8")
+
+    assert "build_provider_mixed_etf_replay_report" not in report_source
+    assert "replay_provider_mixed_etf_sample(" not in report_source
+    assert "replay_provider_mixed_etf_sample," not in report_source
+    assert "replay_provider_mixed_etf_sample_with_vectorbt" in report_source
 
 
 def unsafe_recommendation(marker: str) -> AIShadowAgentRecommendation:

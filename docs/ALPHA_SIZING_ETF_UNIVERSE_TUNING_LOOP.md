@@ -89,3 +89,5 @@ P37 moves the system closer to controlled automated A-share and ETF trading by i
 ## Recommended Next Step
 
 Use P37 output to feed the P36 daily paper trading loop with a mixed stock/ETF candidate set and compare whether ETF inclusion improves fill rate, cost drag, capital usage, and net PnL after cost.
+
+For provider mixed ETF replay, prefer the R3D `provider_vectorbt_replay` path. The old P36/P39 provider replay path is legacy/reference only; generic replay and portfolio metrics should move to vectorbt, RQAlpha, or Qlib where suitable.
