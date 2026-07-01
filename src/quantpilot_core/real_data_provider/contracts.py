@@ -17,6 +17,7 @@ class Adjustment(str, Enum):
 class ProviderName(str, Enum):
     AKSHARE = "akshare"
     BAOSTOCK = "baostock"
+    TUSHARE = "tushare"
 
 
 class ProviderError(Exception):
