@@ -84,6 +84,7 @@ def test_src_does_not_contain_forbidden_scope_patterns() -> None:
             if relative.parts[:2] in {
                 ("quantpilot_core", "vectorbt_replay_adapter"),
                 ("quantpilot_core", "vectorbt_replay_comparison"),
+                ("quantpilot_core", "vectorbt_old_chain_metrics_comparison"),
             } and pattern in {
                 "import vectorbt",
                 "from vectorbt",
