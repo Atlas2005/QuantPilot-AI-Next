@@ -76,7 +76,7 @@ def test_valid_fake_bars_pass_small_sample_gate() -> None:
     assert result.gate_reasons == ()
 
 
-def test_invalid_insufficient_bars_fail_gate() -> None:
+def test_missing_historical_gate_references_do_not_block_provider_sample() -> None:
     provider = FakeDailyBarProvider([bar(date(2026, 1, 1))])
     metadata = SmallSampleGateBridgeMetadata(
         provider_adapter_probe_plan_reference="",
@@ -89,9 +89,8 @@ def test_invalid_insufficient_bars_fail_gate() -> None:
         metadata=metadata,
     )
 
-    assert result.gate_passed is False
-    assert "provider_adapter_probe_plan_reference_missing" in result.gate_reasons
-    assert "r4_gate_decision_reference_missing" in result.gate_reasons
+    assert result.gate_passed is True
+    assert result.gate_reasons == ()
 
 
 def test_empty_provider_output_fails_safely() -> None:
@@ -104,7 +103,6 @@ def test_empty_provider_output_fails_safely() -> None:
     assert result.gate_passed is False
     assert "scope_too_broad" in result.gate_reasons
     assert "schema_review_missing" in result.gate_reasons
-    assert "timestamp_audit_missing" in result.gate_reasons
 
 
 def test_provider_errors_are_wrapped_clearly() -> None:

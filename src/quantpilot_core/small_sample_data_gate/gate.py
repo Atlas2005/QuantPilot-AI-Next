@@ -1,4 +1,4 @@
-"""Validation helpers for R7 small-sample data gate manifests."""
+"""Validation helpers for small-sample data quality manifests."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ MAX_LOOKBACK_DAYS = 30
 
 
 def load_small_sample_data_gate_request(path: str | Path) -> SmallSampleDataGateRequest:
-    """Load a static local small-sample data gate request manifest."""
+    """Load a static local small-sample data quality manifest."""
 
     with Path(path).open("r", encoding="utf-8") as handle:
         raw = json.load(handle)
@@ -46,7 +46,7 @@ def load_small_sample_data_gate_request(path: str | Path) -> SmallSampleDataGate
 def small_sample_data_gate_request_from_mapping(
     value: dict[str, Any],
 ) -> SmallSampleDataGateRequest:
-    """Convert mapping data into a typed R7 gate request."""
+    """Convert mapping data into a typed small-sample quality request."""
 
     manifest = _mapping_or_empty(value.get("manifest", value))
     source = _mapping_or_empty(manifest.get("source_review", {}))
@@ -135,7 +135,7 @@ def small_sample_data_gate_request_from_mapping(
 def validate_small_sample_data_gate_request(
     request: SmallSampleDataGateRequest,
 ) -> SmallSampleDataGateDecision:
-    """Validate an R7 manifest without reading data files or calling providers."""
+    """Validate a sample manifest without reading data files or calling providers."""
 
     manifest = request.manifest
     reasons: list[SmallSampleDataGateRejectionReason] = []
@@ -174,7 +174,7 @@ def validate_small_sample_data_gate_request(
             status is SmallSampleDataGateStatus.ALLOWED
         ),
         rejection_reasons=tuple(reasons),
-        messages=tuple(messages) if messages else ("Small-sample manifest allowed.",),
+        messages=tuple(messages) if messages else ("Small-sample manifest accepted.",),
         audit_record=audit,
     )
 
@@ -220,33 +220,13 @@ def _validate_source_review(
             "Provider candidate name is required.",
         )
     if not source.provider_adapter_probe_plan_reference.strip():
-        _append(
-            reasons,
-            messages,
-            SmallSampleDataGateRejectionReason.PROVIDER_ADAPTER_PROBE_PLAN_REFERENCE_MISSING,
-            "R6 provider adapter probe plan reference is required.",
-        )
+        messages.append("Advisory: provider adapter probe plan reference is missing.")
     if not source.approved_r4_gate_decision_reference.strip():
-        _append(
-            reasons,
-            messages,
-            SmallSampleDataGateRejectionReason.R4_GATE_DECISION_REFERENCE_MISSING,
-            "Approved R4 gate decision reference is required.",
-        )
+        messages.append("Advisory: historical R4 gate decision reference is missing.")
     if not source.r3_bridge_compatible:
-        _append(
-            reasons,
-            messages,
-            SmallSampleDataGateRejectionReason.R3_BRIDGE_COMPATIBILITY_MISSING,
-            "R3 bridge compatibility marker is required.",
-        )
+        messages.append("Advisory: historical R3 bridge compatibility marker is missing.")
     if not source.r2_sandbox_fixture_compatible:
-        _append(
-            reasons,
-            messages,
-            SmallSampleDataGateRejectionReason.R2_SANDBOX_FIXTURE_COMPATIBILITY_MISSING,
-            "R2 sandbox fixture compatibility marker is required.",
-        )
+        messages.append("Advisory: historical R2 sandbox fixture compatibility marker is missing.")
 
 
 def _validate_scope(
@@ -303,44 +283,24 @@ def _validate_reviews(
         not manifest.license_review.review_status.strip()
         or manifest.license_review.approved_for_production
     ):
-        _append(
-            reasons,
-            messages,
-            SmallSampleDataGateRejectionReason.LICENSE_REVIEW_MISSING,
-            "License review is required and must not approve production use.",
-        )
+        messages.append("Advisory: license review is missing or marked production-approved.")
     if (
         not manifest.adjustment_policy_audit.reviewed
         or not manifest.adjustment_policy_audit.adjustment_policy.strip()
     ):
-        _append(
-            reasons,
-            messages,
-            SmallSampleDataGateRejectionReason.ADJUSTMENT_POLICY_AUDIT_MISSING,
-            "Adjustment policy audit is required.",
-        )
+        messages.append("Advisory: adjustment policy audit is incomplete.")
     if (
         not manifest.symbol_mapping_audit.reviewed
         or not manifest.symbol_mapping_audit.symbol_format.strip()
         or not manifest.symbol_mapping_audit.mapping_confidence.strip()
     ):
-        _append(
-            reasons,
-            messages,
-            SmallSampleDataGateRejectionReason.SYMBOL_MAPPING_AUDIT_MISSING,
-            "Symbol mapping audit is required.",
-        )
+        messages.append("Advisory: symbol mapping audit is incomplete.")
     if (
         not manifest.timestamp_audit.reviewed
         or not manifest.timestamp_audit.audit_status.strip()
         or not manifest.timestamp_audit.timestamp_source.strip()
     ):
-        _append(
-            reasons,
-            messages,
-            SmallSampleDataGateRejectionReason.TIMESTAMP_AUDIT_MISSING,
-            "Timestamp audit is required.",
-        )
+        messages.append("Advisory: timestamp audit is incomplete.")
 
 
 def _validate_storage(

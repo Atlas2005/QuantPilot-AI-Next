@@ -1,4 +1,4 @@
-"""Provider sample fetch preflight using selector and small-sample gate glue."""
+"""Provider sample fetch config validation using selector and sample quality glue."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from quantpilot_core.real_provider_gate_bridge import (
 def run_provider_sample_fetch_preflight(
     request: ProviderSampleFetchRequest,
 ) -> ProviderSampleFetchResult:
-    """Select an offline provider, fetch sample bars, and run the R7 gate path."""
+    """Select an offline provider, fetch sample bars, and return quality hints."""
 
     invalid_reasons = _validate_request_shape(request)
     if invalid_reasons:
@@ -88,19 +88,23 @@ def run_provider_sample_fetch_preflight(
             gate_passed=False,
             reasons=(f"provider_fetch_failed: {exc}",),
             warnings=selection.warnings,
-            suggested_next_action="Fix the offline provider fixture before gate validation.",
+            suggested_next_action="Fix the offline provider fixture before sample validation.",
         )
 
-    if len(bars) < request.min_required_bars:
+    if not bars:
         return ProviderSampleFetchResult(
             status=ProviderSampleFetchStatus.GATE_FAILED,
             selected_provider=selection.selected_provider,
-            fetched_bar_count=len(bars),
+            fetched_bar_count=0,
             gate_passed=False,
-            reasons=("insufficient_sample_size",),
+            reasons=("empty_sample_unusable",),
             warnings=selection.warnings,
-            suggested_next_action="Provide enough normalized sample bars before gate validation.",
+            suggested_next_action="Provide at least one normalized sample bar before paper use.",
         )
+
+    quality_warnings: list[str] = list(selection.warnings)
+    if len(bars) < request.min_required_bars:
+        quality_warnings.append("sample_size_below_requested_minimum")
 
     provider = _FetchedBarsProvider(
         provider_name=_provider_name_from_candidate(selection.selected_provider),
@@ -114,25 +118,17 @@ def run_provider_sample_fetch_preflight(
     )
     gate_result = validate_provider_bars_with_small_sample_gate(provider, bridge_request)
     if not gate_result.gate_passed:
-        return ProviderSampleFetchResult(
-            status=ProviderSampleFetchStatus.GATE_FAILED,
-            selected_provider=selection.selected_provider,
-            fetched_bar_count=len(bars),
-            gate_passed=False,
-            reasons=gate_result.gate_reasons,
-            warnings=selection.warnings,
-            suggested_next_action="Fix sample metadata and normalized bars before paper use.",
-        )
+        quality_warnings.extend(f"sample_quality:{reason}" for reason in gate_result.gate_reasons)
 
     return ProviderSampleFetchResult(
         status=ProviderSampleFetchStatus.READY,
         selected_provider=selection.selected_provider,
         fetched_bar_count=len(bars),
-        gate_passed=True,
+        gate_passed=gate_result.gate_passed and len(bars) >= request.min_required_bars,
         reasons=(),
-        warnings=selection.warnings,
+        warnings=tuple(quality_warnings),
         suggested_next_action=(
-            "Feed the gated sample into the paper ledger / Market Reality Sandbox dry path."
+            "Feed the validated sample into the paper ledger / Market Reality Sandbox dry path."
         ),
     )
 

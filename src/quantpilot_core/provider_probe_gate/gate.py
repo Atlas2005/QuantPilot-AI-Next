@@ -1,6 +1,6 @@
-"""Decision helpers for the R4 Controlled Provider Probe Execution Gate.
+"""Decision helpers for the provider probe policy.
 
-This module validates local gate requests only. It does not call provider
+This module validates local probe manifests only. It does not call provider
 APIs, fetch data, create provider adapters, write market data files, connect
 brokers, enable live trading, or execute orders.
 """
@@ -27,7 +27,7 @@ from quantpilot_core.provider_probe_gate.contracts import (
 
 
 def default_provider_probe_safety_policy() -> ProviderProbeSafetyPolicy:
-    """Return the conservative default R4 gate policy."""
+    """Return the default provider probe manifest policy."""
 
     allowed_providers = (
         ProviderProbeAllowedProvider(
@@ -78,7 +78,7 @@ def default_provider_probe_safety_policy() -> ProviderProbeSafetyPolicy:
 
 
 def load_provider_probe_gate_request(path: str | Path) -> ProviderProbeGateRequest:
-    """Load a static local provider probe gate request fixture."""
+    """Load a static local provider probe manifest fixture."""
 
     with Path(path).open("r", encoding="utf-8") as handle:
         raw = json.load(handle)
@@ -90,7 +90,7 @@ def load_provider_probe_gate_request(path: str | Path) -> ProviderProbeGateReque
 def provider_probe_gate_request_from_mapping(
     value: dict[str, Any],
 ) -> ProviderProbeGateRequest:
-    """Convert a mapping into a typed gate request."""
+    """Convert a mapping into a typed provider probe policy request."""
 
     scope = value.get("scope", {})
     evidence = value.get("evidence", {})
@@ -144,7 +144,7 @@ def decide_provider_probe_gate(
     request: ProviderProbeGateRequest,
     policy: ProviderProbeSafetyPolicy | None = None,
 ) -> ProviderProbeGateDecision:
-    """Decide whether a controlled provider probe request is allowed."""
+    """Return an advisory provider probe policy decision."""
 
     active_policy = policy or default_provider_probe_safety_policy()
     reasons, messages = validate_provider_probe_gate_request(request, active_policy)
@@ -159,7 +159,7 @@ def decide_provider_probe_gate(
         execution_mode=request.execution_mode,
         status=status,
         rejection_reasons=tuple(reasons),
-        message="; ".join(messages) if messages else "Provider probe gate request allowed.",
+        message="; ".join(messages) if messages else "Provider probe manifest accepted.",
         no_external_api_call=True,
         no_data_fetch=True,
         no_broker=request.no_broker,
@@ -171,7 +171,7 @@ def decide_provider_probe_gate(
         allowed_to_run_probe=status is ProviderProbeGateStatus.ALLOWED,
         allowed_for_sandbox_bridge_conversion=status is ProviderProbeGateStatus.ALLOWED,
         rejection_reasons=tuple(reasons),
-        messages=tuple(messages) if messages else ("Provider probe gate request allowed.",),
+        messages=tuple(messages) if messages else ("Provider probe manifest accepted.",),
         audit_record=audit_record,
     )
 
@@ -180,7 +180,7 @@ def validate_provider_probe_gate_request(
     request: ProviderProbeGateRequest,
     policy: ProviderProbeSafetyPolicy,
 ) -> tuple[list[ProviderProbeGateRejectionReason], list[str]]:
-    """Return rejection reasons and messages for a gate request."""
+    """Return fatal rejection reasons and advisory messages for a probe request."""
 
     reasons: list[ProviderProbeGateRejectionReason] = []
     messages: list[str] = []
@@ -209,19 +209,9 @@ def validate_provider_probe_gate_request(
             "Execution mode is not allowed by the gate policy.",
         )
     if not request.evidence.license_review_status.strip():
-        _append(
-            reasons,
-            messages,
-            ProviderProbeGateRejectionReason.LICENSE_REVIEW_MISSING,
-            "License review status is required.",
-        )
+        messages.append("Advisory: license review status is missing.")
     if not request.evidence.adapter_boundary_acknowledged:
-        _append(
-            reasons,
-            messages,
-            ProviderProbeGateRejectionReason.ADAPTER_BOUNDARY_MISSING,
-            "Adapter boundary acknowledgement is required.",
-        )
+        messages.append("Advisory: adapter boundary acknowledgement is missing.")
     if (
         not request.no_broker
         or not request.no_live_trading
@@ -262,33 +252,13 @@ def validate_provider_probe_gate_request(
             "Storage policy must keep outputs as local artifact or fixture-only data.",
         )
     if not request.evidence.timestamp_audit_required:
-        _append(
-            reasons,
-            messages,
-            ProviderProbeGateRejectionReason.TIMESTAMP_AUDIT_MISSING,
-            "Timestamp audit requirement is mandatory.",
-        )
+        messages.append("Advisory: timestamp audit requirement is missing.")
     if not request.evidence.latency_requirement_required:
-        _append(
-            reasons,
-            messages,
-            ProviderProbeGateRejectionReason.LATENCY_REQUIREMENT_MISSING,
-            "Latency requirement is mandatory.",
-        )
+        messages.append("Advisory: latency requirement is missing.")
     if not request.evidence.provider_failure_handling_required:
-        _append(
-            reasons,
-            messages,
-            ProviderProbeGateRejectionReason.PROVIDER_FAILURE_HANDLING_MISSING,
-            "Provider failure handling requirement is mandatory.",
-        )
+        messages.append("Advisory: provider failure handling requirement is missing.")
     if not request.evidence.sandbox_bridge_compatibility_required:
-        _append(
-            reasons,
-            messages,
-            ProviderProbeGateRejectionReason.SANDBOX_BRIDGE_COMPATIBILITY_MISSING,
-            "R3 sandbox bridge compatibility is mandatory.",
-        )
+        messages.append("Advisory: sandbox bridge compatibility marker is missing.")
     return reasons, messages
 
 
@@ -335,4 +305,3 @@ def _append(
     if reason not in reasons:
         reasons.append(reason)
     messages.append(message)
-

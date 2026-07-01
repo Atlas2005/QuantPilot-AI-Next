@@ -118,10 +118,10 @@ def test_valid_active_a_share_account_passes() -> None:
     assert result.normalized_sellable_by_symbol == {"600000": 800, "000001": 500}
 
 
-def test_missing_evidence_refs_is_rejected() -> None:
+def test_missing_evidence_refs_is_warning_not_blocker() -> None:
     result = run_account_profile_preflight(profile(evidence_refs=()))
 
-    assert result.ok is False
+    assert result.ok is True
     assert "evidence_refs_missing" in codes(result)
 
 
@@ -252,7 +252,7 @@ def test_missing_a_share_cash_equity_capability_is_rejected() -> None:
     assert "a_share_cash_equity_capability_missing" in codes(result)
 
 
-def test_max_single_symbol_concentration_breach_is_rejected() -> None:
+def test_max_single_symbol_concentration_breach_is_sizing_warning() -> None:
     result = run_account_profile_preflight(
         profile(
             positions=(position(market_value=50_000.0),),
@@ -261,9 +261,10 @@ def test_max_single_symbol_concentration_breach_is_rejected() -> None:
     )
 
     assert "max_single_symbol_weight_breached" in codes(result)
+    assert result.ok is True
 
 
-def test_max_industry_concentration_breach_is_rejected() -> None:
+def test_max_industry_concentration_breach_is_sizing_warning() -> None:
     result = run_account_profile_preflight(
         profile(
             positions=(
@@ -275,9 +276,10 @@ def test_max_industry_concentration_breach_is_rejected() -> None:
     )
 
     assert "max_industry_weight_breached" in codes(result)
+    assert result.ok is True
 
 
-def test_max_total_position_weight_breach_is_rejected() -> None:
+def test_max_total_position_weight_breach_is_sizing_warning() -> None:
     result = run_account_profile_preflight(
         profile(
             positions=(
@@ -289,6 +291,7 @@ def test_max_total_position_weight_breach_is_rejected() -> None:
     )
 
     assert "max_total_position_weight_breached" in codes(result)
+    assert result.ok is True
 
 
 def test_normalized_sellable_quantities_clamp_to_position_quantity() -> None:

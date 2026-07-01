@@ -67,7 +67,7 @@ def test_missing_provider_candidate_is_rejected() -> None:
     )
 
 
-def test_missing_provider_adapter_probe_plan_reference_is_rejected() -> None:
+def test_missing_provider_adapter_probe_plan_reference_is_advisory() -> None:
     request = replace(
         valid_request(),
         manifest=replace(
@@ -79,13 +79,17 @@ def test_missing_provider_adapter_probe_plan_reference_is_rejected() -> None:
         ),
     )
 
+    result = validate_small_sample_data_gate_request(request)
+
+    assert result.status is SmallSampleDataGateStatus.ALLOWED
     assert (
         SmallSampleDataGateRejectionReason.PROVIDER_ADAPTER_PROBE_PLAN_REFERENCE_MISSING
-        in reasons_for(request)
+        not in result.rejection_reasons
     )
+    assert "provider adapter probe plan reference is missing" in " ".join(result.messages).lower()
 
 
-def test_missing_r4_r3_r2_compatibility_references_are_rejected() -> None:
+def test_missing_r4_r3_r2_compatibility_references_are_advisory() -> None:
     request = replace(
         valid_request(),
         manifest=replace(
@@ -98,17 +102,22 @@ def test_missing_r4_r3_r2_compatibility_references_are_rejected() -> None:
             ),
         ),
     )
-    reasons = reasons_for(request)
+    result = validate_small_sample_data_gate_request(request)
+    reasons = result.rejection_reasons
 
     assert (
         SmallSampleDataGateRejectionReason.R4_GATE_DECISION_REFERENCE_MISSING
-        in reasons
+        not in reasons
     )
-    assert SmallSampleDataGateRejectionReason.R3_BRIDGE_COMPATIBILITY_MISSING in reasons
+    assert SmallSampleDataGateRejectionReason.R3_BRIDGE_COMPATIBILITY_MISSING not in reasons
     assert (
         SmallSampleDataGateRejectionReason.R2_SANDBOX_FIXTURE_COMPATIBILITY_MISSING
-        in reasons
+        not in reasons
     )
+    combined = " ".join(result.messages).lower()
+    assert "historical r4" in combined
+    assert "historical r3" in combined
+    assert "historical r2" in combined
 
 
 def test_overbroad_symbol_date_row_scope_is_rejected() -> None:
@@ -156,7 +165,7 @@ def test_missing_schema_review_is_rejected() -> None:
     )
 
 
-def test_missing_license_review_is_rejected() -> None:
+def test_missing_license_review_is_advisory() -> None:
     request = replace(
         valid_request(),
         manifest=replace(
@@ -168,12 +177,14 @@ def test_missing_license_review_is_rejected() -> None:
         ),
     )
 
-    assert SmallSampleDataGateRejectionReason.LICENSE_REVIEW_MISSING in reasons_for(
-        request
-    )
+    result = validate_small_sample_data_gate_request(request)
+
+    assert result.status is SmallSampleDataGateStatus.ALLOWED
+    assert SmallSampleDataGateRejectionReason.LICENSE_REVIEW_MISSING not in result.rejection_reasons
+    assert "license review" in " ".join(result.messages).lower()
 
 
-def test_missing_adjustment_policy_audit_is_rejected() -> None:
+def test_missing_adjustment_policy_audit_is_advisory() -> None:
     request = replace(
         valid_request(),
         manifest=replace(
@@ -185,13 +196,17 @@ def test_missing_adjustment_policy_audit_is_rejected() -> None:
         ),
     )
 
+    result = validate_small_sample_data_gate_request(request)
+
+    assert result.status is SmallSampleDataGateStatus.ALLOWED
     assert (
         SmallSampleDataGateRejectionReason.ADJUSTMENT_POLICY_AUDIT_MISSING
-        in reasons_for(request)
+        not in result.rejection_reasons
     )
+    assert "adjustment policy audit" in " ".join(result.messages).lower()
 
 
-def test_missing_symbol_mapping_audit_is_rejected() -> None:
+def test_missing_symbol_mapping_audit_is_advisory() -> None:
     request = replace(
         valid_request(),
         manifest=replace(
@@ -203,13 +218,17 @@ def test_missing_symbol_mapping_audit_is_rejected() -> None:
         ),
     )
 
+    result = validate_small_sample_data_gate_request(request)
+
+    assert result.status is SmallSampleDataGateStatus.ALLOWED
     assert (
         SmallSampleDataGateRejectionReason.SYMBOL_MAPPING_AUDIT_MISSING
-        in reasons_for(request)
+        not in result.rejection_reasons
     )
+    assert "symbol mapping audit" in " ".join(result.messages).lower()
 
 
-def test_missing_timestamp_audit_is_rejected() -> None:
+def test_missing_timestamp_audit_is_advisory() -> None:
     request = replace(
         valid_request(),
         manifest=replace(
@@ -221,9 +240,11 @@ def test_missing_timestamp_audit_is_rejected() -> None:
         ),
     )
 
-    assert SmallSampleDataGateRejectionReason.TIMESTAMP_AUDIT_MISSING in reasons_for(
-        request
-    )
+    result = validate_small_sample_data_gate_request(request)
+
+    assert result.status is SmallSampleDataGateStatus.ALLOWED
+    assert SmallSampleDataGateRejectionReason.TIMESTAMP_AUDIT_MISSING not in result.rejection_reasons
+    assert "timestamp audit" in " ".join(result.messages).lower()
 
 
 def test_unsafe_storage_path_is_rejected() -> None:

@@ -138,7 +138,7 @@ def test_sell_applies_negative_slippage() -> None:
     assert apply_a_share_slippage(PaperOrderSide.SELL, 10.0, 0.0005) == 9.995
 
 
-def test_gate_failure_rejects_before_order_execution() -> None:
+def test_unusable_market_sample_rejects_before_order_execution() -> None:
     result = run_a_share_constrained_paper_order(
         PaperLedgerAccount(cash=2000.0),
         buy_order(quantity=50),
@@ -146,7 +146,7 @@ def test_gate_failure_rejects_before_order_execution() -> None:
     )
 
     assert result.status is PaperLedgerStatus.NO_GATE_PASS
-    assert result.reasons == ("gate_not_passed",)
+    assert result.reasons == ("market_sample_unusable",)
     assert result.position_after == 0
 
 

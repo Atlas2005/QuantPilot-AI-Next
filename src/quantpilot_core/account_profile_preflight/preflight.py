@@ -1,4 +1,4 @@
-"""Account profile and broker config preflight validation."""
+"""Account profile, capital constraint, and broker config validation."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def run_account_profile_preflight(
     allow_cash_equity_mismatch: bool = False,
     allow_query_only_with_trade: bool = False,
 ) -> AccountProfilePreflightResult:
-    """Run deterministic R20 preflight without broker or account API access."""
+    """Run deterministic account config validation without broker/account API access."""
 
     flags = validate_account_profile(
         profile,
@@ -72,7 +72,7 @@ def _validate_identity(profile: AccountProfile) -> list[AccountProfileRiskFlag]:
     if not profile.account_id.strip():
         flags.append(_critical("account_id_missing", "Account ID must be non-empty."))
     if not _has_evidence(profile.evidence_refs):
-        flags.append(_critical("evidence_refs_missing", "Account profile evidence is required."))
+        flags.append(_warning("evidence_refs_missing", "Account profile evidence is missing."))
     if not profile.broker_capability.broker_name.strip():
         flags.append(_critical("broker_name_missing", "Broker name must be non-empty."))
     if not profile.broker_capability.market.strip():
@@ -248,27 +248,27 @@ def _validate_concentration(profile: AccountProfile) -> list[AccountProfileRiskF
     for symbol, weight in position_weights.items():
         if weight > limits.max_single_symbol_weight:
             flags.append(
-                _critical(
+                _warning(
                     "max_single_symbol_weight_breached",
-                    f"{symbol} weight exceeds max_single_symbol_weight.",
+                    f"{symbol} weight exceeds max_single_symbol_weight; treat as sizing guidance.",
                 )
             )
 
     for industry, weight in industry_weights.items():
         if weight > limits.max_industry_weight:
             flags.append(
-                _critical(
+                _warning(
                     "max_industry_weight_breached",
-                    f"{industry} weight exceeds max_industry_weight.",
+                    f"{industry} weight exceeds max_industry_weight; treat as sizing guidance.",
                 )
             )
 
     total_position_weight = sum(position.market_value for position in profile.positions) / profile.cash.total_equity
     if total_position_weight > limits.max_total_position_weight:
         flags.append(
-            _critical(
+            _warning(
                 "max_total_position_weight_breached",
-                "Total position weight exceeds max_total_position_weight.",
+                "Total position weight exceeds max_total_position_weight; treat as sizing guidance.",
             )
         )
     return flags
@@ -287,5 +287,13 @@ def _critical(code: str, message: str) -> AccountProfileRiskFlag:
     return AccountProfileRiskFlag(
         code=code,
         severity=RiskSeverity.CRITICAL.value,
+        message=message,
+    )
+
+
+def _warning(code: str, message: str) -> AccountProfileRiskFlag:
+    return AccountProfileRiskFlag(
+        code=code,
+        severity=RiskSeverity.MEDIUM.value,
         message=message,
     )

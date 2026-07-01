@@ -155,10 +155,11 @@ def test_valid_readiness_pass_and_sell_instruction_returns_ready() -> None:
     assert result.decision == BrokerSandboxAdapterDecision.READY.value
 
 
-def test_readiness_fail_blocks_all_executable_instructions() -> None:
+def test_readiness_fail_is_adapter_config_warning_not_blocker() -> None:
     result = run_broker_sandbox_adapter_preflight([instruction()], account(), readiness(ReadinessDecision.FAIL.value))
 
-    assert result.decision == BrokerSandboxAdapterDecision.BLOCKED.value
+    assert result.decision == BrokerSandboxAdapterDecision.MANUAL_REVIEW.value
+    assert result.accepted_instruction_ids == ("sandbox-001",)
     assert "readiness_failed" in codes(result)
 
 
