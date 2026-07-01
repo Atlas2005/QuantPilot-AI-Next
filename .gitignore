@@ -35,3 +35,6 @@ local_artifacts/
 review_packets/
 *.DS_Store
 .DS_Store
+
+# Local external runtime trials
+.external/
