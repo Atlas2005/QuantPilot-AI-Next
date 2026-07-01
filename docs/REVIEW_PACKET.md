@@ -2,26 +2,27 @@
 
 ## Task Name
 
-P40: AI + Open-Source Provider Small Sample Mixed ETF Replay.
+P41: Qlib Real Offline Workflow Spike.
 
 ## Changed Files
 
-- `docs/AI_OPEN_SOURCE_PROVIDER_SMALL_SAMPLE_MIXED_ETF_REPLAY.md`
+- `docs/QLIB_REAL_OFFLINE_WORKFLOW_SPIKE.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/ai_open_source_provider_small_sample_mixed_etf_replay/__init__.py`
-- `src/quantpilot_core/ai_open_source_provider_small_sample_mixed_etf_replay/ai_shadow_agents.py`
-- `src/quantpilot_core/ai_open_source_provider_small_sample_mixed_etf_replay/comparison.py`
-- `src/quantpilot_core/ai_open_source_provider_small_sample_mixed_etf_replay/contracts.py`
-- `src/quantpilot_core/ai_open_source_provider_small_sample_mixed_etf_replay/open_source_provider_bridge.py`
-- `src/quantpilot_core/ai_open_source_provider_small_sample_mixed_etf_replay/replay_adjustment.py`
-- `src/quantpilot_core/ai_open_source_provider_small_sample_mixed_etf_replay/report.py`
-- `tests/ai_open_source_provider_small_sample_mixed_etf_replay/test_ai_open_source_provider_small_sample_mixed_etf_replay.py`
+- `src/quantpilot_core/qlib_real_offline_workflow_spike/__init__.py`
+- `src/quantpilot_core/qlib_real_offline_workflow_spike/comparison.py`
+- `src/quantpilot_core/qlib_real_offline_workflow_spike/contracts.py`
+- `src/quantpilot_core/qlib_real_offline_workflow_spike/dataset_bridge.py`
+- `src/quantpilot_core/qlib_real_offline_workflow_spike/evaluation.py`
+- `src/quantpilot_core/qlib_real_offline_workflow_spike/factor_mapping.py`
+- `src/quantpilot_core/qlib_real_offline_workflow_spike/report.py`
+- `src/quantpilot_core/qlib_real_offline_workflow_spike/workflow_config.py`
+- `tests/qlib_real_offline_workflow_spike/test_qlib_real_offline_workflow_spike.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only P40 open-source provider boundary, AI shadow agents, replay adjustment, comparison, and report chain.
-- Tests changed: Yes. Added deterministic P40 tests.
-- Documentation changed: Yes. Added P40 documentation and updated this review packet.
+- `src/` changed: Yes. Added standard-library-only P41 Qlib-style local dataset, workflow config, factor mapping, evaluation, comparison, and report boundary.
+- Tests changed: Yes. Added deterministic P41 tests.
+- Documentation changed: Yes. Added P41 documentation and updated this review packet.
 - Dependencies changed: No.
 - Packages installed: No.
 - Packages uninstalled: No.
@@ -44,75 +45,47 @@ P40: AI + Open-Source Provider Small Sample Mixed ETF Replay.
 - Live order path added: No.
 - Real order placement added: No.
 - Qlib runtime run by default: No.
-- RQAlpha runtime run by default: No.
+- qrun run by default: No.
+- Qlib required for default pytest: No.
 - Real alpha evidence produced: No.
 - Profitability claim made: No.
 - Generic preflight-only gate added: No.
 
 ## Value Orientation
 
-P40 brings AI shadow decisioning and open-source provider boundaries into the mixed stock+ETF paper replay chain.
+P41 moves Qlib from metadata-only handoff to a Qlib-style offline workflow spike.
 
-It models approved local exports from AkShare, BaoStock, and manual approved exports, runs deterministic AI shadow-agent recommendations, applies bounded replay adjustments, and creates Qlib/RQAlpha handoff metadata without calling live runtimes.
+It builds glue around Qlib boundaries instead of reinventing Qlib: local dataset spec, workflow config, factor candidates, deterministic offline evaluation, optional runtime status, and comparison against the P40 AI-shadow-adjusted mixed ETF replay baseline.
 
 ## Open-Source Integration Summary
 
-- AkShare boundary modeled as approved local export schema.
-- BaoStock boundary modeled as approved local export schema.
-- Manual approved export boundary modeled.
-- Provider schema mapping is explicit.
-- Qlib offline AI quant backtest handoff metadata is produced.
-- RQAlpha later event-driven backtest handoff metadata is produced.
-- No optional provider or backtest package is required for default tests.
+- Qlib is the primary external framework boundary for this stage.
+- Qlib remains optional and is not required for default tests.
+- qrun is disabled by default.
+- Dataset/workflow metadata is structured for later optional runtime execution.
+- P41 does not install dependencies or run a real Qlib backtest.
 
-## AI Shadow Agent Summary
+## Qlib Runtime Status Summary
 
-P40 deterministic shadow agents cover:
+Default behavior reports optional runtime status explicitly and keeps runtime execution disabled by default. If Qlib is unavailable, P41 reports `UNAVAILABLE_OPTIONAL_DEPENDENCY` while default tests still pass.
 
-- market data quality
-- alpha research
-- ETF selection
-- sizing/capital
-- cost/execution
-- portfolio manager
-- meta reviewer
+## Dataset / Workflow / Factor / Evaluation Summary
 
-The meta reviewer blocks unsafe recommendations such as unsupported profitability claims, live trading suggestions, broker connection suggestions, cost-blind suggestions, sample-quality bypass, and market-rule bypass.
+- Dataset bridge validates mixed A-share stock and ETF coverage, explicit instrument kind, ETF category, OHLCV fields, date uniqueness, future rows, close/volume, and deterministic date normalization.
+- Workflow config includes dataset, universe, benchmark, label placeholder, factor list, train/validation/test placeholders, cost model assumptions, execution assumptions, runtime status, and disabled-by-default runtime flag.
+- Factor mapping creates momentum, volatility, liquidity, cost drag, ETF category, capital fit, and AI shadow preference proxies.
+- Offline evaluation computes candidate, cost-adjusted, tradability, and small-capital fit scores without claiming real profitability.
 
-## AI-Adjusted Replay Impact Summary
+## Comparison Against P40
 
-The AI shadow adjustment plan:
-
-- prefers mixed stock+ETF universe
-- uses bounded position-size multiplier
-- adjusts ETF preference within bounds
-- preserves cost-after-fill and sample-validation checks
-- rejects forbidden adjustments
-- computes fill-rate, zero-trade, capital-usage, cost-drag, net-PnL, turnover, and ETF-weight deltas
-
-## Qlib/RQAlpha Handoff Summary
-
-P40 creates metadata-only handoffs for:
-
-- Qlib next-stage offline AI quant backtest
-- RQAlpha later event-driven backtest
-
-Both handoffs keep runtime execution disabled by default and include sample identifier, provider name, field mapping, calendar assumptions, cost model assumptions, benchmark candidate, alpha feature candidates, execution assumptions, and known limitations.
-
-## Capital Path Suitability Summary
-
-P40 reuses the P39 mixed ETF replay and keeps capital-stage suitability visible for:
-
-- `1000` CNY stage
-- `10000` CNY stage
-- `100000` CNY stage
+P41 compares Qlib-style offline evaluation with the P40 AI-shadow-adjusted mixed ETF replay baseline and reports mixed stock+ETF support, factor alignment, cost-aware agreement, optional runtime readiness, and promotion blockers.
 
 ## Safety Barrier Status
 
 - Pre-P34 estimated barrier: `185.0%`
-- P34 through P40 active barrier: `140.0%`
+- P34 through P41 active barrier: `140.0%`
 - Target: `<= 140%`
-- P40 does not raise the safety barrier. It adds AI shadow and open-source boundaries to the replay chain under the pruned gate set.
+- P41 does not raise the safety barrier. It advances Qlib integration through offline workflow glue under the pruned gate set.
 
 ## Validation Commands and Results
 
@@ -120,14 +93,14 @@ P40 reuses the P39 mixed ETF replay and keeps capital-stage suitability visible 
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/ai_open_source_provider_small_sample_mixed_etf_replay`
+`.venv/bin/python -m pytest tests/qlib_real_offline_workflow_spike`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 28 items
-28 passed in 0.05s
+collected 26 items
+26 passed in 0.04s
 ```
 
 `.venv/bin/python -m pytest`
@@ -136,31 +109,33 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 778 items
-778 passed in 0.39s
+collected 804 items
+804 passed in 0.40s
 ```
 
-## P40 Summary
+## P41 Summary
 
-P40 validates approved local provider-export style data, models AkShare/BaoStock/manual export boundaries, generates deterministic AI shadow recommendations, meta-reviews unsafe recommendations, applies bounded replay adjustments, compares adjusted replay metrics, and emits Qlib/RQAlpha handoff metadata.
+P41 adds a Qlib-style local dataset bridge, workflow config metadata, factor candidate mapping, deterministic offline evaluation, comparison against P40 AI-shadow-adjusted replay, and report generation.
 
 ## Risks
 
-- P40 uses deterministic local exports only; it does not approve live trading.
-- AI shadow outputs are deterministic local stand-ins, not real model judgments.
-- Qlib/RQAlpha handoffs are metadata-only and do not run those frameworks.
-- Provider export quality must improve before any larger paper loop uses real samples.
+- P41 is not a real Qlib backtest.
+- Optional Qlib dependency is not installed or required.
+- qrun is disabled by default.
+- Scores are deterministic workflow-readiness proxies, not real alpha evidence.
+- Provider sample quality and factor quality still need larger approved samples.
 
 ## Recommended Next Step
 
-Use P40 handoffs to run the next controlled offline Qlib-compatible evaluation stage, while improving approved provider-export quality and AI alpha proposal quality.
+Install an isolated optional Qlib environment outside default pytest and run a controlled manual Qlib runtime spike using the P41 dataset/workflow metadata.
 
 ## Code Evidence Snapshot
 
-- `contracts.py`: defines provider boundary, AI shadow, replay adjustment, adjusted replay, backtest handoff, and report contracts.
-- `open_source_provider_bridge.py`: validates approved local exports, explicit schema mappings, coverage, OHLCV fields, approval metadata, and source safety.
-- `ai_shadow_agents.py`: generates deterministic structured shadow-agent recommendations and meta-review blocks unsafe recommendations.
-- `replay_adjustment.py`: converts AI recommendations into bounded replay adjustments and computes adjusted replay metric deltas.
-- `comparison.py`: creates Qlib/RQAlpha handoff metadata and adjusted replay impact summaries.
-- `report.py`: builds the P40 report, keeps safety barrier at `<= 140%`, and selects the next improvement target.
-- `tests`: cover provider boundaries, approval metadata, schema and OHLCV validation, AI roles, meta-review blocking, bounded adjustments, replay deltas, Qlib/RQAlpha handoffs, safety barrier, deterministic ordering, and forbidden runtime behavior.
+- `contracts.py`: defines runtime status, dataset source, instrument kind, dataset spec, field mapping, factor, workflow, evaluation, comparison, and report contracts.
+- `dataset_bridge.py`: validates and normalizes local mixed stock/ETF records into a Qlib-style dataset spec.
+- `workflow_config.py`: builds Qlib-style workflow metadata and detects optional runtime status without requiring Qlib.
+- `factor_mapping.py`: maps existing alpha/AI/replay concepts into Qlib-style factor candidates with leakage-control notes.
+- `evaluation.py`: computes deterministic offline proxy scores and avoids profitability claims.
+- `comparison.py`: compares P41 evaluation with P40 AI-adjusted replay and reports promotion blockers.
+- `report.py`: builds the P41 report, keeps safety barrier at `<= 140%`, and selects the next improvement target.
+- `tests`: cover dataset validation, workflow config, runtime status, factor mapping, offline evaluation, P40 comparison, promotion blockers, safety barrier, deterministic ordering, and forbidden runtime behavior.
