@@ -258,7 +258,12 @@ def test_default_inventories_cover_required_r30_surface() -> None:
     documents = {record.document_path for record in default_required_documents()}
     forbidden = default_forbidden_scope_checks()
 
-    assert "quantpilot_core.qlib_evaluation_preflight" in modules
-    assert "quantpilot_core.stats_agent_factor_metrics_preflight" in modules
-    assert "docs/QLIB_EVALUATION_PREFLIGHT.md" in documents
+    assert "quantpilot_core.qlib_evaluation_preflight" not in modules
+    assert "quantpilot_core.rqalpha_adapter_preflight" not in modules
+    assert "quantpilot_core.multi_agent_orchestrator_preflight" not in modules
+    assert "quantpilot_core.news_event_agent_preflight" not in modules
+    assert "quantpilot_core.stats_agent_factor_metrics_preflight" not in modules
+    assert "quantpilot_core.performance_attribution_preflight" not in modules
+    assert "docs/QLIB_EVALUATION_PREFLIGHT.md" not in documents
+    assert "docs/PERFORMANCE_ATTRIBUTION_FLYWHEEL_PREFLIGHT.md" not in documents
     assert forbidden and forbidden[0].forbidden_terms
