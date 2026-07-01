@@ -2,26 +2,26 @@
 
 ## Task Name
 
-P42: Controlled Optional Qlib Runtime Spike.
+P43: Isolated Manual Qlib Runtime Trial Runbook.
 
 ## Changed Files
 
-- `docs/CONTROLLED_OPTIONAL_QLIB_RUNTIME_SPIKE.md`
+- `docs/ISOLATED_MANUAL_QLIB_RUNTIME_TRIAL_RUNBOOK.md`
 - `docs/REVIEW_PACKET.md`
-- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/__init__.py`
-- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/comparison.py`
-- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/contracts.py`
-- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/execution_plan.py`
-- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/report.py`
-- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/result_import.py`
-- `src/quantpilot_core/controlled_optional_qlib_runtime_spike/runtime_detection.py`
-- `tests/controlled_optional_qlib_runtime_spike/test_controlled_optional_qlib_runtime_spike.py`
+- `src/quantpilot_core/isolated_manual_qlib_runtime_trial_runbook/__init__.py`
+- `src/quantpilot_core/isolated_manual_qlib_runtime_trial_runbook/artifact_checklist.py`
+- `src/quantpilot_core/isolated_manual_qlib_runtime_trial_runbook/command_plan.py`
+- `src/quantpilot_core/isolated_manual_qlib_runtime_trial_runbook/contracts.py`
+- `src/quantpilot_core/isolated_manual_qlib_runtime_trial_runbook/environment_plan.py`
+- `src/quantpilot_core/isolated_manual_qlib_runtime_trial_runbook/report.py`
+- `src/quantpilot_core/isolated_manual_qlib_runtime_trial_runbook/result_capture.py`
+- `tests/isolated_manual_qlib_runtime_trial_runbook/test_isolated_manual_qlib_runtime_trial_runbook.py`
 
 ## Safety Checks
 
-- `src/` changed: Yes. Added standard-library-only P42 optional runtime detection, manual plan, result import, comparison, and report boundary.
-- Tests changed: Yes. Added deterministic P42 tests.
-- Documentation changed: Yes. Added P42 documentation and updated this review packet.
+- `src/` changed: Yes. Added standard-library-only P43 isolated manual Qlib runbook, checklist, command template, result template, and report boundary.
+- Tests changed: Yes. Added deterministic P43 tests.
+- Documentation changed: Yes. Added P43 runbook documentation and updated this review packet.
 - Dependencies changed: No.
 - Packages installed: No.
 - Packages uninstalled: No.
@@ -52,46 +52,39 @@ P42: Controlled Optional Qlib Runtime Spike.
 
 ## Value Orientation
 
-P42 creates a controlled optional Qlib runtime and result import boundary.
+P43 makes the isolated manual Qlib runtime trial executable without polluting the default project environment.
 
-It advances open-source integration by preparing manual-local Qlib execution and local result import without making the optional dependency required or running qrun by default.
+It converts the P41/P42 metadata boundary into a practical runbook: isolated environment plan, required artifact checklist, manual command templates, and a P42-compatible result capture template.
 
 ## Open-Source Integration Summary
 
-- Qlib remains the primary external framework boundary.
-- Runtime detection checks optional availability without importing Qlib in default tests.
-- Manual execution plan is local-only and user-confirmed.
-- Result import boundary can ingest manually produced local runtime-like records.
-- No dependencies are installed and no runtime execution occurs by default.
+- Qlib remains optional.
+- Installation is documented only and isolated from the default project environment.
+- Default tests do not import Qlib or run qrun.
+- Manual result capture feeds back into the P42 import boundary.
 
-## Qlib Runtime Detection Summary
+## Isolated Environment Plan Summary
 
-P42 reports:
+P43 supports isolated venv, Conda environment, and optional container modes. Each plan preserves the default project environment, avoids dependency-file changes, marks Qlib optional, includes cleanup commands, and records rollback notes.
 
-- unavailable optional dependency when Qlib is absent
-- available but disabled by default when Qlib appears present
-- manual execution only when explicitly requested
+## Artifact Checklist Summary
 
-Network, broker, LLM, and qrun remain disabled by default.
+The checklist covers dataset spec, workflow config, factor mapping, cost model assumptions, execution assumptions, and result record template. Missing required artifacts block manual readiness.
 
-## Manual Execution Plan Summary
+## Manual Command Plan Summary
 
-The plan includes dataset id, workflow config summary, disabled-by-default qrun flag, manual-local-only flag, user confirmation requirement, no-network/no-broker/no-account requirements, result import path placeholder, warnings, and a statement that default pytest does not execute Qlib.
+The command plan provides documentation-only templates for environment creation, optional Qlib installation, dataset preparation, qrun/by-code execution, result export, and result import. Commands are not executed by default and contain no broker/account/credential path.
 
-## Runtime Result Import Summary
+## Result Capture Template Summary
 
-The import boundary validates local source, dataset/workflow match, IC/RankIC or missing reason, cost-aware metric or missing reason, explicit benchmark, mixed stock+ETF coverage, manual/import-only mode, warnings, and absence of profitability claims.
-
-## Comparison Against P41/P40 Summary
-
-P42 compares imported runtime-like records against the P41 offline evaluation proxy and P40 replay metadata, then reports score delta, cost-aware agreement, factor-signal agreement, ETF coverage preservation, and promotion decision.
+The result capture template matches P42 import expectations: local result source, dataset id, workflow config id, benchmark, stock/ETF counts, IC/RankIC placeholders, cost-aware placeholders, import-only execution mode, warnings, and no profitability claim.
 
 ## Safety Barrier Status
 
 - Pre-P34 estimated barrier: `185.0%`
-- P34 through P42 active barrier: `140.0%`
+- P34 through P43 active barrier: `140.0%`
 - Target: `<= 140%`
-- P42 does not raise the safety barrier.
+- P43 does not raise the safety barrier.
 
 ## Validation Commands and Results
 
@@ -99,14 +92,14 @@ P42 compares imported runtime-like records against the P41 offline evaluation pr
 
 Result: passed.
 
-`.venv/bin/python -m pytest tests/controlled_optional_qlib_runtime_spike`
+`.venv/bin/python -m pytest tests/isolated_manual_qlib_runtime_trial_runbook`
 
 Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 26 items
-26 passed in 0.06s
+collected 23 items
+23 passed in 0.04s
 ```
 
 `.venv/bin/python -m pytest`
@@ -115,31 +108,31 @@ Result: passed.
 
 ```text
 platform darwin -- Python 3.12.10, pytest-9.1.1
-collected 830 items
-830 passed in 0.44s
+collected 853 items
+853 passed in 0.47s
 ```
 
-## P42 Summary
+## P43 Summary
 
-P42 adds optional runtime detection, manual Qlib execution planning, local runtime-like result import validation, comparison against P41/P40, and controlled promotion decision logic.
+P43 adds an isolated manual Qlib runtime trial runbook with environment plans, artifact checklist, command templates, result capture template, and readiness report.
 
 ## Risks
 
-- P42 does not execute a real Qlib run.
-- Imported runtime-like records are deterministic local fixtures in tests.
-- Real optional runtime trial still requires a separate environment and manual approval.
-- Scores are not profitability evidence.
+- P43 does not execute a real Qlib run.
+- Installation commands are documentation-only and must be manually executed in isolation.
+- Result metrics are templates until a manual run produces local artifacts.
+- This does not prove profitability.
 
 ## Recommended Next Step
 
-Prepare an isolated optional Qlib environment and manually generate a local runtime result record for import through the P42 boundary.
+Manually run Qlib in an isolated environment, export the local result record, and import it through the P42 boundary.
 
 ## Code Evidence Snapshot
 
-- `contracts.py`: defines optional runtime state, execution mode, detection, plan, result import, comparison, and report contracts.
-- `runtime_detection.py`: detects optional availability without importing Qlib and keeps default execution disabled.
-- `execution_plan.py`: builds a local-only, user-confirmed manual plan with qrun disabled by default.
-- `result_import.py`: validates local runtime-like records and rejects mismatches, missing metrics, missing benchmark, unsafe execution modes, and profitability claims.
-- `comparison.py`: compares imported records against P41/P40 direction and computes promotion decisions.
-- `report.py`: builds the P42 report, keeps safety barrier at `<= 140%`, and selects next improvement target.
-- `tests`: cover runtime detection, manual plan, result import validation, comparison, promotion decisions, safety barrier, deterministic ordering, and forbidden runtime behavior.
+- `contracts.py`: defines environment, execution status, artifact kinds, environment plan, checklist, command plan, result template, and report contracts.
+- `environment_plan.py`: builds isolated venv/Conda/container plans while preserving default env and project dependency files.
+- `artifact_checklist.py`: builds required artifact checklist and blockers.
+- `command_plan.py`: creates documentation-only command templates with qrun not executed by default.
+- `result_capture.py`: creates P42-compatible local result capture template with profitability claim false.
+- `report.py`: builds readiness report and next-step guidance.
+- `tests`: cover environment plans, unchanged defaults, artifact checklist, missing artifact blockers, command safety, result template compatibility, readiness states, safety barrier, deterministic ordering, and forbidden runtime behavior.
