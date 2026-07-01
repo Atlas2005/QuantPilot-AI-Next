@@ -85,6 +85,7 @@ def test_src_does_not_contain_forbidden_scope_patterns() -> None:
                 ("quantpilot_core", "vectorbt_replay_adapter"),
                 ("quantpilot_core", "vectorbt_replay_comparison"),
                 ("quantpilot_core", "vectorbt_old_chain_metrics_comparison"),
+                ("quantpilot_core", "provider_vectorbt_replay"),
             } and pattern in {
                 "import vectorbt",
                 "from vectorbt",

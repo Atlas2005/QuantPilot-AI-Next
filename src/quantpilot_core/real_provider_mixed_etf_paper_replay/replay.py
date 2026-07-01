@@ -1,4 +1,4 @@
-"""Provider-like sample replay for P39."""
+"""Legacy provider replay for P39 reference compatibility."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from quantpilot_core.real_provider_mixed_etf_paper_replay.sample_bridge import (
 def replay_provider_mixed_etf_sample(
     replay_input: RealProviderReplayInput,
 ) -> ProviderReplayResult:
-    """Replay accepted local provider-like mixed stock/ETF samples through P36."""
+    """Replay accepted samples through the legacy P36 path for compatibility."""
 
     validation = validate_provider_mixed_universe_sample(replay_input)
     if not validation.ok or validation.sample is None:

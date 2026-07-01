@@ -1,4 +1,4 @@
-"""Report builder for P39 provider-like mixed ETF paper replay."""
+"""Report builder for the legacy P39 provider replay path."""
 
 from __future__ import annotations
 
@@ -23,7 +23,10 @@ def build_provider_mixed_etf_replay_report(
     *,
     safety_barrier_percent: float = 140.0,
 ) -> ProviderMixedEtfReplayReport:
-    """Build the P39 provider-like mixed stock/ETF replay report."""
+    """Build the legacy P39 provider-like replay report for reference compatibility.
+
+    Prefer `quantpilot_core.provider_vectorbt_replay` for provider replay.
+    """
 
     provider_replay = replay_provider_mixed_etf_sample(replay_input)
     baseline = build_mixed_stock_etf_comparison_report()

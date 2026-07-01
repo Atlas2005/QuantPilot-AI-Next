@@ -1,4 +1,4 @@
-"""P39 real-provider-like mixed stock/ETF paper replay."""
+"""Legacy P39 provider replay path kept for reference compatibility."""
 
 from quantpilot_core.real_provider_mixed_etf_paper_replay.comparison import (
     compare_provider_replay_to_p38_baseline,
