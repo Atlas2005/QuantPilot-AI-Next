@@ -73,7 +73,10 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
     registry = build_default_tool_registry()
 
     assert registry.list_names() == (
+        "build_execution_candidate",
+        "build_execution_candidate_report",
         "build_information_decision_report",
+        "build_portfolio_allocation_plan",
         "build_research_committee_report",
         "cross_check_normalized_provider_frames",
         "normalize_announcement_events_frame",
@@ -101,9 +104,11 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
         "run_moneyflow_structure_agent",
         "run_news_impact_agent",
         "run_northbound_flow_agent",
+        "run_quant_firm_decision_cycle",
         "run_shareholder_dividend_agent",
         "run_valuation_agent",
         "run_vectorbt_signal_backtest",
+        "signal_artifact_to_vbt3_signal_frame",
     )
     assert all(tool.side_effect_level is ToolSideEffectLevel.PURE_IN_MEMORY for tool in registry.list_tools())
     assert [field.name for field in fields(ToolExecutionResult)] == [
@@ -125,10 +130,15 @@ def test_default_registry_prefers_mature_replacement_path_over_legacy_blockers()
         "normalize_tushare_daily_frame",
         "normalized_ohlcv_to_vbt3_signal_frame",
         "qlib_signal_artifact_to_vbt3_signal_frame",
+        "signal_artifact_to_vbt3_signal_frame",
         "build_information_decision_report",
+        "build_portfolio_allocation_plan",
         "build_research_committee_report",
+        "build_execution_candidate",
+        "build_execution_candidate_report",
         "rank_research_candidates",
         "replay_provider_signals_with_vectorbt",
+        "run_quant_firm_decision_cycle",
         "run_vectorbt_signal_backtest",
     } <= names
 

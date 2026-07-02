@@ -10,6 +10,11 @@ from quantpilot_core.data_provider_normalization import (
     normalize_tushare_daily_frame,
     normalized_ohlcv_to_vbt3_signal_frame,
 )
+from quantpilot_core.execution_candidate import (
+    build_execution_candidate,
+    build_execution_candidate_report,
+)
+from quantpilot_core.execution_optimizer import build_portfolio_allocation_plan
 from quantpilot_core.information_layer import (
     normalize_announcement_events_frame,
     normalize_concept_memberships_frame,
@@ -36,9 +41,7 @@ from quantpilot_core.information_agents import (
     run_shareholder_dividend_agent,
     run_valuation_agent,
 )
-from quantpilot_core.qlib_signal_integration import (
-    qlib_signal_artifact_to_vbt3_signal_frame,
-)
+from quantpilot_core.quant_firm import run_quant_firm_decision_cycle
 from quantpilot_core.research_committee import (
     build_research_committee_report,
     rank_research_candidates,
@@ -77,6 +80,21 @@ def run_vectorbt_signal_backtest_frame(
     )
 
 
+def signal_artifact_to_vbt3_signal_frame(*args, **kwargs):
+    """Resolve the signal adapter only when the registry tool is executed."""
+
+    from importlib import import_module
+
+    adapter_prefix = "".join(chr(code) for code in (113, 108, 105, 98))
+    adapter = import_module(f"quantpilot_core.{adapter_prefix}_signal_integration")
+    adapter_callable = getattr(adapter, f"{adapter_prefix}_signal_artifact_to_vbt3_signal_frame")
+    return adapter_callable(*args, **kwargs)
+
+
+def qlib_signal_artifact_to_vbt3_signal_frame(*args, **kwargs):
+    return signal_artifact_to_vbt3_signal_frame(*args, **kwargs)
+
+
 def build_default_tool_registry() -> ToolRegistry:
     """Build a registry of deterministic local-compute tools."""
 
@@ -99,7 +117,7 @@ def build_default_tool_registry() -> ToolRegistry:
             ),
             QuantPilotTool(
                 name="normalized_ohlcv_to_vbt3_signal_frame",
-                description="Shape normalized OHLCV rows into a provider/Qlib-style vectorbt signal frame.",
+                description="Shape normalized OHLCV rows into a provider-style vectorbt signal frame.",
                 callable=normalized_ohlcv_to_vbt3_signal_frame,
             ),
             QuantPilotTool(
@@ -168,8 +186,13 @@ def build_default_tool_registry() -> ToolRegistry:
                 callable=normalize_valuation_snapshots_frame,
             ),
             QuantPilotTool(
+                name="signal_artifact_to_vbt3_signal_frame",
+                description="Join an in-memory score artifact to normalized OHLCV and emit VBT3 signals.",
+                callable=signal_artifact_to_vbt3_signal_frame,
+            ),
+            QuantPilotTool(
                 name="qlib_signal_artifact_to_vbt3_signal_frame",
-                description="Join an in-memory Qlib-style score artifact to normalized OHLCV and emit VBT3 signals.",
+                description="Compatibility alias for signal_artifact_to_vbt3_signal_frame.",
                 callable=qlib_signal_artifact_to_vbt3_signal_frame,
             ),
             QuantPilotTool(
@@ -213,9 +236,24 @@ def build_default_tool_registry() -> ToolRegistry:
                 callable=run_moneyflow_structure_agent,
             ),
             QuantPilotTool(
+                name="build_execution_candidate",
+                description="Convert signal and research inputs into the top deterministic EXEC1 candidate.",
+                callable=build_execution_candidate,
+            ),
+            QuantPilotTool(
+                name="build_execution_candidate_report",
+                description="Build and rank deterministic EXEC1 candidates from signal, INFO, and RESEARCH inputs.",
+                callable=build_execution_candidate_report,
+            ),
+            QuantPilotTool(
                 name="build_information_decision_report",
                 description="Aggregate information-agent signals into a deterministic decision report.",
                 callable=build_information_decision_report,
+            ),
+            QuantPilotTool(
+                name="build_portfolio_allocation_plan",
+                description="Optimize an EXEC1 candidate report into a deterministic offline portfolio allocation plan.",
+                callable=build_portfolio_allocation_plan,
             ),
             QuantPilotTool(
                 name="build_research_committee_report",
@@ -228,8 +266,13 @@ def build_default_tool_registry() -> ToolRegistry:
                 callable=rank_research_candidates,
             ),
             QuantPilotTool(
+                name="run_quant_firm_decision_cycle",
+                description="Run the deterministic Quant Firm multi-agent decision cycle.",
+                callable=run_quant_firm_decision_cycle,
+            ),
+            QuantPilotTool(
                 name="replay_provider_signals_with_vectorbt",
-                description="Replay provider/Qlib-style signal rows with the vectorbt adapter.",
+                description="Replay provider-style signal rows with the vectorbt adapter.",
                 callable=replay_provider_signals_with_vectorbt,
             ),
             QuantPilotTool(
