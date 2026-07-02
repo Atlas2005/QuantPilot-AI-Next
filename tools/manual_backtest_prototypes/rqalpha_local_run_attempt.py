@@ -15,6 +15,11 @@ ARTIFACT_DIR = ROOT / "local_artifacts" / "backtest_prototypes" / "rqalpha"
 RESULT_PATH = ARTIFACT_DIR / "rqalpha_local_run_result.json"
 DEFAULT_BUNDLE_PATH = Path.home() / ".rqalpha" / "bundle"
 BUNDLE_PATH_ENV_VAR = "RQALPHA_BUNDLE_PATH"
+REQUIRED_BUNDLE_FILES = (
+    "future_info.json",
+    "instruments.pk",
+    "trading_dates.npy",
+)
 PROVIDER = "rqalpha"
 SYMBOL = "000001.XSHE"
 START_DATE = "2026-01-02"
@@ -52,6 +57,8 @@ def _base_result() -> dict[str, Any]:
         "frequency": FREQUENCY,
         "run_type": RUN_TYPE,
         "bundle_path": str(DEFAULT_BUNDLE_PATH),
+        "configured_bundle_path": str(DEFAULT_BUNDLE_PATH),
+        "resolved_bundle_path": None,
         "bundle_path_source": "default_home",
         "bundle_exists": False,
         "download_required": False,
@@ -97,6 +104,23 @@ def _resolve_bundle_path() -> tuple[Path, str, str | None]:
     return DEFAULT_BUNDLE_PATH, "default_home", None
 
 
+def _has_expected_bundle_files(path: Path) -> bool:
+    return path.is_dir() and all(
+        (path / filename).is_file() for filename in REQUIRED_BUNDLE_FILES
+    )
+
+
+def _resolve_bundle_content_path(configured_path: Path) -> Path | None:
+    if _has_expected_bundle_files(configured_path):
+        return configured_path
+
+    nested_bundle_path = configured_path / "bundle"
+    if _has_expected_bundle_files(nested_bundle_path):
+        return nested_bundle_path
+
+    return None
+
+
 def _is_tracked_workspace_path(path: Path) -> bool:
     try:
         resolved_path = path.resolve()
@@ -110,10 +134,11 @@ def _is_tracked_workspace_path(path: Path) -> bool:
 
 
 def _record_bundle_status(result: dict[str, Any]) -> bool:
-    bundle_path, source, path_error = _resolve_bundle_path()
-    result["bundle_path"] = str(bundle_path)
+    configured_bundle_path, source, path_error = _resolve_bundle_path()
+    result["bundle_path"] = str(configured_bundle_path)
+    result["configured_bundle_path"] = str(configured_bundle_path)
     result["bundle_path_source"] = source
-    result["bundle_exists"] = bundle_path.exists()
+    result["bundle_exists"] = False
     if path_error is not None:
         result["status"] = "bundle_authorization_required"
         result["failure_stage"] = "bundle_policy_check"
@@ -123,19 +148,38 @@ def _record_bundle_status(result: dict[str, Any]) -> bool:
             "Use ~/.rqalpha/bundle or an authorized ignored local path."
         )
         return False
-    if not result["bundle_exists"]:
+
+    resolved_bundle_path = _resolve_bundle_content_path(configured_bundle_path)
+    if resolved_bundle_path is not None:
+        result["bundle_path"] = str(resolved_bundle_path)
+        result["resolved_bundle_path"] = str(resolved_bundle_path)
+        result["bundle_exists"] = True
+        return True
+
+    if not configured_bundle_path.exists():
         result["status"] = "data_bundle_required_or_missing"
         result["failure_stage"] = "bundle_check"
         result["download_required"] = True
         result["error_message"] = (
-            f"No authorized local RQAlpha bundle found at {bundle_path}."
+            f"No authorized local RQAlpha bundle found at {configured_bundle_path}."
         )
         result["conclusion"] = (
             "RQAlpha is importable in the isolated environment, but an authorized "
             "local data bundle is required before a real local run can be attempted."
         )
         return False
-    return True
+
+    result["status"] = "data_bundle_required_or_missing"
+    result["failure_stage"] = "bundle_content_check"
+    result["error_message"] = (
+        f"No valid RQAlpha bundle content directory found at {configured_bundle_path} "
+        f"or {configured_bundle_path / 'bundle'}."
+    )
+    result["conclusion"] = (
+        "RQAlpha is importable in the isolated environment, but the configured "
+        "bundle path does not contain the expected local bundle files."
+    )
+    return False
 
 
 def _tiny_config(bundle_path: Path) -> dict[str, Any]:
@@ -304,7 +348,7 @@ def main() -> int:
         run_output = run_func(
             init=_init_strategy,
             handle_bar=_handle_bar_strategy,
-            config=_tiny_config(Path(result["bundle_path"])),
+            config=_tiny_config(Path(str(result["resolved_bundle_path"]))),
         )
         explicit_metrics, observed_trade_rows, report_keys, result_keys = (
             _collect_metric_candidates(run_output)

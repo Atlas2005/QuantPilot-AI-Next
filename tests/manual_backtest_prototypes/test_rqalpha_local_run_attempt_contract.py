@@ -30,6 +30,12 @@ def _load_script_module() -> ModuleType:
     return module
 
 
+def _write_minimal_bundle_files(path: Path) -> None:
+    path.mkdir(parents=True)
+    for filename in ("future_info.json", "instruments.pk", "trading_dates.npy"):
+        (path / filename).write_text("fixture", encoding="utf-8")
+
+
 def test_rqalpha_local_run_attempt_script_exists() -> None:
     assert SCRIPT_PATH.exists()
 
@@ -168,8 +174,71 @@ def test_missing_bundle_records_structured_status_without_run_attempt(
     assert result["status"] == "data_bundle_required_or_missing"
     assert result["failure_stage"] == "bundle_check"
     assert result["bundle_path"] == str(missing_bundle)
+    assert result["configured_bundle_path"] == str(missing_bundle)
+    assert result["resolved_bundle_path"] is None
     assert result["bundle_exists"] is False
     assert result["download_required"] is True
+
+
+def test_direct_bundle_content_path_is_resolved(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_script_module()
+    direct_bundle = tmp_path / "direct_bundle"
+    _write_minimal_bundle_files(direct_bundle)
+    monkeypatch.setenv(module.BUNDLE_PATH_ENV_VAR, str(direct_bundle))
+
+    result = module._base_result()
+    allowed_to_continue = module._record_bundle_status(result)
+
+    assert allowed_to_continue is True
+    assert result["bundle_path_source"] == "explicit_env"
+    assert result["configured_bundle_path"] == str(direct_bundle)
+    assert result["resolved_bundle_path"] == str(direct_bundle)
+    assert result["bundle_path"] == str(direct_bundle)
+    assert result["bundle_exists"] is True
+
+
+def test_nested_bundle_content_path_is_resolved(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_script_module()
+    configured_bundle = tmp_path / "download_target"
+    nested_bundle = configured_bundle / "bundle"
+    _write_minimal_bundle_files(nested_bundle)
+    monkeypatch.setenv(module.BUNDLE_PATH_ENV_VAR, str(configured_bundle))
+
+    result = module._base_result()
+    allowed_to_continue = module._record_bundle_status(result)
+
+    assert allowed_to_continue is True
+    assert result["bundle_path_source"] == "explicit_env"
+    assert result["configured_bundle_path"] == str(configured_bundle)
+    assert result["resolved_bundle_path"] == str(nested_bundle)
+    assert result["bundle_path"] == str(nested_bundle)
+    assert result["bundle_exists"] is True
+
+
+def test_existing_path_without_bundle_content_records_missing_status(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_script_module()
+    configured_bundle = tmp_path / "empty_download_target"
+    configured_bundle.mkdir()
+    monkeypatch.setenv(module.BUNDLE_PATH_ENV_VAR, str(configured_bundle))
+
+    result = module._base_result()
+    allowed_to_continue = module._record_bundle_status(result)
+
+    assert allowed_to_continue is False
+    assert result["status"] == "data_bundle_required_or_missing"
+    assert result["failure_stage"] == "bundle_content_check"
+    assert result["configured_bundle_path"] == str(configured_bundle)
+    assert result["resolved_bundle_path"] is None
+    assert result["bundle_exists"] is False
 
 
 def test_explicit_bundle_path_inside_tracked_source_is_rejected(
