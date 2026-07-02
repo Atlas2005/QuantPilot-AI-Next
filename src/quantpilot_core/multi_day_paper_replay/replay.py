@@ -42,7 +42,7 @@ def run_multi_day_paper_replay(
     input_flags = validate_replay_inputs(day_inputs, account_profile)
     initial_cash = account_profile.cash.available_cash
     initial_positions = _initial_positions(account_profile)
-    if input_flags:
+    if _has_critical(input_flags):
         return PaperReplayResult(
             ok=False,
             decision=PaperReplayDecision.BLOCKED.value,
@@ -59,7 +59,7 @@ def run_multi_day_paper_replay(
     sellable_by_symbol = normalize_sellable_quantities(account_profile)
     pending_sellable_next_day: dict[str, int] = {}
     day_results: list[PaperReplayDayResult] = []
-    risk_flags: list[PaperReplayRiskFlag] = []
+    risk_flags: list[PaperReplayRiskFlag] = list(input_flags)
     blocked_days: list[str] = []
     skipping = False
 
@@ -175,6 +175,10 @@ def run_multi_day_paper_replay(
 
 def _initial_positions(account_profile: AccountProfile) -> dict[str, int]:
     return {position.symbol: position.quantity for position in account_profile.positions}
+
+
+def _has_critical(flags: tuple[PaperReplayRiskFlag, ...]) -> bool:
+    return any(flag.severity == RiskSeverity.CRITICAL.value for flag in flags)
 
 
 def _build_daily_account_profile(

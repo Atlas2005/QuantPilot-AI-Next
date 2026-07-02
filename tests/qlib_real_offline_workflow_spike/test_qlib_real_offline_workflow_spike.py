@@ -353,10 +353,11 @@ def test_mixed_stock_etf_remains_supported() -> None:
     assert report.comparison.mixed_stock_etf_supported is True
 
 
-def test_qlib_promotion_blockers_reported() -> None:
+def test_qlib_promotion_warnings_do_not_block_optional_runtime_spike() -> None:
     report = build_p41_qlib_workflow_report(provider_spec(), records(), qlib_field_mapping=qlib_mapping())
 
     assert "optional_qlib_dependency_unavailable" in report.comparison.promotion_blockers
+    assert report.comparison.promote_to_next_stage_optional_runtime_spike is True
     assert report.next_improvement_target == "install optional Qlib environment"
 
 

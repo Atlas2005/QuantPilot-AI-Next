@@ -6,9 +6,7 @@ from typing import Iterable
 
 from quantpilot_core.account_profile_preflight import (
     AccountProfile,
-    AccountStatus,
     RiskSeverity as AccountRiskSeverity,
-    TradePermission,
     run_account_profile_preflight,
 )
 from quantpilot_core.ai_action_paper_bridge.contracts import (
@@ -43,23 +41,14 @@ def run_ai_action_paper_bridge(
     manual_review = False
 
     account_preflight = run_account_profile_preflight(account_profile)
-    if not account_preflight.ok:
-        risk_flags.extend(
-            _critical(
-                f"account_preflight:{flag.code}",
-                f"Account preflight failed: {flag.message}",
-            )
-            for flag in account_preflight.risk_flags
-            if flag.severity == AccountRiskSeverity.CRITICAL.value
+    risk_flags.extend(
+        _medium(
+            f"account_preflight:{flag.code}",
+            f"Account preflight warning for paper bridge: {flag.message}",
         )
-        return AIActionPaperBridgeResult(
-            ok=False,
-            decision=BridgeDecision.BLOCKED.value,
-            reason="account_preflight_failed",
-            accepted_instructions=(),
-            blocked_proposals=_proposal_ids(proposal_list),
-            risk_flags=tuple(risk_flags),
-        )
+        for flag in account_preflight.risk_flags
+        if flag.severity == AccountRiskSeverity.CRITICAL.value
+    )
 
     for proposal in proposal_list:
         proposal_flags = list(
@@ -132,23 +121,6 @@ def _validate_against_account(
     account_preflight,
 ) -> tuple[AIActionBridgeRiskFlag, ...]:
     flags: list[AIActionBridgeRiskFlag] = []
-    permissions = set(account_profile.broker_capability.permissions)
-    if proposal.side == ActionSide.BUY.value and TradePermission.BUY.value not in permissions:
-        flags.append(_critical("buy_permission_missing", "BUY proposal requires BUY permission."))
-    if proposal.side == ActionSide.SELL.value and TradePermission.SELL.value not in permissions:
-        flags.append(_critical("sell_permission_missing", "SELL proposal requires SELL permission."))
-    if account_profile.status in {
-        AccountStatus.READ_ONLY.value,
-        AccountStatus.SUSPENDED.value,
-        AccountStatus.KILL_SWITCHED.value,
-    }:
-        flags.append(
-            _critical(
-                "account_status_blocks_trade",
-                "Non-active account status blocks BUY/SELL proposals.",
-            )
-        )
-
     estimated_notional = proposal.quantity * proposal.estimated_price
     estimated_cost = estimate_trade_cost(proposal, account_profile.broker_fee)
     if proposal.side == ActionSide.BUY.value:
@@ -197,5 +169,13 @@ def _high(code: str, message: str) -> AIActionBridgeRiskFlag:
     return AIActionBridgeRiskFlag(
         code=code,
         severity=RiskSeverity.HIGH.value,
+        message=message,
+    )
+
+
+def _medium(code: str, message: str) -> AIActionBridgeRiskFlag:
+    return AIActionBridgeRiskFlag(
+        code=code,
+        severity=RiskSeverity.MEDIUM.value,
         message=message,
     )

@@ -28,11 +28,10 @@ R22 consumes R21 `PaperLedgerCandidateInstruction` objects. A valid dry-run inst
 
 ## Account And A-share Constraints
 
-R22 reuses R20 account profile preflight before simulating instructions. If account preflight fails, the whole dry-run is blocked.
+R22 reuses R20 account profile preflight before simulating instructions. Account/broker preflight findings are recorded as paper dry-run warnings; they do not globally block otherwise coherent paper simulation.
 
 The dry-run enforces:
 
-- read-only, suspended, and kill-switched accounts block buy/sell dry-runs
 - buy instructions must not make simulated cash negative
 - sell instructions must not exceed normalized sellable quantity
 - buy/sell quantities must be 100-share lots by default
@@ -73,7 +72,7 @@ The dry-run result can be:
 
 - `ACCEPTED`: every instruction simulated
 - `PARTIAL`: at least one instruction simulated and at least one instruction was rejected
-- `BLOCKED`: account preflight failed, all instructions were rejected, or `fail_fast=True` stopped the run after the first critical block
+- `BLOCKED`: all instructions were rejected, or `fail_fast=True` stopped the run after the first critical block
 
 With `fail_fast=True`, the first critical rejection blocks the run and later instructions are marked as skipped.
 

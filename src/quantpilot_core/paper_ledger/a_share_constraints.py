@@ -147,16 +147,6 @@ def run_a_share_constrained_paper_order(
     model = cost_model or AShareCostModel()
     position_before = account.positions.get(order_intent.symbol, 0)
 
-    if not gate_passed:
-        return _rejected_paper_result(
-            status=PaperLedgerStatus.NO_GATE_PASS,
-            account=account,
-            order_intent=order_intent,
-            position_before=position_before,
-            reasons=("market_sample_unusable",),
-            suggested_next_action="Provide structurally usable market data/sample input before A-share paper execution.",
-        )
-
     invalid_reasons = _validate_order_shape(account, order_intent)
     if invalid_reasons:
         return _rejected_paper_result(
@@ -249,7 +239,10 @@ def run_a_share_constrained_paper_order(
             position=position_after,
         ),
         reasons=(),
-        warnings=cost_result.warnings,
+        warnings=(
+            (("sample_quality_gate_not_passed",) if not gate_passed else ())
+            + cost_result.warnings
+        ),
         suggested_next_action="Record the constrained paper result and continue sandbox review.",
     )
 

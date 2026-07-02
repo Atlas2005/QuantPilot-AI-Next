@@ -6,7 +6,6 @@ from typing import Iterable
 
 from quantpilot_core.account_profile_preflight import (
     AccountProfile,
-    AccountStatus,
     RiskSeverity as AccountRiskSeverity,
     normalize_sellable_quantities,
     run_account_profile_preflight,
@@ -34,13 +33,6 @@ def simulate_instruction(
     """Simulate one candidate instruction without mutating account inputs."""
 
     flags = list(validate_dry_run_instruction(instruction, allow_odd_lot=allow_odd_lot))
-    if account_profile.status in {
-        AccountStatus.READ_ONLY.value,
-        AccountStatus.SUSPENDED.value,
-        AccountStatus.KILL_SWITCHED.value,
-    }:
-        flags.append(_critical("account_status_blocks_trade", "Account status blocks BUY/SELL dry-run."))
-
     fee = _estimate_instruction_cost(instruction, account_profile)
     if not flags:
         if instruction.side == ActionSide.BUY.value:
@@ -105,28 +97,16 @@ def run_paper_ledger_dry_run(
         position.symbol: position.quantity for position in account_profile.positions
     }
     account_preflight = run_account_profile_preflight(account_profile)
-    if not account_preflight.ok:
-        flags = tuple(
-            _critical(
-                f"account_preflight:{flag.code}",
-                f"Account preflight failed: {flag.message}",
-            )
-            for flag in account_preflight.risk_flags
-            if flag.severity == AccountRiskSeverity.CRITICAL.value
-        )
-        return PaperLedgerDryRunResult(
-            ok=False,
-            decision=PaperLedgerDryRunDecision.BLOCKED.value,
-            reason="account_preflight_failed",
-            instruction_results=(),
-            simulated_cash_after=current_cash,
-            simulated_positions_after=current_positions,
-            blocked_instruction_ids=tuple(instruction.proposal_id for instruction in instruction_list),
-            risk_flags=flags,
-        )
 
     results: list[PaperLedgerDryRunInstructionResult] = []
-    risk_flags: list[PaperLedgerDryRunRiskFlag] = []
+    risk_flags: list[PaperLedgerDryRunRiskFlag] = [
+        _medium(
+            f"account_preflight:{flag.code}",
+            f"Account preflight warning for paper dry-run: {flag.message}",
+        )
+        for flag in account_preflight.risk_flags
+        if flag.severity == AccountRiskSeverity.CRITICAL.value
+    ]
     blocked_ids: list[str] = []
     seen_ids: set[str] = set()
     skipping = False
@@ -284,5 +264,13 @@ def _critical(code: str, message: str) -> PaperLedgerDryRunRiskFlag:
     return PaperLedgerDryRunRiskFlag(
         code=code,
         severity=RiskSeverity.CRITICAL.value,
+        message=message,
+    )
+
+
+def _medium(code: str, message: str) -> PaperLedgerDryRunRiskFlag:
+    return PaperLedgerDryRunRiskFlag(
+        code=code,
+        severity=RiskSeverity.MEDIUM.value,
         message=message,
     )

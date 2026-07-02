@@ -1,10 +1,10 @@
-# Paper Ledger Fed By Gated Provider Samples
+# Paper Ledger Fed By Provider Samples
 
-R14 connects gated provider samples to a deterministic paper ledger dry path.
+R14 connects provider samples to a deterministic paper ledger dry path.
 
 ## Why R14 Exists
 
-R13 can select an optional provider, fetch fake/offline normalized sample bars, and pass those bars through the small-sample gate. R14 adds the next dry-path step: a gated sample can now authorize a minimal paper ledger order and position update.
+R13 can select an optional provider, fetch fake/offline normalized sample bars, and report small-sample quality warnings. R14 adds the next dry-path step: a sample can provide context for a minimal paper ledger order and position update.
 
 This is still not trading. It is a local accounting exercise for reviewed samples.
 
@@ -12,9 +12,9 @@ This is still not trading. It is a local accounting exercise for reviewed sample
 
 The intended path is:
 
-provider selector -> sample fetch -> small sample gate -> paper ledger dry path
+provider selector -> sample fetch -> sample quality warnings -> paper ledger dry path
 
-The ledger requires `gate_passed=True` before accepting any paper order. If the gate did not pass, the ledger rejects the order and leaves cash and positions unchanged.
+The ledger no longer requires `gate_passed=True` before accepting a coherent paper order. A failed quality gate is reported as `sample_quality_gate_not_passed`; malformed orders, insufficient paper cash, and insufficient paper position still reject the paper fill.
 
 ## Capital / Account Awareness
 

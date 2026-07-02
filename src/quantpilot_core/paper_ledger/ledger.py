@@ -24,16 +24,6 @@ def run_paper_ledger_from_gated_sample(
     cash_before = account.cash
     position_before = account.positions.get(order_intent.symbol, 0)
 
-    if not gate_passed:
-        return _rejected_result(
-            status=PaperLedgerStatus.NO_GATE_PASS,
-            account=account,
-            order_intent=order_intent,
-            position_before=position_before,
-            reasons=("data_sample_unusable",),
-            suggested_next_action="Provide structurally usable market data/sample input before paper ledger updates.",
-        )
-
     invalid_reasons = _validate_account_and_order(account, order_intent)
     if invalid_reasons:
         return _rejected_result(
@@ -77,11 +67,11 @@ def run_paper_ledger_from_gated_sample(
         cash=cash_after,
         position=position_after,
     )
-    warnings = (
-        ("latest_close_price_observed_but_limit_price_used",)
-        if latest_close_price is not None
-        else ()
-    )
+    warnings = []
+    if not gate_passed:
+        warnings.append("sample_quality_gate_not_passed")
+    if latest_close_price is not None:
+        warnings.append("latest_close_price_observed_but_limit_price_used")
     return PaperLedgerResult(
         status=PaperLedgerStatus.READY,
         order_status=PaperOrderStatus.ACCEPTED,
@@ -96,7 +86,7 @@ def run_paper_ledger_from_gated_sample(
         position_after=position_after,
         account_after=account_after,
         reasons=(),
-        warnings=warnings,
+        warnings=tuple(warnings),
         suggested_next_action="Record the paper ledger result and continue sandbox review.",
     )
 
@@ -110,7 +100,7 @@ def build_paper_order_from_sample_preflight_result(
 ) -> PaperLedgerOrderIntent:
     """Build a deterministic order intent from structurally usable sample metadata."""
 
-    if not sample_result.gate_passed:
+    if not sample_result.gate_passed and sample_result.fetched_bar_count <= 0:
         raise ValueError("sample result must provide structurally usable market data")
     return PaperLedgerOrderIntent(
         symbol=symbol,

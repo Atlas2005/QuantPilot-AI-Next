@@ -138,16 +138,17 @@ def test_sell_applies_negative_slippage() -> None:
     assert apply_a_share_slippage(PaperOrderSide.SELL, 10.0, 0.0005) == 9.995
 
 
-def test_unusable_market_sample_rejects_before_order_execution() -> None:
+def test_unpassed_market_sample_gate_is_warning_not_execution_block() -> None:
     result = run_a_share_constrained_paper_order(
         PaperLedgerAccount(cash=2000.0),
-        buy_order(quantity=50),
+        buy_order(),
         gate_passed=False,
     )
 
-    assert result.status is PaperLedgerStatus.NO_GATE_PASS
-    assert result.reasons == ("market_sample_unusable",)
-    assert result.position_after == 0
+    assert result.status is PaperLedgerStatus.READY
+    assert result.reasons == ()
+    assert "sample_quality_gate_not_passed" in result.warnings
+    assert result.position_after == 100
 
 
 def test_input_account_is_not_mutated() -> None:

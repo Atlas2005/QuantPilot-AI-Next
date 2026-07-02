@@ -28,9 +28,9 @@ def validate_replay_inputs(
     account_preflight = run_account_profile_preflight(account_profile)
     if not account_preflight.ok:
         flags.extend(
-            _critical(
+            _medium(
                 f"account_preflight:{flag.code}",
-                f"Account preflight failed: {flag.message}",
+                f"Account preflight warning for paper replay: {flag.message}",
             )
             for flag in account_preflight.risk_flags
             if flag.severity == AccountRiskSeverity.CRITICAL.value
@@ -91,5 +91,13 @@ def _critical(code: str, message: str) -> PaperReplayRiskFlag:
     return PaperReplayRiskFlag(
         code=code,
         severity=RiskSeverity.CRITICAL.value,
+        message=message,
+    )
+
+
+def _medium(code: str, message: str) -> PaperReplayRiskFlag:
+    return PaperReplayRiskFlag(
+        code=code,
+        severity=RiskSeverity.MEDIUM.value,
         message=message,
     )

@@ -2,7 +2,7 @@
 
 R21 adds a deterministic bridge between structured AI action proposals and paper-ledger-compatible candidate instructions.
 
-The bridge is intentionally not an execution path. It validates proposals, checks the R20 account profile / broker config preflight, estimates conservative paper costs, and emits in-memory candidate instructions only when a proposal is safe enough for the next sandbox dry step.
+The bridge is intentionally not an execution path. It validates proposals, records R20 account profile / broker config context as warnings for paper use, estimates conservative paper costs, and emits in-memory candidate instructions when the proposal itself is coherent enough for the next sandbox dry step.
 
 ## Purpose
 
@@ -10,8 +10,8 @@ DeepSeek-backed and multi-agent proposal layers must not be able to jump directl
 
 - proposals must be structured
 - proposals must carry evidence and rationale
-- account and broker constraints must pass first
-- cash, sellable quantity, permissions, and A-share lot rules are checked before any candidate instruction is emitted
+- account and broker context is advisory for paper candidates
+- cash, sellable quantity, and A-share lot rules are checked before any candidate instruction is emitted
 
 ## Accepted Proposal Contract
 
@@ -32,13 +32,10 @@ Supported sources are supervisor, news/event agent, factor agent, risk agent, an
 
 ## Account / Broker Preflight Reuse
 
-R21 reuses R20 `run_account_profile_preflight()` before inspecting proposal-specific constraints. If the account profile is invalid, all proposals are blocked.
+R21 reuses R20 `run_account_profile_preflight()` before inspecting proposal-specific constraints. Account or broker permission findings are advisory in this paper-only bridge; they do not claim broker/live authorization and do not block otherwise coherent paper candidates.
 
 For executable proposals:
 
-- `BUY` requires buy permission
-- `SELL` requires sell permission
-- read-only, suspended, and kill-switched accounts block buy/sell proposals
 - buy notional plus estimated fees must fit available cash
 - sell quantity must not exceed normalized sellable quantity
 - configured max order value must not be exceeded
