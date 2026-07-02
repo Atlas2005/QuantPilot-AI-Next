@@ -4,6 +4,8 @@ P36 moves QuantPilot-AI-Next from single-window fillability checks into a determ
 
 This is still offline and local. It does not connect to a broker, read a real account, place orders, call LLM runtimes, fetch market data, install packages, or require optional runtime frameworks.
 
+R3F retires P36 from current default replay/fill/metrics usage. This package is legacy/reference compatibility only and should not be treated as the current default provider, signal replay, fill, or portfolio metrics path.
+
 ## Objective
 
 P36 answers whether the project can run a small daily paper-trading cycle after P34 gate pruning and P35 offline tradability fixtures:
@@ -88,4 +90,6 @@ The key shift is practical: instead of adding more broad gates, P36 checks wheth
 
 ## Recommended Next Step
 
-Use P36 output to decide whether the next phase should improve alpha quality, trade sizing, tradability constraints, cost model realism, or deterministic data quality before any broker-facing work is considered.
+Use P36 output only for legacy/reference comparison or migration audit.
+
+Current replacement-first direction: signal replay and portfolio metrics should prefer vectorbt where feasible. A-share event-driven trading and backtest semantics should move toward RQAlpha, and AI/factor research workflow should target Qlib. Keep only A-share/account/capital glue in QuantPilot code.

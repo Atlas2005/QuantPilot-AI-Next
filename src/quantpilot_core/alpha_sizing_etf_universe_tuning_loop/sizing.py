@@ -7,21 +7,18 @@ from math import floor
 from quantpilot_core.alpha_sizing_etf_universe_tuning_loop.contracts import (
     InstrumentType,
     SizingCandidate,
+    SizingContext,
     TradableInstrument,
 )
 from quantpilot_core.alpha_sizing_etf_universe_tuning_loop.universe import (
     build_instrument_rule_profile,
 )
-from quantpilot_core.daily_paper_trading_loop_tradability_metrics import (
-    DailyTradabilityMetrics,
-)
-
 
 def recommend_sizing_candidates(
     instruments: tuple[TradableInstrument, ...],
     *,
     available_cash: float,
-    daily_metrics: DailyTradabilityMetrics | None = None,
+    sizing_context: SizingContext | None = None,
     max_capital_usage_per_candidate: float = 0.20,
 ) -> tuple[SizingCandidate, ...]:
     """Create deterministic sizing candidates that avoid odd-lot zero trades."""
@@ -30,7 +27,7 @@ def recommend_sizing_candidates(
         _recommend_one(
             instrument,
             available_cash=available_cash,
-            daily_metrics=daily_metrics,
+            sizing_context=sizing_context,
             max_capital_usage_per_candidate=max_capital_usage_per_candidate,
         )
         for instrument in instruments
@@ -42,13 +39,13 @@ def _recommend_one(
     instrument: TradableInstrument,
     *,
     available_cash: float,
-    daily_metrics: DailyTradabilityMetrics | None,
+    sizing_context: SizingContext | None,
     max_capital_usage_per_candidate: float,
 ) -> SizingCandidate:
     profile = build_instrument_rule_profile(instrument)
     target_cash = max(0.0, available_cash * max_capital_usage_per_candidate)
     lots = max(1, floor(target_cash / (instrument.price * profile.min_trade_unit)))
-    if _needs_larger_size(daily_metrics):
+    if _needs_larger_size(sizing_context):
         lots = max(lots, 1)
     quantity = lots * profile.min_trade_unit
     notional = round(quantity * instrument.price, 4)
@@ -68,10 +65,11 @@ def _recommend_one(
     )
 
 
-def _needs_larger_size(daily_metrics: DailyTradabilityMetrics | None) -> bool:
-    if daily_metrics is None:
+def _needs_larger_size(sizing_context: SizingContext | None) -> bool:
+    if sizing_context is None:
         return False
-    return "odd_lot" in daily_metrics.zero_trade_reason_distribution or daily_metrics.fill_rate == 0
+    reasons = sizing_context.zero_trade_reason_distribution or {}
+    return "odd_lot" in reasons or sizing_context.fill_rate_hint == 0
 
 
 def _tradability_score(instrument: TradableInstrument, capital_usage: float, cost_drag: float) -> float:

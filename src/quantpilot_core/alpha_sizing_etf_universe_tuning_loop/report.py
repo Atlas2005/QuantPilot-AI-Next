@@ -6,6 +6,7 @@ from quantpilot_core.alpha_sizing_etf_universe_tuning_loop.contracts import (
     AlphaSignalQuality,
     AlphaSizingEtfUniverseReport,
     InstrumentType,
+    SizingContext,
     TradableInstrument,
 )
 from quantpilot_core.alpha_sizing_etf_universe_tuning_loop.sizing import (
@@ -17,17 +18,13 @@ from quantpilot_core.alpha_sizing_etf_universe_tuning_loop.tuning import (
 from quantpilot_core.alpha_sizing_etf_universe_tuning_loop.universe import (
     select_tradable_universe,
 )
-from quantpilot_core.daily_paper_trading_loop_tradability_metrics import (
-    DailyTradabilityMetrics,
-)
-
 
 def build_alpha_sizing_etf_universe_report(
     candidates: tuple[TradableInstrument, ...],
     alpha_quality_by_symbol: dict[str, AlphaSignalQuality],
     *,
     available_cash: float,
-    daily_metrics: DailyTradabilityMetrics | None = None,
+    sizing_context: SizingContext | None = None,
     safety_barrier_percent: float = 140.0,
 ) -> AlphaSizingEtfUniverseReport:
     """Build the P37 value-oriented ETF and sizing tuning report."""
@@ -36,7 +33,7 @@ def build_alpha_sizing_etf_universe_report(
     sizing_candidates = recommend_sizing_candidates(
         universe.accepted,
         available_cash=available_cash,
-        daily_metrics=daily_metrics,
+        sizing_context=sizing_context,
     )
     decisions = tune_alpha_sizing_candidates(sizing_candidates, alpha_quality_by_symbol)
     includes_both = universe.stock_candidate_count > 0 and universe.etf_candidate_count > 0

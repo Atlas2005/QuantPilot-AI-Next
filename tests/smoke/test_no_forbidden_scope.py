@@ -120,3 +120,28 @@ def test_non_legacy_src_does_not_import_legacy_provider_replay_defaults() -> Non
                 violations.append(f"{relative}: {fragment}")
 
     assert violations == []
+
+
+def test_non_legacy_src_does_not_call_legacy_daily_replay_defaults() -> None:
+    allowed_prefixes = {
+        ("quantpilot_core", "daily_paper_trading_loop_tradability_metrics"),
+        ("quantpilot_core", "mixed_stock_etf_daily_paper_evaluation"),
+        ("quantpilot_core", "real_provider_mixed_etf_paper_replay"),
+        ("quantpilot_core", "vectorbt_old_chain_metrics_comparison"),
+    }
+    forbidden_fragments = (
+        "build_daily_paper_trading_loop_report",
+        "build_mixed_stock_etf_comparison_report",
+    )
+    violations: list[str] = []
+
+    for path in SRC_ROOT.rglob("*.py"):
+        relative = path.relative_to(SRC_ROOT)
+        if relative.parts[:2] in allowed_prefixes:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for fragment in forbidden_fragments:
+            if fragment in text:
+                violations.append(f"{relative}: {fragment}")
+
+    assert violations == []

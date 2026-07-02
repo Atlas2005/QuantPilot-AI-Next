@@ -4,6 +4,8 @@ P38 compares stock-only daily paper evaluation against mixed stock plus exchange
 
 This phase is not another generic safety or preflight wall. It measures whether ETF inclusion improves the trading path created by P34 through P37: order intents, simulated fills, zero-trade diagnosis, capital usage, cost drag, and net PnL after cost.
 
+R3F retires P38 from current default replay/fill/metrics usage. This package is legacy/reference compatibility only and should not be treated as the current default provider, signal replay, fill, or portfolio metrics path.
+
 ## Objective
 
 P38 answers:
@@ -99,4 +101,6 @@ The mixed stock+ETF path should advance only when it improves fillability, capit
 
 ## Recommended Next Step
 
-Use the P38 comparison report to decide whether the next daily paper loop should default to a mixed stock+ETF universe, then tune ETF selection, sizing, cost model realism, and alpha quality based on the measured deltas.
+Use the P38 comparison report only for legacy/reference comparison or migration audit.
+
+Current replacement-first direction: signal replay and portfolio metrics should prefer vectorbt where feasible. A-share event-driven trading and backtest semantics should move toward RQAlpha, and AI/factor research workflow should target Qlib. Keep only A-share/account/capital glue in QuantPilot code.
