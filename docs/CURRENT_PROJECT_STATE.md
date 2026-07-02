@@ -6,11 +6,13 @@ QuantPilot-AI-Next / QuantPilot-AI 2.0.
 
 ## Current Phase
 
-R7: Real A-share Small Sample Data Gate, implemented by Codex and pending ChatGPT closure review.
+INFO1: A-share Securities-Firm-Style Information Layer, implemented by Codex and pending ChatGPT closure review.
 
 ## Current Contents
 
 Step 0A through Phase 7F are completed.
+
+INFO1 adds narrow normalized information-layer schemas, deterministic in-memory pandas normalizers, registry tools, tests, and docs for future securities-firm-style information agents.
 
 R1 adds profit-first integration architecture docs, a multi-agent target architecture, Market Reality Sandbox architecture, Capital-Aware Fast Compounding Mode, an open-source replacement strategy, upstream dependency intelligence target, a 30-day Capital-Test MVP plan, a machine-readable integration reset matrix, and standard-library validation helpers.
 
@@ -29,6 +31,8 @@ R5 adds a local mock-only run that connects R4 gate request, R4 gate decision, R
 R6 adds a controlled provider adapter probe plan and validator that define the review evidence required before any future provider adapter probe can be submitted to the R4 gate.
 
 R7 adds a real A-share small-sample data gate and manifest validator that define the metadata required before a future small-sample dataset can enter sandbox replay preparation.
+
+INFO1 covers news, macro and policy, social sentiment, northbound and foreign-capital holdings, stabilization and ETF-flow clues, public fund holdings, shareholder snapshots, dividends, valuation, concepts and themes, margin trading, money flow, and announcements as normalized in-memory information substrates.
 
 The repository is still not trading-ready.
 
@@ -62,6 +66,8 @@ R6 uses a local mock plan fixture only. It does not fetch real market data, call
 
 R7 uses a local mock manifest fixture only. It does not fetch or include real market data, call provider APIs, implement data provider adapters, add broker integration, live trading, order execution, write production data assets, or reinvent data providers.
 
+INFO1 uses tiny in-memory pandas fixtures only. It does not fetch data, add network/API/token handling, call model services, run training workflows, expand legacy replay, or create orders or trade instructions.
+
 Future modules must check mature open-source candidates before self-building generic infrastructure. R7 stays data-gate/manifest/validation focused and keeps AkShare, Baostock, Tushare, and similar projects as adapter candidates.
 
 ## Current Prohibitions
@@ -85,4 +91,4 @@ Future modules must check mature open-source candidates before self-building gen
 
 ## Next Expected Action
 
-ChatGPT should perform R7 module closure review. The next phase may define sandbox replay preparation using approved fixture or small-sample manifests only after review. Do not move to real data ingestion, dependency installation, provider API calls, broker connectivity, live trading, order execution, production data assets, or profitability claims until explicitly approved.
+ChatGPT should perform INFO1 module closure review. The next phase should remain review-gated. Do not move to real data ingestion, dependency installation, provider API calls, broker connectivity, live trading, order execution, production data assets, or profitability claims until explicitly approved.

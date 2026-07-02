@@ -10,6 +10,21 @@ from quantpilot_core.data_provider_normalization import (
     normalize_tushare_daily_frame,
     normalized_ohlcv_to_vbt3_signal_frame,
 )
+from quantpilot_core.information_layer import (
+    normalize_announcement_events_frame,
+    normalize_concept_memberships_frame,
+    normalize_dividend_records_frame,
+    normalize_fund_holdings_frame,
+    normalize_macro_policy_events_frame,
+    normalize_margin_trading_snapshots_frame,
+    normalize_moneyflow_snapshots_frame,
+    normalize_news_events_frame,
+    normalize_northbound_holdings_frame,
+    normalize_shareholder_snapshots_frame,
+    normalize_social_sentiment_events_frame,
+    normalize_stabilization_flow_clues_frame,
+    normalize_valuation_snapshots_frame,
+)
 from quantpilot_core.qlib_signal_integration import (
     qlib_signal_artifact_to_vbt3_signal_frame,
 )
@@ -71,6 +86,71 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="normalized_ohlcv_to_vbt3_signal_frame",
                 description="Shape normalized OHLCV rows into a provider/Qlib-style vectorbt signal frame.",
                 callable=normalized_ohlcv_to_vbt3_signal_frame,
+            ),
+            QuantPilotTool(
+                name="normalize_announcement_events_frame",
+                description="Normalize in-memory announcement-event rows for the A-share information layer.",
+                callable=normalize_announcement_events_frame,
+            ),
+            QuantPilotTool(
+                name="normalize_concept_memberships_frame",
+                description="Normalize in-memory concept and theme membership rows.",
+                callable=normalize_concept_memberships_frame,
+            ),
+            QuantPilotTool(
+                name="normalize_dividend_records_frame",
+                description="Normalize in-memory dividend-record rows.",
+                callable=normalize_dividend_records_frame,
+            ),
+            QuantPilotTool(
+                name="normalize_fund_holdings_frame",
+                description="Normalize in-memory public-fund holding rows.",
+                callable=normalize_fund_holdings_frame,
+            ),
+            QuantPilotTool(
+                name="normalize_macro_policy_events_frame",
+                description="Normalize in-memory macro and policy event rows.",
+                callable=normalize_macro_policy_events_frame,
+            ),
+            QuantPilotTool(
+                name="normalize_margin_trading_snapshots_frame",
+                description="Normalize in-memory margin-trading snapshot rows.",
+                callable=normalize_margin_trading_snapshots_frame,
+            ),
+            QuantPilotTool(
+                name="normalize_moneyflow_snapshots_frame",
+                description="Normalize in-memory money-flow snapshot rows.",
+                callable=normalize_moneyflow_snapshots_frame,
+            ),
+            QuantPilotTool(
+                name="normalize_news_events_frame",
+                description="Normalize in-memory news-event rows for the A-share information layer.",
+                callable=normalize_news_events_frame,
+            ),
+            QuantPilotTool(
+                name="normalize_northbound_holdings_frame",
+                description="Normalize in-memory northbound and foreign-capital holding rows.",
+                callable=normalize_northbound_holdings_frame,
+            ),
+            QuantPilotTool(
+                name="normalize_shareholder_snapshots_frame",
+                description="Normalize in-memory shareholder snapshot rows.",
+                callable=normalize_shareholder_snapshots_frame,
+            ),
+            QuantPilotTool(
+                name="normalize_social_sentiment_events_frame",
+                description="Normalize in-memory social sentiment event rows.",
+                callable=normalize_social_sentiment_events_frame,
+            ),
+            QuantPilotTool(
+                name="normalize_stabilization_flow_clues_frame",
+                description="Normalize in-memory stabilization and ETF-flow clue rows.",
+                callable=normalize_stabilization_flow_clues_frame,
+            ),
+            QuantPilotTool(
+                name="normalize_valuation_snapshots_frame",
+                description="Normalize in-memory valuation snapshot rows.",
+                callable=normalize_valuation_snapshots_frame,
             ),
             QuantPilotTool(
                 name="qlib_signal_artifact_to_vbt3_signal_frame",

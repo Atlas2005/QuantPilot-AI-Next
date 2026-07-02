@@ -6,7 +6,7 @@ QuantPilot-AI 2.0 is a profit-first, integration-first, adapter-first, contract-
 
 ## Current Phase
 
-R7: Real A-share Small Sample Data Gate, implemented by Codex and pending ChatGPT closure review.
+INFO1: A-share Securities-Firm-Style Information Layer, implemented by Codex and pending ChatGPT closure review.
 
 ## Completed Work
 
@@ -93,6 +93,15 @@ R7 created:
 - `tests/small_sample_data_gate/test_small_sample_data_gate_contracts.py`
 - `tests/small_sample_data_gate/test_small_sample_data_gate.py`
 
+INFO1 created:
+
+- `docs/INFO1_A_SHARE_INFORMATION_LAYER.md`
+- `src/quantpilot_core/information_layer/__init__.py`
+- `src/quantpilot_core/information_layer/contracts.py`
+- `src/quantpilot_core/information_layer/normalization.py`
+- information-layer normalizer registrations in `src/quantpilot_core/tool_registry/registry.py`
+- `tests/information_layer/test_information_layer.py`
+
 No provider package was installed, no real data was fetched, no provider was approved, no adapter was created, no broker connection was created, and no order execution path was added.
 
 R2 does not implement full backtest, risk, factor, calendar, or portfolio accounting engines.
@@ -106,6 +115,8 @@ R5 uses local mock fixtures only and proves the R4 gate -> R3 bridge -> R2 sandb
 R6 uses a local mock plan fixture only and defines adapter-probe planning validation before any future R4 gate submission.
 
 R7 uses a local mock manifest fixture only and defines small-sample data admission validation before any future sandbox replay preparation.
+
+INFO1 uses tiny in-memory pandas fixtures only and defines normalized information substrates for future information agents. It does not fetch data, add network/API/token handling, call model services, run training workflows, expand legacy replay, or create orders or trade instructions.
 
 ## Current Prohibitions
 
@@ -125,9 +136,9 @@ R7 uses a local mock manifest fixture only and defines small-sample data admissi
 
 ## Next Recommended Step
 
-ChatGPT should perform R7 closure review.
+ChatGPT should perform INFO1 closure review.
 
-The next phase may define sandbox replay preparation using approved fixture or small-sample manifests only after review.
+The next phase should remain review-gated and should not proceed to live/provider/model/runtime execution without explicit approval.
 
 Future work must stay contract/adapter-boundary focused. It must use mature open-source candidates through adapters, prototypes, or benchmarks where practical instead of becoming a fully self-built backtest, risk, factor, calendar, or portfolio accounting engine.
 
@@ -154,6 +165,8 @@ Do not move to larger real-data validation, external analytics install, broker c
 - R6 does not implement provider adapters, fetch real market data, or call provider APIs.
 - R7 adds Real A-share Small Sample Data Gate validation only.
 - R7 does not fetch or include real market data, call provider APIs, implement data provider adapters, write production data assets, or add broker/live/order paths.
+- INFO1 adds normalized in-memory information-layer schemas and registry tools only.
+- INFO1 does not fetch external data, add network/API/token handling, call model services, run training workflows, expand legacy replay, or create orders or trade instructions.
 - Codex is not the project architect.
 
 ## Role Split
