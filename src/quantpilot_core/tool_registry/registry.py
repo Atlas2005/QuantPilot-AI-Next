@@ -41,6 +41,8 @@ from quantpilot_core.information_agents import (
     run_shareholder_dividend_agent,
     run_valuation_agent,
 )
+from quantpilot_core.order_intent.controller import build_order_intent_proposal
+from quantpilot_core.paper_trading.loop import run_paper_trading_loop
 from quantpilot_core.quant_firm import run_deepseek_advisory_fallback, run_quant_firm_decision_cycle
 from quantpilot_core.research_committee import (
     build_research_committee_report,
@@ -254,6 +256,16 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="build_portfolio_allocation_plan",
                 description="Optimize an EXEC1 candidate report into a deterministic offline portfolio allocation plan.",
                 callable=build_portfolio_allocation_plan,
+            ),
+            QuantPilotTool(
+                name="build_order_intent_proposal",
+                description="Convert EXEC2 allocation output into advisory-only paper order intents.",
+                callable=build_order_intent_proposal,
+            ),
+            QuantPilotTool(
+                name="run_paper_trading_loop",
+                description="Run deterministic paper fills and Learning Desk compatible metrics from order intents.",
+                callable=run_paper_trading_loop,
             ),
             QuantPilotTool(
                 name="build_research_committee_report",
