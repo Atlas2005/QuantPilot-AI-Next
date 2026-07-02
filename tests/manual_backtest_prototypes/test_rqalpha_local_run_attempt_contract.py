@@ -4,6 +4,10 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
+from quantpilot_core.rqalpha_isolated_prototype_runner_review import (
+    review_rqalpha_prototype_artifact,
+)
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = ROOT / "tools" / "manual_backtest_prototypes" / "rqalpha_local_run_attempt.py"
@@ -104,6 +108,9 @@ def test_script_contains_explicit_failure_fields() -> None:
         "error_message",
         "traceback_tail",
         "data_bundle_required_or_missing",
+        "download_required",
+        "bundle_path",
+        "bundle_exists",
     ):
         assert field in text
 
@@ -143,3 +150,72 @@ def test_trade_rows_are_metadata_not_explicit_metrics() -> None:
     assert observed_trade_rows == 2
     assert report_keys == []
     assert "metrics" in result_keys
+
+
+def test_missing_bundle_records_structured_status_without_run_attempt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_script_module()
+    missing_bundle = tmp_path / "missing_bundle"
+    monkeypatch.delenv(module.BUNDLE_PATH_ENV_VAR, raising=False)
+    monkeypatch.setattr(module, "DEFAULT_BUNDLE_PATH", missing_bundle)
+
+    result = module._base_result()
+    allowed_to_continue = module._record_bundle_status(result)
+
+    assert allowed_to_continue is False
+    assert result["status"] == "data_bundle_required_or_missing"
+    assert result["failure_stage"] == "bundle_check"
+    assert result["bundle_path"] == str(missing_bundle)
+    assert result["bundle_exists"] is False
+    assert result["download_required"] is True
+
+
+def test_explicit_bundle_path_inside_tracked_source_is_rejected(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_script_module()
+    tracked_bundle = ROOT / "data" / "rqalpha_bundle"
+    monkeypatch.setenv(module.BUNDLE_PATH_ENV_VAR, str(tracked_bundle))
+
+    result = module._base_result()
+    allowed_to_continue = module._record_bundle_status(result)
+
+    assert allowed_to_continue is False
+    assert result["status"] == "bundle_authorization_required"
+    assert result["failure_stage"] == "bundle_policy_check"
+    assert result["download_required"] is False
+
+
+def test_tiny_config_uses_explicit_bundle_path(tmp_path: Path) -> None:
+    module = _load_script_module()
+    bundle_path = tmp_path / "bundle"
+
+    config = module._tiny_config(bundle_path)
+
+    assert config["base"]["data_bundle_path"] == str(bundle_path)
+    assert config["base"]["run_type"] == "b"
+    assert config["base"]["frequency"] == "1d"
+
+
+def test_artifact_parser_copies_only_explicit_metrics_for_r4f(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "local_artifacts" / "backtest_prototypes" / "rqalpha"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "rqalpha_local_run_result.json").write_text(
+        """
+        {
+          "status": "local_run_succeeded",
+          "explicit_metrics": {"total_return": 0.2},
+          "metrics": {"sharpe": 1.1},
+          "observed_trade_rows": 3
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    result = review_rqalpha_prototype_artifact(tmp_path)
+
+    assert [metric.name for metric in result.normalized_metrics] == ["sharpe"]
+    assert "trade_count" not in {metric.name for metric in result.normalized_metrics}
