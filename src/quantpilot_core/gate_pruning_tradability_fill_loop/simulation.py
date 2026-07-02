@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from quantpilot_core.config.legacy_engine import require_legacy_engine
 from quantpilot_core.gate_pruning_tradability_fill_loop.contracts import (
     FillSimulationReport,
     GatePruningReport,
@@ -53,9 +54,11 @@ def simulate_tradability_and_fills(
     stamp_duty_rate: float = 0.001,
     slippage_bps: float = 5.0,
     gate_report: GatePruningReport | None = None,
+    use_legacy_engine: bool | None = None,
 ) -> FillSimulationReport:
     """Apply A-share rules and estimate deterministic fills without broker access."""
 
+    require_legacy_engine(use_legacy_engine)
     intents = signals_to_order_intents(signals)
     suspended = set(suspended_symbols)
     limits = price_limits or {}

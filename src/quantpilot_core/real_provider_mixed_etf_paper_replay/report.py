@@ -22,13 +22,17 @@ def build_provider_mixed_etf_replay_report(
     replay_input: RealProviderReplayInput,
     *,
     safety_barrier_percent: float = 140.0,
+    use_legacy_engine: bool | None = None,
 ) -> ProviderMixedEtfReplayReport:
     """Build the legacy P39 provider-like replay report for reference compatibility.
 
     Prefer `quantpilot_core.provider_vectorbt_replay` for provider replay.
     """
 
-    provider_replay = replay_provider_mixed_etf_sample(replay_input)
+    provider_replay = replay_provider_mixed_etf_sample(
+        replay_input,
+        use_legacy_engine=use_legacy_engine,
+    )
     baseline = build_mixed_stock_etf_comparison_report()
     capital_path = evaluate_provider_capital_path_suitability(provider_replay)
     comparison_notes = compare_provider_replay_to_p38_baseline(provider_replay)

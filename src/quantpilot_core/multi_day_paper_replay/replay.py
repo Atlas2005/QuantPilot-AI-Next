@@ -12,6 +12,7 @@ from quantpilot_core.account_profile_preflight import (
     normalize_sellable_quantities,
 )
 from quantpilot_core.ai_action_paper_bridge import ActionSide
+from quantpilot_core.config.legacy_engine import require_legacy_engine
 from quantpilot_core.paper_ledger_dry_run import (
     PaperLedgerDryRunDecision,
     PaperLedgerDryRunInstructionStatus,
@@ -35,9 +36,11 @@ def run_multi_day_paper_replay(
     *,
     allow_odd_lot: bool = False,
     fail_fast: bool = False,
+    use_legacy_engine: bool | None = None,
 ) -> PaperReplayResult:
     """Replay candidate paper instructions day by day without persistence."""
 
+    require_legacy_engine(use_legacy_engine)
     day_inputs = tuple(days)
     input_flags = validate_replay_inputs(day_inputs, account_profile)
     initial_cash = account_profile.cash.available_cash

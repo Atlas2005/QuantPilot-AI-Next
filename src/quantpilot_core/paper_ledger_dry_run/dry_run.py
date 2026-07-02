@@ -11,6 +11,7 @@ from quantpilot_core.account_profile_preflight import (
     run_account_profile_preflight,
 )
 from quantpilot_core.ai_action_paper_bridge import ActionSide, PaperLedgerCandidateInstruction
+from quantpilot_core.config.legacy_engine import require_legacy_engine
 from quantpilot_core.paper_ledger_dry_run.contracts import (
     PaperLedgerDryRunDecision,
     PaperLedgerDryRunInstructionResult,
@@ -29,9 +30,11 @@ def simulate_instruction(
     current_positions: dict[str, int],
     *,
     allow_odd_lot: bool = False,
+    use_legacy_engine: bool | None = None,
 ) -> PaperLedgerDryRunInstructionResult:
     """Simulate one candidate instruction without mutating account inputs."""
 
+    require_legacy_engine(use_legacy_engine)
     flags = list(validate_dry_run_instruction(instruction, allow_odd_lot=allow_odd_lot))
     fee = _estimate_instruction_cost(instruction, account_profile)
     if not flags:
@@ -88,9 +91,11 @@ def run_paper_ledger_dry_run(
     *,
     allow_odd_lot: bool = False,
     fail_fast: bool = False,
+    use_legacy_engine: bool | None = None,
 ) -> PaperLedgerDryRunResult:
     """Run deterministic in-memory paper ledger simulation for candidate instructions."""
 
+    require_legacy_engine(use_legacy_engine)
     instruction_list = tuple(instructions)
     current_cash = account_profile.cash.available_cash
     current_positions = {
@@ -140,6 +145,7 @@ def run_paper_ledger_dry_run(
                 current_cash,
                 current_positions,
                 allow_odd_lot=allow_odd_lot,
+                use_legacy_engine=True,
             )
 
         results.append(result)

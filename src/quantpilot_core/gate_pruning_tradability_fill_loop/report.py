@@ -22,6 +22,7 @@ def run_p34_gate_pruning_and_fill_loop(
     sellable_positions: dict[str, int],
     suspended_symbols: tuple[str, ...] = (),
     price_limits: dict[str, tuple[float, float]] | None = None,
+    use_legacy_engine: bool | None = None,
 ) -> tuple[GatePruningReport, FillSimulationReport]:
     """Run the P34 pruning audit and deterministic fill simulation."""
 
@@ -34,5 +35,6 @@ def run_p34_gate_pruning_and_fill_loop(
         suspended_symbols=suspended_symbols,
         price_limits=price_limits,
         gate_report=gate_report,
+        use_legacy_engine=use_legacy_engine,
     )
     return gate_report, fill_report

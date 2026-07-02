@@ -7,6 +7,7 @@ from quantpilot_core.daily_paper_trading_loop_tradability_metrics.contracts impo
     DailyPaperTradingDayResult,
     DailyPaperTradingInput,
 )
+from quantpilot_core.config.legacy_engine import require_legacy_engine
 from quantpilot_core.gate_pruning_tradability_fill_loop import (
     RejectionReason,
     SimulatedFill,
@@ -17,9 +18,12 @@ from quantpilot_core.gate_pruning_tradability_fill_loop import (
 
 def run_daily_paper_trading_loop(
     loop_input: DailyPaperTradingInput,
+    *,
+    use_legacy_engine: bool | None = None,
 ) -> tuple[DailyPaperTradingDayResult, ...]:
     """Run deterministic daily paper fills and update local cash/positions."""
 
+    require_legacy_engine(use_legacy_engine)
     cash = loop_input.initial_cash
     positions = dict(loop_input.initial_positions)
     sellable_positions = dict(loop_input.initial_sellable_positions)
@@ -41,6 +45,7 @@ def run_daily_paper_trading_loop(
             min_commission=loop_input.min_commission,
             stamp_duty_rate=loop_input.stamp_duty_rate,
             slippage_bps=loop_input.slippage_bps,
+            use_legacy_engine=True,
         )
         cash, positions = _apply_fills(cash, positions, fill_report.fills)
         sellable_positions = {symbol: quantity for symbol, quantity in positions.items() if quantity > 0}
