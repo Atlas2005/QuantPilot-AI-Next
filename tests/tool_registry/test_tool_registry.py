@@ -73,6 +73,7 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
     registry = build_default_tool_registry()
 
     assert registry.list_names() == (
+        "build_information_decision_report",
         "cross_check_normalized_provider_frames",
         "normalize_announcement_events_frame",
         "normalize_baostock_history_k_frame",
@@ -92,6 +93,9 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
         "normalized_ohlcv_to_vbt3_signal_frame",
         "qlib_signal_artifact_to_vbt3_signal_frame",
         "replay_provider_signals_with_vectorbt",
+        "run_liquidity_regime_agent",
+        "run_news_impact_agent",
+        "run_northbound_flow_agent",
         "run_vectorbt_signal_backtest",
     )
     assert all(tool.side_effect_level is ToolSideEffectLevel.PURE_IN_MEMORY for tool in registry.list_tools())
