@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -12,6 +13,8 @@ ENVIRONMENT_PATH = ROOT / ".venv-prototypes" / "rqalpha"
 EXPECTED_PYTHON = ENVIRONMENT_PATH / "bin" / "python"
 ARTIFACT_DIR = ROOT / "local_artifacts" / "backtest_prototypes" / "rqalpha"
 RESULT_PATH = ARTIFACT_DIR / "rqalpha_local_run_result.json"
+DEFAULT_BUNDLE_PATH = Path.home() / ".rqalpha" / "bundle"
+BUNDLE_PATH_ENV_VAR = "RQALPHA_BUNDLE_PATH"
 PROVIDER = "rqalpha"
 SYMBOL = "000001.XSHE"
 START_DATE = "2026-01-02"
@@ -48,6 +51,10 @@ def _base_result() -> dict[str, Any]:
         "initial_cash": INITIAL_CASH,
         "frequency": FREQUENCY,
         "run_type": RUN_TYPE,
+        "bundle_path": str(DEFAULT_BUNDLE_PATH),
+        "bundle_path_source": "default_home",
+        "bundle_exists": False,
+        "download_required": False,
         "status": "not_started",
         "failure_stage": None,
         "error_type": None,
@@ -61,6 +68,7 @@ def _base_result() -> dict[str, Any]:
             "Manual prototype only. Run with .venv-prototypes/rqalpha/bin/python from the repository root.",
             "Metrics must not be invented; explicit_metrics only copies explicit allowed metric keys from RQAlpha output mappings.",
             "observed_trade_rows is evidence metadata, not a performance metric.",
+            "Bundle data must be authorized local data and must not be committed.",
         ],
         "conclusion": "Not run yet.",
     }
@@ -79,7 +87,58 @@ def _running_in_expected_environment() -> bool:
         return executable == EXPECTED_PYTHON
 
 
-def _tiny_config() -> dict[str, Any]:
+def _resolve_bundle_path() -> tuple[Path, str, str | None]:
+    explicit_path = os.environ.get(BUNDLE_PATH_ENV_VAR)
+    if explicit_path:
+        path = Path(explicit_path).expanduser()
+        if _is_tracked_workspace_path(path):
+            return path, "explicit_env", "explicit bundle path must stay outside tracked source"
+        return path, "explicit_env", None
+    return DEFAULT_BUNDLE_PATH, "default_home", None
+
+
+def _is_tracked_workspace_path(path: Path) -> bool:
+    try:
+        resolved_path = path.resolve()
+        resolved_root = ROOT.resolve()
+        resolved_external = (ROOT / ".external").resolve()
+    except OSError:
+        return True
+    if resolved_path == resolved_external or resolved_external in resolved_path.parents:
+        return False
+    return resolved_path == resolved_root or resolved_root in resolved_path.parents
+
+
+def _record_bundle_status(result: dict[str, Any]) -> bool:
+    bundle_path, source, path_error = _resolve_bundle_path()
+    result["bundle_path"] = str(bundle_path)
+    result["bundle_path_source"] = source
+    result["bundle_exists"] = bundle_path.exists()
+    if path_error is not None:
+        result["status"] = "bundle_authorization_required"
+        result["failure_stage"] = "bundle_policy_check"
+        result["error_message"] = path_error
+        result["conclusion"] = (
+            "Refused to use an explicit bundle path inside tracked source. "
+            "Use ~/.rqalpha/bundle or an authorized ignored local path."
+        )
+        return False
+    if not result["bundle_exists"]:
+        result["status"] = "data_bundle_required_or_missing"
+        result["failure_stage"] = "bundle_check"
+        result["download_required"] = True
+        result["error_message"] = (
+            f"No authorized local RQAlpha bundle found at {bundle_path}."
+        )
+        result["conclusion"] = (
+            "RQAlpha is importable in the isolated environment, but an authorized "
+            "local data bundle is required before a real local run can be attempted."
+        )
+        return False
+    return True
+
+
+def _tiny_config(bundle_path: Path) -> dict[str, Any]:
     return {
         "base": {
             "start_date": START_DATE,
@@ -87,6 +146,7 @@ def _tiny_config() -> dict[str, Any]:
             "frequency": FREQUENCY,
             "accounts": {ACCOUNT_TYPE: INITIAL_CASH},
             "run_type": RUN_TYPE,
+            "data_bundle_path": str(bundle_path),
         },
         "extra": {
             "context_vars": {
@@ -223,6 +283,11 @@ def main() -> int:
     result["rqalpha_version"] = getattr(rqalpha, "__version__", None) or getattr(
         rqalpha, "version", None
     )
+
+    if not _record_bundle_status(result):
+        _write_result(result)
+        return 0
+
     run_func = getattr(rqalpha, "run_func", None)
     if run_func is None:
         result["status"] = "run_api_missing"
@@ -239,7 +304,7 @@ def main() -> int:
         run_output = run_func(
             init=_init_strategy,
             handle_bar=_handle_bar_strategy,
-            config=_tiny_config(),
+            config=_tiny_config(Path(result["bundle_path"])),
         )
         explicit_metrics, observed_trade_rows, report_keys, result_keys = (
             _collect_metric_candidates(run_output)

@@ -98,7 +98,9 @@ def test_r4d_script_records_missing_bundle_without_download_logic() -> None:
     text = R4D_SCRIPT_PATH.read_text(encoding="utf-8").lower()
 
     assert "data_bundle_required_or_missing" in text
-    assert "download" not in text
+    assert "download_required" in text
+    assert "download_bundle" not in text
+    assert "download-bundle" not in text
     assert "requests" not in text
     assert "urllib" not in text
     assert "httpx" not in text

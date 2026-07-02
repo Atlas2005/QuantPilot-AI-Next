@@ -33,3 +33,9 @@ local evidence. `explicit_metrics` only copies explicit allowed metric keys from
 RQAlpha output mappings; missing metrics must not be calculated or inferred.
 `observed_trade_rows`, if present, is evidence metadata rather than a performance
 metric.
+
+For R4F, the tool checks an authorized local bundle before attempting `run_func`.
+It uses `~/.rqalpha/bundle` by default, or `RQALPHA_BUNDLE_PATH` for an explicit
+local path outside tracked source. If no bundle is present, it writes
+`data_bundle_required_or_missing` with `download_required=true` and exits cleanly
+without attempting the run.
