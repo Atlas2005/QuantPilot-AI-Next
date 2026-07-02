@@ -149,7 +149,7 @@ def test_invalid_confidence_is_rejected() -> None:
     assert "confidence_out_of_range" in codes(result)
 
 
-def test_buy_without_buy_permission_is_blocked() -> None:
+def test_buy_without_buy_permission_does_not_block_paper_candidate() -> None:
     limited_account = account(
         broker_capability=replace(
             account().broker_capability,
@@ -158,10 +158,12 @@ def test_buy_without_buy_permission_is_blocked() -> None:
     )
     result = run_ai_action_paper_bridge([proposal()], limited_account)
 
-    assert "buy_permission_missing" in codes(result)
+    assert result.decision == BridgeDecision.ACCEPTED_FOR_PAPER.value
+    assert result.accepted_instructions
+    assert "buy_permission_missing" not in codes(result)
 
 
-def test_sell_without_sell_permission_is_blocked() -> None:
+def test_sell_without_sell_permission_does_not_block_paper_candidate() -> None:
     limited_account = account(
         broker_capability=replace(
             account().broker_capability,
@@ -169,31 +171,34 @@ def test_sell_without_sell_permission_is_blocked() -> None:
         )
     )
     result = run_ai_action_paper_bridge(
-        [proposal(side=ActionSide.SELL.value)],
+        [proposal(side=ActionSide.SELL.value, quantity=500)],
         limited_account,
     )
 
-    assert "sell_permission_missing" in codes(result)
+    assert result.decision == BridgeDecision.ACCEPTED_FOR_PAPER.value
+    assert result.accepted_instructions
+    assert "sell_permission_missing" not in codes(result)
 
 
-def test_read_only_account_blocks_buy_sell() -> None:
+def test_read_only_account_warns_without_blocking_paper_candidate() -> None:
     result = run_ai_action_paper_bridge(
         [proposal()],
         account(status=AccountStatus.READ_ONLY.value),
     )
 
-    assert result.decision == BridgeDecision.BLOCKED.value
-    assert result.reason == "account_preflight_failed"
+    assert result.decision == BridgeDecision.ACCEPTED_FOR_PAPER.value
+    assert result.accepted_instructions
     assert "account_preflight:read_only_trade_permission_active" in codes(result)
 
 
-def test_kill_switched_account_blocks_buy_sell() -> None:
+def test_kill_switched_account_warns_without_blocking_paper_candidate() -> None:
     result = run_ai_action_paper_bridge(
-        [proposal(side=ActionSide.SELL.value)],
+        [proposal(side=ActionSide.SELL.value, quantity=500)],
         account(status=AccountStatus.KILL_SWITCHED.value),
     )
 
-    assert result.decision == BridgeDecision.BLOCKED.value
+    assert result.decision == BridgeDecision.ACCEPTED_FOR_PAPER.value
+    assert result.accepted_instructions
     assert "account_preflight:kill_switched_trade_permission_active" in codes(result)
 
 

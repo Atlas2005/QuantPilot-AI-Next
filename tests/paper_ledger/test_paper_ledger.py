@@ -52,18 +52,19 @@ def test_buy_accepted_when_gate_passed_and_cash_sufficient() -> None:
     assert result.position_after == 100
 
 
-def test_buy_rejected_when_market_sample_unusable() -> None:
+def test_buy_accepts_with_market_sample_warning_when_gate_not_passed() -> None:
     result = run_paper_ledger_from_gated_sample(
         PaperLedgerAccount(cash=2000.0),
         buy_order(),
         gate_passed=False,
     )
 
-    assert result.status is PaperLedgerStatus.NO_GATE_PASS
-    assert result.order_status is PaperOrderStatus.REJECTED
-    assert result.reasons == ("data_sample_unusable",)
-    assert result.cash_after == 2000.0
-    assert result.position_after == 0
+    assert result.status is PaperLedgerStatus.READY
+    assert result.order_status is PaperOrderStatus.ACCEPTED
+    assert result.reasons == ()
+    assert result.warnings == ("sample_quality_gate_not_passed",)
+    assert result.cash_after == 1000.0
+    assert result.position_after == 100
 
 
 def test_buy_rejected_when_cash_insufficient() -> None:
@@ -214,7 +215,29 @@ def test_build_order_from_gate_passed_sample_result() -> None:
     assert order == buy_order()
 
 
-def test_build_order_rejects_structurally_unusable_sample_result() -> None:
+def test_build_order_accepts_quality_failed_sample_with_bars() -> None:
+    sample_result = ProviderSampleFetchResult(
+        status=ProviderSampleFetchStatus.READY,
+        selected_provider=None,
+        fetched_bar_count=3,
+        gate_passed=False,
+        reasons=(),
+        warnings=("sample_size_below_requested_minimum",),
+        suggested_next_action="paper",
+    )
+
+    order = build_paper_order_from_sample_preflight_result(
+        sample_result,
+        symbol="600000",
+        side=PaperOrderSide.BUY,
+        quantity=100,
+        limit_price=10.0,
+    )
+
+    assert order == buy_order()
+
+
+def test_build_order_rejects_empty_unusable_sample_result() -> None:
     sample_result = ProviderSampleFetchResult(
         status=ProviderSampleFetchStatus.GATE_FAILED,
         selected_provider=None,

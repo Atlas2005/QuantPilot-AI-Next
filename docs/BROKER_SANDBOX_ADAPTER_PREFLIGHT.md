@@ -29,9 +29,9 @@ Supported modes are `PAPER_ONLY`, `BROKER_SANDBOX`, and `READ_ONLY_CHECK`.
 
 ## Readiness Gate Checks
 
-`BROKER_SANDBOX` instructions require R25 readiness `PASS`.
+`BROKER_SANDBOX` instructions record R25 readiness as adapter context.
 
-Readiness `FAIL` blocks executable handoff. Readiness `MANUAL_REVIEW` produces manual review for executable broker sandbox handoff.
+Readiness `FAIL` and `MANUAL_REVIEW` produce warnings or manual-review context; they do not blanket-block structurally valid sandbox instructions.
 
 ## Account And Broker Checks
 

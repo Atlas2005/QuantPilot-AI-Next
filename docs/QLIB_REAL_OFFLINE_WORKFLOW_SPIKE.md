@@ -94,7 +94,7 @@ P41 compares the Qlib-style offline evaluation against the P40 AI-shadow-adjuste
 - mixed stock+ETF support
 - factor alignment with AI shadow recommendations
 - cost-aware score agreement with P40 replay direction
-- promotion blockers
+- advisory promotion warnings
 - whether Qlib should move to the next optional runtime spike
 
 ## Safety Boundary

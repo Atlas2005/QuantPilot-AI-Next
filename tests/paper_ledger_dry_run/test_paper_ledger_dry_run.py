@@ -194,23 +194,23 @@ def test_hold_instruction_reaching_dry_run_is_rejected() -> None:
     assert "hold_instruction_not_allowed" in codes(result.instruction_results[0])
 
 
-def test_read_only_account_blocks_buy_sell() -> None:
+def test_read_only_account_warns_without_blocking_paper_dry_run() -> None:
     result = run_paper_ledger_dry_run(
         [instruction()],
         account(status=AccountStatus.READ_ONLY.value),
     )
 
-    assert result.decision == PaperLedgerDryRunDecision.BLOCKED.value
+    assert result.decision == PaperLedgerDryRunDecision.ACCEPTED.value
     assert "account_preflight:read_only_trade_permission_active" in codes(result)
 
 
-def test_kill_switched_account_blocks_buy_sell() -> None:
+def test_kill_switched_account_warns_without_blocking_paper_dry_run() -> None:
     result = run_paper_ledger_dry_run(
-        [instruction(side=ActionSide.SELL.value)],
+        [instruction(side=ActionSide.SELL.value, quantity=500, estimated_notional=5000.0)],
         account(status=AccountStatus.KILL_SWITCHED.value),
     )
 
-    assert result.decision == PaperLedgerDryRunDecision.BLOCKED.value
+    assert result.decision == PaperLedgerDryRunDecision.ACCEPTED.value
     assert "account_preflight:kill_switched_trade_permission_active" in codes(result)
 
 

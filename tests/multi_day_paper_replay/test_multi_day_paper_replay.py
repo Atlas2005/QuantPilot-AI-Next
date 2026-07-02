@@ -252,6 +252,17 @@ def test_missing_account_evidence_does_not_block_replay() -> None:
     assert "account_preflight:evidence_refs_missing" not in codes(result.risk_flags)
 
 
+def test_read_only_account_warns_without_blocking_replay() -> None:
+    result = run_multi_day_paper_replay(
+        (day("2026-07-01", instruction()),),
+        account(status=AccountStatus.READ_ONLY.value),
+    )
+
+    assert result.decision == PaperReplayDecision.COMPLETED.value
+    assert result.blocked_days == ()
+    assert "account_preflight:read_only_trade_permission_active" in codes(result.risk_flags)
+
+
 def test_fail_fast_skips_later_days_after_blocked_day() -> None:
     result = run_multi_day_paper_replay(
         (
