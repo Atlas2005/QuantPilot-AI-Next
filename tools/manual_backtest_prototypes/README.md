@@ -12,3 +12,24 @@ Live-trading-capable frameworks must never be allowed to create broker, live tra
 
 Phase 6B does not run prototypes.
 
+## R4D RQAlpha Local Run Attempt
+
+`rqalpha_local_run_attempt.py` is a manual prototype tool only. It must be run
+from the isolated RQAlpha environment:
+
+```bash
+.venv-prototypes/rqalpha/bin/python tools/manual_backtest_prototypes/rqalpha_local_run_attempt.py
+```
+
+The tool writes a structured result artifact to:
+
+```text
+local_artifacts/backtest_prototypes/rqalpha/rqalpha_local_run_result.json
+```
+
+It does not install packages, does not modify the main `.venv`, does not call
+the network directly, and records bundle/config/data failures as structured
+local evidence. `explicit_metrics` only copies explicit allowed metric keys from
+RQAlpha output mappings; missing metrics must not be calculated or inferred.
+`observed_trade_rows`, if present, is evidence metadata rather than a performance
+metric.
