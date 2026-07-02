@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from quantpilot_core.ai_open_source_provider_small_sample_mixed_etf_replay import (
     OpenSourceProviderExportSpec,
     OpenSourceProviderName,
@@ -343,7 +345,13 @@ def test_comparison_against_p40_baseline_computed() -> None:
     report = build_p41_qlib_workflow_report(provider_spec(), records(), qlib_field_mapping=qlib_mapping())
 
     assert report.comparison_against_p40_completed is True
-    assert "p40_net_delta:2.5" in report.comparison.comparison_notes
+    p40_net_delta_note = next(
+        (note for note in report.comparison.comparison_notes if note.startswith("p40_net_delta:")),
+        None,
+    )
+    assert p40_net_delta_note is not None
+    p40_net_delta = float(p40_net_delta_note.split(":", maxsplit=1)[1])
+    assert p40_net_delta == pytest.approx(2.5, abs=0.001)
 
 
 def test_mixed_stock_etf_remains_supported() -> None:
