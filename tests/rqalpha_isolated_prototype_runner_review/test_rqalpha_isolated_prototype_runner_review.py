@@ -21,6 +21,15 @@ def _write_probe_summary(tmp_path: Path, payload: dict[str, object]) -> None:
     )
 
 
+def _write_local_run_artifact(tmp_path: Path, payload: dict[str, object]) -> None:
+    artifact_dir = tmp_path / "local_artifacts" / "backtest_prototypes" / "rqalpha"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "rqalpha_local_run_result.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+
 def test_missing_probe_summary_returns_evidence_missing(tmp_path: Path) -> None:
     result = review_rqalpha_isolated_prototype_runner(tmp_path)
 
@@ -78,21 +87,17 @@ def test_minimal_run_succeeded_without_metrics_returns_output_metrics_missing(
 
 
 def test_artifact_import_extracts_only_explicit_metrics(tmp_path: Path) -> None:
-    artifact_dir = tmp_path / "local_artifacts" / "backtest_prototypes" / "rqalpha"
-    artifact_dir.mkdir(parents=True)
-    (artifact_dir / "rqalpha_local_run_result.json").write_text(
-        json.dumps(
-            {
-                "status": "completed",
-                "executed": True,
-                "metrics": {
-                    "total_return": 0.12,
-                    "sharpe": 1.4,
-                    "unapproved_metric": 99,
-                },
-            }
-        ),
-        encoding="utf-8",
+    _write_local_run_artifact(
+        tmp_path,
+        {
+            "status": "completed",
+            "executed": True,
+            "metrics": {
+                "total_return": 0.12,
+                "sharpe": 1.4,
+                "unapproved_metric": 99,
+            },
+        },
     )
 
     result = review_rqalpha_prototype_artifact(tmp_path)
@@ -106,6 +111,65 @@ def test_artifact_import_extracts_only_explicit_metrics(tmp_path: Path) -> None:
     assert "annualized_return" not in {
         metric.name for metric in result.normalized_metrics
     }
+
+
+def test_report_consumes_r4f_local_run_artifact_as_advisory_status(
+    tmp_path: Path,
+) -> None:
+    _write_local_run_artifact(
+        tmp_path,
+        {
+            "configured_bundle_path": "/Users/atlas/.rqalpha/bundle",
+            "resolved_bundle_path": "/Users/atlas/.rqalpha/bundle/bundle",
+            "bundle_exists": True,
+            "minimal_local_run_attempted": True,
+            "minimal_local_run_succeeded": True,
+            "status": "output_metrics_missing",
+            "explicit_metrics": {},
+            "observed_trade_rows": None,
+            "warnings": ["observed_trade_rows is evidence metadata only."],
+            "conclusion": (
+                "RQAlpha isolated local run returned without explicit allowed metrics."
+            ),
+        },
+    )
+
+    report = build_rqalpha_isolated_prototype_runner_review_report(tmp_path)
+    local_summary = report["local_run_artifact_summary"]
+
+    assert report["status"] == RqalphaIsolatedPrototypeStatus.OUTPUT_METRICS_MISSING.value
+    assert report["production_ready"] is False
+    assert report["blocks_other_frameworks"] is False
+    assert local_summary["configured_bundle_path"] == "/Users/atlas/.rqalpha/bundle"
+    assert local_summary["resolved_bundle_path"] == "/Users/atlas/.rqalpha/bundle/bundle"
+    assert local_summary["bundle_exists"] is True
+    assert local_summary["minimal_local_run_attempted"] is True
+    assert local_summary["minimal_local_run_succeeded"] is True
+    assert local_summary["status"] == "output_metrics_missing"
+    assert local_summary["explicit_metrics"] == {}
+    assert local_summary["observed_trade_rows"] is None
+    assert "without explicit allowed metrics" in str(local_summary["conclusion"])
+
+
+def test_observed_trade_rows_are_not_inferred_as_trade_count(tmp_path: Path) -> None:
+    _write_local_run_artifact(
+        tmp_path,
+        {
+            "status": "output_metrics_missing",
+            "minimal_local_run_attempted": True,
+            "minimal_local_run_succeeded": True,
+            "explicit_metrics": {},
+            "observed_trade_rows": 3,
+        },
+    )
+
+    report = build_rqalpha_isolated_prototype_runner_review_report(tmp_path)
+    artifact_summary = report["artifact_review_summary"]
+
+    assert artifact_summary["observed_trade_rows"] == 3
+    assert artifact_summary["explicit_metrics"] == {}
+    assert artifact_summary["normalized_metric_names"] == ()
+    assert artifact_summary["metrics_available"] is False
 
 
 def test_report_includes_review_warning_and_next_actions(tmp_path: Path) -> None:

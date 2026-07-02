@@ -27,6 +27,7 @@ def build_rqalpha_isolated_prototype_runner_review_report(
         "output_metrics_available": result.output_metrics_available,
         "command_spec_summary": _command_spec_summary(result),
         "artifact_review_summary": _artifact_review_summary(result),
+        "local_run_artifact_summary": _local_run_artifact_summary(result),
         "warnings": result.warnings,
         "next_actions": result.next_actions,
         "production_ready": result.production_ready,
@@ -62,15 +63,75 @@ def _artifact_review_summary(
             "normalized_metric_names": (),
         }
     artifact_review = result.artifact_review
+    if not artifact_review.exists:
+        return {
+            "reviewed": False,
+            "status": artifact_review.status,
+            "artifact_path": artifact_review.artifact_path,
+            "exists": False,
+            "metrics_available": False,
+            "normalized_metric_names": (),
+            "warnings": artifact_review.warnings,
+            "errors": artifact_review.errors,
+        }
     return {
         "reviewed": True,
         "status": artifact_review.status,
         "artifact_path": artifact_review.artifact_path,
         "exists": artifact_review.exists,
         "metrics_available": artifact_review.metrics_available,
+        "configured_bundle_path": artifact_review.configured_bundle_path,
+        "resolved_bundle_path": artifact_review.resolved_bundle_path,
+        "bundle_exists": artifact_review.bundle_exists,
+        "minimal_local_run_attempted": artifact_review.minimal_local_run_attempted,
+        "minimal_local_run_succeeded": artifact_review.minimal_local_run_succeeded,
+        "explicit_metrics": dict(artifact_review.explicit_metrics),
+        "observed_trade_rows": artifact_review.observed_trade_rows,
         "normalized_metric_names": tuple(
             metric.name for metric in artifact_review.normalized_metrics
         ),
         "warnings": artifact_review.warnings,
         "errors": artifact_review.errors,
+        "conclusion": artifact_review.conclusion,
+    }
+
+
+def _local_run_artifact_summary(
+    result: RqalphaIsolatedPrototypeReviewResult,
+) -> dict[str, object]:
+    artifact_review = result.artifact_review
+    if artifact_review is None:
+        return {
+            "exists": False,
+            "configured_bundle_path": None,
+            "resolved_bundle_path": None,
+            "bundle_exists": None,
+            "minimal_local_run_attempted": result.minimal_local_run_attempted,
+            "minimal_local_run_succeeded": result.minimal_local_run_succeeded,
+            "status": result.status,
+            "explicit_metrics": {},
+            "observed_trade_rows": None,
+            "warnings": (),
+            "conclusion": None,
+        }
+    return {
+        "exists": artifact_review.exists,
+        "configured_bundle_path": artifact_review.configured_bundle_path,
+        "resolved_bundle_path": artifact_review.resolved_bundle_path,
+        "bundle_exists": artifact_review.bundle_exists,
+        "minimal_local_run_attempted": (
+            artifact_review.minimal_local_run_attempted
+            if artifact_review.minimal_local_run_attempted is not None
+            else result.minimal_local_run_attempted
+        ),
+        "minimal_local_run_succeeded": (
+            artifact_review.minimal_local_run_succeeded
+            if artifact_review.minimal_local_run_succeeded is not None
+            else result.minimal_local_run_succeeded
+        ),
+        "status": artifact_review.status if artifact_review.exists else result.status,
+        "explicit_metrics": dict(artifact_review.explicit_metrics),
+        "observed_trade_rows": artifact_review.observed_trade_rows,
+        "warnings": artifact_review.warnings,
+        "conclusion": artifact_review.conclusion,
     }

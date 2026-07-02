@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Mapping
 
 
 class RqalphaIsolatedPrototypeStatus(str, Enum):
@@ -46,6 +47,14 @@ class RqalphaPrototypeArtifactReviewResult:
     artifact_path: str
     exists: bool
     metrics_available: bool
+    configured_bundle_path: str | None
+    resolved_bundle_path: str | None
+    bundle_exists: bool | None
+    minimal_local_run_attempted: bool | None
+    minimal_local_run_succeeded: bool | None
+    explicit_metrics: Mapping[str, object]
+    observed_trade_rows: int | None
+    conclusion: str | None
     normalized_metrics: tuple["RqalphaAshareBacktestMetric", ...]
     warnings: tuple[str, ...]
     errors: tuple[str, ...]

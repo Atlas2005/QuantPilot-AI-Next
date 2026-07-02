@@ -33,27 +33,28 @@ def review_rqalpha_isolated_prototype_runner(
     probe_exists = bool(probe_summary)
     probe_importable = probe_summary.get("rqalpha_importable") is True
     probe_version = _optional_string(probe_summary.get("rqalpha_version"))
-    minimal_local_run_attempted = (
-        probe_summary.get("minimal_local_run_attempted") is True
+    artifact_review = review_rqalpha_prototype_artifact(root)
+    minimal_local_run_attempted = _first_bool(
+        artifact_review.minimal_local_run_attempted,
+        probe_summary.get("minimal_local_run_attempted"),
     )
-    minimal_local_run_succeeded = (
-        probe_summary.get("minimal_local_run_succeeded") is True
+    minimal_local_run_succeeded = _first_bool(
+        artifact_review.minimal_local_run_succeeded,
+        probe_summary.get("minimal_local_run_succeeded"),
     )
-    output_metrics_available = probe_summary.get("output_metrics_available") is True
-    artifact_review = (
-        review_rqalpha_prototype_artifact(root)
-        if minimal_local_run_succeeded or output_metrics_available
-        else None
+    output_metrics_available = (
+        probe_summary.get("output_metrics_available") is True
+        or artifact_review.metrics_available
     )
     status = _determine_status(
         probe_exists=probe_exists,
         probe_importable=probe_importable,
+        artifact_exists=artifact_review.exists,
+        artifact_status=artifact_review.status,
         minimal_local_run_attempted=minimal_local_run_attempted,
         minimal_local_run_succeeded=minimal_local_run_succeeded,
         output_metrics_available=output_metrics_available,
-        artifact_metrics_available=(
-            artifact_review.metrics_available if artifact_review is not None else False
-        ),
+        artifact_metrics_available=artifact_review.metrics_available,
     )
 
     return RqalphaIsolatedPrototypeReviewResult(
@@ -146,11 +147,19 @@ def _determine_status(
     *,
     probe_exists: bool,
     probe_importable: bool,
+    artifact_exists: bool,
+    artifact_status: str,
     minimal_local_run_attempted: bool,
     minimal_local_run_succeeded: bool,
     output_metrics_available: bool,
     artifact_metrics_available: bool,
 ) -> str:
+    if artifact_exists and artifact_status in {
+        RqalphaIsolatedPrototypeStatus.LOCAL_RUN_FAILED.value,
+        RqalphaIsolatedPrototypeStatus.OUTPUT_METRICS_MISSING.value,
+        RqalphaIsolatedPrototypeStatus.LOCAL_RUN_SUCCEEDED.value,
+    }:
+        return artifact_status
     if not probe_exists:
         return RqalphaIsolatedPrototypeStatus.EVIDENCE_MISSING.value
     if probe_importable and not minimal_local_run_attempted:
@@ -218,3 +227,10 @@ def _optional_string(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _first_bool(*values: object) -> bool:
+    for value in values:
+        if isinstance(value, bool):
+            return value
+    return False
