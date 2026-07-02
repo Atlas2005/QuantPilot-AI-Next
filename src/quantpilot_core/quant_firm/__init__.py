@@ -40,6 +40,14 @@ from quantpilot_core.quant_firm.contracts import (
     StrategyMutationPlan,
     StrategyMutationRecommendation,
 )
+from quantpilot_core.quant_firm.deepseek_advisory import (
+    DeepSeekAdvisoryAgent,
+    DeepSeekAdvisoryInput,
+    DeepSeekAdvisoryOutput,
+    DeepSeekAdvisoryRole,
+    DeepSeekClientConfig,
+    run_deepseek_advisory_fallback,
+)
 from quantpilot_core.quant_firm.learning import (
     build_attribution_report,
     build_experiment_record,
@@ -54,6 +62,11 @@ from quantpilot_core.quant_firm.orchestrator import (
 __all__ = [
     "AGENT_CLASSES",
     "DEFAULT_QUANT_FIRM_AGENTS",
+    "DeepSeekAdvisoryAgent",
+    "DeepSeekAdvisoryInput",
+    "DeepSeekAdvisoryOutput",
+    "DeepSeekAdvisoryRole",
+    "DeepSeekClientConfig",
     "AgentDecision",
     "AgentRecommendation",
     "AttributionRecord",
@@ -93,5 +106,6 @@ __all__ = [
     "build_experiment_record",
     "build_failure_analysis_report",
     "build_strategy_mutation_plan",
+    "run_deepseek_advisory_fallback",
     "run_quant_firm_decision_cycle",
 ]

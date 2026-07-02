@@ -41,7 +41,7 @@ from quantpilot_core.information_agents import (
     run_shareholder_dividend_agent,
     run_valuation_agent,
 )
-from quantpilot_core.quant_firm import run_quant_firm_decision_cycle
+from quantpilot_core.quant_firm import run_deepseek_advisory_fallback, run_quant_firm_decision_cycle
 from quantpilot_core.research_committee import (
     build_research_committee_report,
     rank_research_candidates,
@@ -269,6 +269,11 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="run_quant_firm_decision_cycle",
                 description="Run the deterministic Quant Firm multi-agent decision cycle.",
                 callable=run_quant_firm_decision_cycle,
+            ),
+            QuantPilotTool(
+                name="run_deepseek_advisory_fallback",
+                description="Run deterministic DeepSeek-style Quant Firm advisory without network or live model calls.",
+                callable=run_deepseek_advisory_fallback,
             ),
             QuantPilotTool(
                 name="replay_provider_signals_with_vectorbt",

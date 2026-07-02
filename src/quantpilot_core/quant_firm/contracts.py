@@ -163,3 +163,4 @@ class QuantFirmDecisionReport:
     external_side_effects: tuple[str, ...]
     limitations: tuple[str, ...]
     next_actions: tuple[str, ...]
+    deepseek_advisory: tuple[Any, ...] = field(default_factory=tuple)

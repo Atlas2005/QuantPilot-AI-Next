@@ -17,6 +17,12 @@ from quantpilot_core.quant_firm.contracts import (
     QuantFirmDecisionReport,
     StrategyMutationPlan,
 )
+from quantpilot_core.quant_firm.deepseek_advisory import (
+    DeepSeekAdvisoryAgent,
+    DeepSeekAdvisoryInput,
+    DeepSeekAdvisoryRole,
+    DeepSeekClientConfig,
+)
 from quantpilot_core.quant_firm.learning import (
     build_attribution_report,
     build_experiment_record,
@@ -46,6 +52,9 @@ class QuantFirmOrchestrator:
         cycle_id: str = "quant-firm-cycle-001",
         strategy_id: str | None = None,
         context: Mapping[str, Any] | None = None,
+        include_deepseek_advisory: bool = False,
+        deepseek_advisory_roles: tuple[DeepSeekAdvisoryRole | str, ...] | None = None,
+        deepseek_config: DeepSeekClientConfig | None = None,
     ) -> QuantFirmDecisionReport:
         """Run all firm roles deterministically without external side effects."""
 
@@ -77,6 +86,23 @@ class QuantFirmOrchestrator:
         )
         active_context["learning_desk"] = learning_desk
         committee_decision = self.committee.decide(recommendations)
+        deepseek_advisory = (
+            _deepseek_advisory_outputs(
+                roles=deepseek_advisory_roles,
+                config=deepseek_config,
+                cycle_id=cycle_id,
+                strategy_id=resolved_strategy_id,
+                recommendations=recommendations,
+                committee_decision=committee_decision,
+                learning_desk=learning_desk,
+                execution_candidate_report=execution_candidate_report,
+                portfolio_allocation_plan=portfolio_allocation_plan,
+                vectorbt_replay_result=vectorbt_replay_result,
+                context=active_context,
+            )
+            if include_deepseek_advisory
+            else ()
+        )
         return QuantFirmDecisionReport(
             cycle_id=cycle_id,
             strategy_id=resolved_strategy_id,
@@ -90,10 +116,11 @@ class QuantFirmOrchestrator:
             external_side_effects=(),
             limitations=_limitations(execution_candidate_report, portfolio_allocation_plan),
             next_actions=(
-                "attach DeepSeek later as advisory_reasoning_hook_only",
+                "use DeepSeek only as advisory_reasoning_hook_only when explicitly included",
                 "compare EXEC1 and EXEC2 artifacts with vectorbt replay diagnostics",
                 "keep broker adapter disabled unless a separate explicit sandbox design is approved",
             ),
+            deepseek_advisory=deepseek_advisory,
         )
 
 
@@ -105,6 +132,9 @@ def run_quant_firm_decision_cycle(
     cycle_id: str = "quant-firm-cycle-001",
     strategy_id: str | None = None,
     context: Mapping[str, Any] | None = None,
+    include_deepseek_advisory: bool = False,
+    deepseek_advisory_roles: tuple[DeepSeekAdvisoryRole | str, ...] | None = None,
+    deepseek_config: DeepSeekClientConfig | None = None,
 ) -> QuantFirmDecisionReport:
     """Registry-friendly wrapper for one Quant Firm decision cycle."""
 
@@ -115,6 +145,9 @@ def run_quant_firm_decision_cycle(
         cycle_id=cycle_id,
         strategy_id=strategy_id,
         context=context,
+        include_deepseek_advisory=include_deepseek_advisory,
+        deepseek_advisory_roles=deepseek_advisory_roles,
+        deepseek_config=deepseek_config,
     )
 
 
@@ -195,3 +228,51 @@ def _limitations(
     if not isinstance(portfolio_allocation_plan, PortfolioAllocationPlan):
         values.append("exec2_plan_optional_and_not_supplied")
     return tuple(values)
+
+
+def _deepseek_advisory_outputs(
+    *,
+    roles: tuple[DeepSeekAdvisoryRole | str, ...] | None,
+    config: DeepSeekClientConfig | None,
+    cycle_id: str,
+    strategy_id: str,
+    recommendations,
+    committee_decision,
+    learning_desk: LearningDeskOutput,
+    execution_candidate_report: ExecutionCandidateReport | None,
+    portfolio_allocation_plan: PortfolioAllocationPlan | None,
+    vectorbt_replay_result: Any | None,
+    context: Mapping[str, Any],
+) -> tuple[Any, ...]:
+    selected_roles = roles or (DeepSeekAdvisoryRole.INVESTMENT_COMMITTEE,)
+    agent = DeepSeekAdvisoryAgent(config or DeepSeekClientConfig(enable_live_call=False))
+    outputs = []
+    for role in selected_roles:
+        advisory_role = role if isinstance(role, DeepSeekAdvisoryRole) else DeepSeekAdvisoryRole(role)
+        outputs.append(
+            agent.advise(
+                DeepSeekAdvisoryInput(
+                    role=advisory_role,
+                    learning_desk_output=learning_desk,
+                    quant_firm_decision_report_summary={
+                        "cycle_id": cycle_id,
+                        "strategy_id": strategy_id,
+                        "final_recommendation": committee_decision.action,
+                        "recommendation_count": len(tuple(recommendations)),
+                        "broker_adapter_enabled": False,
+                    },
+                    research_committee_summary=context.get("research_committee_summary"),
+                    information_agent_summary=context.get("information_agent_summary"),
+                    execution_candidate_report_summary=execution_candidate_report,
+                    portfolio_allocation_plan_summary=portfolio_allocation_plan,
+                    vectorbt_stats=vectorbt_replay_result,
+                    qlib_report=context.get("qlib_report"),
+                    rqalpha_artifact_summary=context.get("rqalpha_artifact_summary"),
+                    cost_after_fill_metrics=context.get("cost_after_fill_metrics"),
+                    current_parameters=context.get("current_parameters"),
+                    market_regime=context.get("market_regime"),
+                    run_label=f"{strategy_id}:{cycle_id}:deepseek-advisory",
+                )
+            )
+        )
+    return tuple(outputs)
