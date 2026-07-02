@@ -93,9 +93,14 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
         "normalized_ohlcv_to_vbt3_signal_frame",
         "qlib_signal_artifact_to_vbt3_signal_frame",
         "replay_provider_signals_with_vectorbt",
+        "run_concept_rotation_agent",
+        "run_fund_positioning_agent",
         "run_liquidity_regime_agent",
+        "run_moneyflow_structure_agent",
         "run_news_impact_agent",
         "run_northbound_flow_agent",
+        "run_shareholder_dividend_agent",
+        "run_valuation_agent",
         "run_vectorbt_signal_backtest",
     )
     assert all(tool.side_effect_level is ToolSideEffectLevel.PURE_IN_MEMORY for tool in registry.list_tools())

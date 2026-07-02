@@ -12,6 +12,11 @@ class InformationAgentRole(str, Enum):
     NEWS_IMPACT = "news_impact_agent"
     NORTHBOUND_FLOW = "northbound_flow_agent"
     LIQUIDITY_REGIME = "liquidity_regime_agent"
+    FUND_POSITIONING = "fund_positioning_agent"
+    VALUATION = "valuation_agent"
+    CONCEPT_ROTATION = "concept_rotation_agent"
+    SHAREHOLDER_DIVIDEND = "shareholder_dividend_agent"
+    MONEYFLOW_STRUCTURE = "moneyflow_structure_agent"
 
 
 class InformationDirection(str, Enum):
