@@ -54,7 +54,11 @@ def test_mature_framework_labels_cover_current_adapter_layers() -> None:
 
     assert "qlib_artifact_adapter" in labels
     assert "vectorbt_adapter" in labels
+    assert "vectorbt_order_intent_adapter" in labels
     assert "rqalpha_artifact_adapter" in labels
+    assert "rqalpha_order_intent_adapter" in labels
+    assert "backtrader_order_intent_adapter" in labels
+    assert "paper_trading_loop" in labels
     assert "mlflow_style_in_memory_experiment_tracking" in labels
     assert "deepseek_advisory_fallback" in labels
 
@@ -70,9 +74,11 @@ def test_enabled_skills_reference_known_tool_registry_tools_and_placeholders_are
     assert placeholders
     assert all(not skill.enabled_by_default for skill in placeholders)
     assert {skill.tool_name for skill in placeholders} == {
+        "backtrader_order_intent_adapter_placeholder",
         "build_rqalpha_isolated_prototype_runner_review_report",
         "evaluate_cost_after_fill",
         "learning_desk_outputs",
+        "rqalpha_order_intent_adapter_placeholder",
     }
 
 
