@@ -116,6 +116,57 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
     ]
 
 
+def test_default_registry_prefers_mature_replacement_path_over_legacy_blockers() -> None:
+    registry = build_default_tool_registry()
+    names = set(registry.list_names())
+
+    assert {
+        "normalize_baostock_history_k_frame",
+        "normalize_tushare_daily_frame",
+        "normalized_ohlcv_to_vbt3_signal_frame",
+        "qlib_signal_artifact_to_vbt3_signal_frame",
+        "build_information_decision_report",
+        "build_research_committee_report",
+        "rank_research_candidates",
+        "replay_provider_signals_with_vectorbt",
+        "run_vectorbt_signal_backtest",
+    } <= names
+
+    assert names.isdisjoint(
+        {
+            "run_multi_day_paper_replay",
+            "run_small_capital_readiness_gate",
+            "run_broker_sandbox_adapter_preflight",
+            "run_final_readiness_release_hardening",
+            "run_deepseek_multi_agent_contract_preflight",
+            "decide_provider_probe_gate",
+            "validate_small_sample_data_gate_request",
+        }
+    )
+
+
+def test_default_registry_does_not_introduce_hard_blocking_safety_layer() -> None:
+    registry = build_default_tool_registry()
+    registry_source = Path(__file__).parents[2] / "src" / "quantpilot_core" / "tool_registry" / "registry.py"
+    source = registry_source.read_text().lower()
+
+    hard_blocking_terms = (
+        "final_readiness_release_hardening",
+        "small_capital_readiness_gate",
+        "broker_sandbox_adapter_preflight",
+        "small_sample_data_gate",
+        "provider_probe_gate",
+        "deepseek_multi_agent",
+        "multi_day_paper_replay",
+        "real_provider_mixed_etf_paper_replay",
+        "use_legacy_engine",
+        "hard_block",
+        "block_trade",
+    )
+    assert all(term not in source for term in hard_blocking_terms)
+    assert all(tool.side_effect_level is ToolSideEffectLevel.PURE_IN_MEMORY for tool in registry.list_tools())
+
+
 def test_registered_tools_run_data2_to_vbt3_to_vectorbt_replay_path() -> None:
     registry = build_default_tool_registry()
 
