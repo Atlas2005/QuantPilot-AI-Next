@@ -7,7 +7,9 @@ from typing import Iterable
 from quantpilot_core.quant_firm.contracts import (
     AgentDecision,
     AgentRecommendation,
+    FailureAnalysisReport,
     QuantFirmAgentRole,
+    StrategyMutationPlan,
 )
 
 
@@ -39,8 +41,19 @@ class InvestmentCommitteeAgent:
             metadata={
                 "recommendation_count": len(items),
                 "disabled_roles": tuple(item.role.value for item in items if item.decision.disabled),
+                "learning_recommendations": _learning_recommendations(items),
                 "no_llm_call": True,
                 "no_external_api": True,
             },
             advisory_reasoning_hook="deepseek_advisory_only:investment_committee",
         )
+
+
+def _learning_recommendations(items: tuple[AgentRecommendation, ...]) -> tuple[str, ...]:
+    values: list[str] = []
+    for item in items:
+        if isinstance(item.output, FailureAnalysisReport) and item.output.primary_cause:
+            values.append(f"primary_failure:{item.output.primary_cause}")
+        if isinstance(item.output, StrategyMutationPlan):
+            values.extend(f"mutate:{mutation.parameter}" for mutation in item.output.recommendations)
+    return tuple(dict.fromkeys(values))

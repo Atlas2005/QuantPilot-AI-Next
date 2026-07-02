@@ -12,6 +12,12 @@ from quantpilot_core.quant_firm.contracts import (
     AgentRecommendation,
     QuantFirmAgentRole,
 )
+from quantpilot_core.quant_firm.learning import (
+    build_attribution_report,
+    build_experiment_record,
+    build_failure_analysis_report,
+    build_strategy_mutation_plan,
+)
 
 
 class DeterministicQuantFirmAgent:
@@ -223,6 +229,30 @@ class AttributionAgent(DeterministicQuantFirmAgent):
     rationale = "Attribution is based on in-memory cycle inputs."
     evidence_ref = "evidence://quant-firm/learning/attribution"
 
+    def run(self, context: Mapping[str, Any]) -> AgentRecommendation:
+        output = build_attribution_report(
+            context.get("execution_candidate_report"),
+            context.get("portfolio_allocation_plan"),
+        )
+        score = _bounded_score(0.78 + (0.08 if output.records else 0.0))
+        decision = AgentDecision(
+            role=self.role,
+            action=self.recommendation,
+            confidence=score,
+            rationale=self.rationale,
+            evidence_refs=(self.evidence_ref,),
+            metadata={**self._metadata(context), "attribution_record_count": len(output.records)},
+            advisory_reasoning_hook=f"deepseek_advisory_only:{self.role.value}",
+        )
+        return AgentRecommendation(
+            role=self.role,
+            recommendation=self.recommendation,
+            score=score,
+            decision=decision,
+            limitations=() if output.records else ("no_exec1_candidates_to_attribute",),
+            output=output,
+        )
+
 
 class ExperimentTrackerAgent(DeterministicQuantFirmAgent):
     role = QuantFirmAgentRole.EXPERIMENT_TRACKER
@@ -230,12 +260,77 @@ class ExperimentTrackerAgent(DeterministicQuantFirmAgent):
     rationale = "Experiment tracking is represented in the returned report, with no file or service writes."
     evidence_ref = "evidence://quant-firm/learning/experiment"
 
+    def run(self, context: Mapping[str, Any]) -> AgentRecommendation:
+        strategy_id = _strategy_id(context)
+        output = build_experiment_record(
+            cycle_id=str(context.get("cycle_id", "quant-firm-cycle-001")),
+            strategy_id=strategy_id,
+            execution_candidate_report=context.get("execution_candidate_report"),
+            portfolio_allocation_plan=context.get("portfolio_allocation_plan"),
+            vectorbt_replay_result=context.get("vectorbt_replay_result"),
+            context=context,
+        )
+        score = 0.86
+        decision = AgentDecision(
+            role=self.role,
+            action=self.recommendation,
+            confidence=score,
+            rationale=self.rationale,
+            evidence_refs=(self.evidence_ref,),
+            metadata={
+                **self._metadata(context),
+                "experiment_id": output.experiment_id,
+                "external_persistence": False,
+            },
+            advisory_reasoning_hook=f"deepseek_advisory_only:{self.role.value}",
+        )
+        return AgentRecommendation(
+            role=self.role,
+            recommendation=self.recommendation,
+            score=score,
+            decision=decision,
+            limitations=("in_memory_record_only",),
+            output=output,
+        )
+
 
 class FailureAnalysisAgent(DeterministicQuantFirmAgent):
     role = QuantFirmAgentRole.FAILURE_ANALYSIS
     recommendation = "surface_missing_artifacts_as_limitations"
     rationale = "Failure analysis identifies absent optional artifacts without blocking the cycle."
     evidence_ref = "evidence://quant-firm/learning/failure-analysis"
+
+    def run(self, context: Mapping[str, Any]) -> AgentRecommendation:
+        output = build_failure_analysis_report(
+            context.get("execution_candidate_report"),
+            context.get("portfolio_allocation_plan"),
+            context.get("vectorbt_replay_result"),
+            market_regime=context.get("market_regime"),
+            information_signals=context.get("information_signals"),
+        )
+        action = "classify_failure_causes" if output.causes else "no_failure_threshold_breached"
+        score = _bounded_score(0.82 if output.causes else 0.74)
+        decision = AgentDecision(
+            role=self.role,
+            action=action,
+            confidence=score,
+            rationale=self.rationale,
+            evidence_refs=(self.evidence_ref,),
+            metadata={
+                **self._metadata(context),
+                "primary_cause": output.primary_cause,
+                "failure_cause_count": len(output.causes),
+            },
+            advisory_reasoning_hook=f"deepseek_advisory_only:{self.role.value}",
+        )
+        return AgentRecommendation(
+            role=self.role,
+            recommendation=action,
+            score=score,
+            decision=decision,
+            limitations=self._limitations(context),
+            output=output,
+        )
 
     def _limitations(self, context: Mapping[str, Any]) -> tuple[str, ...]:
         missing = []
@@ -251,6 +346,56 @@ class StrategyMutationAgent(DeterministicQuantFirmAgent):
     recommendation = "propose_next_deterministic_shadow_variant"
     rationale = "Strategy mutation changes only offline parameters for future tests."
     evidence_ref = "evidence://quant-firm/learning/mutation"
+
+    def run(self, context: Mapping[str, Any]) -> AgentRecommendation:
+        attribution = build_attribution_report(
+            context.get("execution_candidate_report"),
+            context.get("portfolio_allocation_plan"),
+        )
+        strategy_id = _strategy_id(context)
+        experiment = build_experiment_record(
+            cycle_id=str(context.get("cycle_id", "quant-firm-cycle-001")),
+            strategy_id=strategy_id,
+            execution_candidate_report=context.get("execution_candidate_report"),
+            portfolio_allocation_plan=context.get("portfolio_allocation_plan"),
+            vectorbt_replay_result=context.get("vectorbt_replay_result"),
+            context=context,
+        )
+        failure_analysis = build_failure_analysis_report(
+            context.get("execution_candidate_report"),
+            context.get("portfolio_allocation_plan"),
+            context.get("vectorbt_replay_result"),
+            market_regime=context.get("market_regime"),
+            information_signals=context.get("information_signals"),
+        )
+        output = build_strategy_mutation_plan(
+            experiment=experiment,
+            failure_analysis=failure_analysis,
+            attribution=attribution,
+        )
+        score = _bounded_score(0.76 + min(0.12, len(output.recommendations) * 0.02))
+        decision = AgentDecision(
+            role=self.role,
+            action=self.recommendation,
+            confidence=score,
+            rationale=self.rationale,
+            evidence_refs=(self.evidence_ref,),
+            metadata={
+                **self._metadata(context),
+                "mutation_recommendation_count": len(output.recommendations),
+                "reduce_low_liquidity_allocation": output.reduce_low_liquidity_allocation,
+                "reduce_concentration": output.reduce_concentration,
+            },
+            advisory_reasoning_hook=f"deepseek_advisory_only:{self.role.value}",
+        )
+        return AgentRecommendation(
+            role=self.role,
+            recommendation=self.recommendation,
+            score=score,
+            decision=decision,
+            limitations=("deterministic_rules_only",),
+            output=output,
+        )
 
 
 AGENT_CLASSES = (
@@ -293,6 +438,18 @@ def _exec_bonus(context: Mapping[str, Any], role: QuantFirmAgentRole) -> float:
 
 def _bounded_score(value: float) -> float:
     return round(max(0.0, min(1.0, value)), 6)
+
+
+def _strategy_id(context: Mapping[str, Any]) -> str:
+    if context.get("strategy_id") is not None:
+        return str(context["strategy_id"])
+    plan = context.get("portfolio_allocation_plan")
+    if isinstance(plan, PortfolioAllocationPlan):
+        return plan.strategy_id
+    report = context.get("execution_candidate_report")
+    if isinstance(report, ExecutionCandidateReport):
+        return report.strategy_id
+    return "quant-firm-shadow-strategy"
 
 
 def as_metadata(value: Any) -> Mapping[str, Any]:

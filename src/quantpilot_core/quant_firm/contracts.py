@@ -57,6 +57,94 @@ class AgentRecommendation:
     score: float
     decision: AgentDecision
     limitations: tuple[str, ...] = ()
+    output: Any | None = None
+
+
+@dataclass(frozen=True)
+class AttributionRecord:
+    """Per-symbol deterministic contribution record."""
+
+    symbol: str
+    rank: int
+    contribution_score: float
+    candidate_confidence: float
+    expected_return: float
+    risk_score: float
+    liquidity_score: float
+    cost_drag: float
+    allocation_weight: float
+    evidence_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AttributionReport:
+    """Ranked attribution output for one firm cycle."""
+
+    records: tuple[AttributionRecord, ...]
+    aggregate_contribution_score: float
+    ranked_by: str = "contribution_score_desc"
+
+
+@dataclass(frozen=True)
+class ExperimentRecord:
+    """In-memory experiment tracking record."""
+
+    experiment_id: str
+    strategy_id: str
+    parameter_set: Mapping[str, Any]
+    performance_metrics: Mapping[str, float | int | str | None]
+    run_label: str
+    evidence_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FailureCause:
+    """Explainable deterministic failure classification."""
+
+    cause: str
+    severity: float
+    explanation: str
+    evidence_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FailureAnalysisReport:
+    """Learning Desk failure analysis output."""
+
+    causes: tuple[FailureCause, ...]
+    primary_cause: str | None
+    no_failure_detected: bool
+
+
+@dataclass(frozen=True)
+class StrategyMutationRecommendation:
+    """One deterministic next-iteration parameter recommendation."""
+
+    parameter: str
+    current_value: Any
+    recommended_value: Any
+    reason: str
+    evidence_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class StrategyMutationPlan:
+    """Next-iteration Learning Desk mutation plan."""
+
+    recommendations: tuple[StrategyMutationRecommendation, ...]
+    reduce_low_liquidity_allocation: bool
+    reduce_concentration: bool
+    deterministic_ruleset: str = "quant_firm_learning_desk_v1"
+
+
+@dataclass(frozen=True)
+class LearningDeskOutput:
+    """Combined functional Learning Desk output."""
+
+    attribution: AttributionReport
+    experiment: ExperimentRecord
+    failure_analysis: FailureAnalysisReport
+    strategy_mutation: StrategyMutationPlan
 
 
 @dataclass(frozen=True)
@@ -68,6 +156,7 @@ class QuantFirmDecisionReport:
     recommendations: tuple[AgentRecommendation, ...]
     committee_decision: AgentDecision
     final_recommendation: str
+    learning_desk: LearningDeskOutput
     referenced_exec1: bool
     referenced_exec2: bool
     broker_adapter_enabled: bool
