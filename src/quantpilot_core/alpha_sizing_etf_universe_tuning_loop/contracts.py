@@ -70,6 +70,12 @@ class SizingCandidate:
 
 
 @dataclass(frozen=True)
+class SizingContext:
+    fill_rate_hint: float | None = None
+    zero_trade_reason_distribution: dict[str, int] | None = None
+
+
+@dataclass(frozen=True)
 class TuningDecision:
     symbol: str
     instrument_type: str

@@ -84,10 +84,12 @@ P37 does not:
 
 ## Value Orientation
 
-P37 moves the system closer to controlled automated A-share and ETF trading by improving what the daily paper loop can actually trade: better candidates, valid ETF-specific rules, more practical sizing, and explicit cost-aware tuning.
+P37 moves the system closer to controlled automated A-share and ETF trading by improving candidate quality, valid ETF-specific rules, practical sizing, and explicit cost-aware tuning.
 
 ## Recommended Next Step
 
-Use P37 output to feed the P36 daily paper trading loop with a mixed stock/ETF candidate set and compare whether ETF inclusion improves fill rate, cost drag, capital usage, and net PnL after cost.
+Use P37 output as a pure alpha, sizing, and universe tuning layer. Do not use P36/P38 as current default replay/fill/metrics providers.
 
 For provider mixed ETF replay, prefer the R3D `provider_vectorbt_replay` path. The old P36/P39 provider replay path is legacy/reference only; generic replay and portfolio metrics should move to vectorbt, RQAlpha, or Qlib where suitable.
+
+Signal replay and portfolio metrics should prefer vectorbt where feasible. A-share event-driven trading and backtest semantics should move toward RQAlpha, and AI/factor research workflow should target Qlib.
