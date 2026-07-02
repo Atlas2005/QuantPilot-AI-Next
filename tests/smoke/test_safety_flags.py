@@ -32,4 +32,3 @@ def test_safety_status_contains_expected_false_values() -> None:
     assert set(status) == EXPECTED_STATUS_KEYS
     assert all(value is False for value in status.values())
     assert status["trading_ready"] is not True
-

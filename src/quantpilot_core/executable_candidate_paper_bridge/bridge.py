@@ -41,6 +41,8 @@ def build_paper_ledger_instruction_from_candidate(
 
 def run_candidate_paper_dry_run(
     bridge_input: CandidatePaperBridgeInput,
+    *,
+    use_legacy_engine: bool | None = None,
 ) -> CandidatePaperBridgeResult:
     """Run the existing paper ledger dry-run for an executable candidate."""
 
@@ -70,6 +72,7 @@ def run_candidate_paper_dry_run(
     dry_run_result = run_paper_ledger_dry_run(
         (instruction,),
         bridge_input.account_profile,
+        use_legacy_engine=use_legacy_engine,
     )
     return CandidatePaperBridgeResult(
         accepted=dry_run_result.ok,

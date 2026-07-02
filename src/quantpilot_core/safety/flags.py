@@ -25,4 +25,3 @@ def get_safety_status() -> dict[str, bool]:
         "backtesting_allowed": BACKTESTING_ALLOWED,
         "agent_orchestration_allowed": AGENT_ORCHESTRATION_ALLOWED,
     }
-

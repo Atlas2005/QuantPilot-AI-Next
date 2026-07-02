@@ -6,6 +6,7 @@ from quantpilot_core.daily_paper_trading_loop_tradability_metrics import (
     DailyPaperTradingInput,
     build_daily_paper_trading_loop_report,
 )
+from quantpilot_core.config.legacy_engine import require_legacy_engine
 from quantpilot_core.gate_pruning_tradability_fill_loop import TradeSide, TradeSignalCandidate
 from quantpilot_core.real_provider_mixed_etf_paper_replay.contracts import (
     ProviderReplayResult,
@@ -18,9 +19,12 @@ from quantpilot_core.real_provider_mixed_etf_paper_replay.sample_bridge import (
 
 def replay_provider_mixed_etf_sample(
     replay_input: RealProviderReplayInput,
+    *,
+    use_legacy_engine: bool | None = None,
 ) -> ProviderReplayResult:
     """Replay accepted samples through the legacy P36 path for compatibility."""
 
+    require_legacy_engine(use_legacy_engine)
     validation = validate_provider_mixed_universe_sample(replay_input)
     if not validation.ok or validation.sample is None:
         return ProviderReplayResult(
@@ -44,7 +48,10 @@ def replay_provider_mixed_etf_sample(
 
     sample = validation.sample
     paper_input = _sample_to_daily_paper_input(replay_input)
-    daily_report = build_daily_paper_trading_loop_report(paper_input)
+    daily_report = build_daily_paper_trading_loop_report(
+        paper_input,
+        use_legacy_engine=True,
+    )
     metrics = daily_report.metrics
     return ProviderReplayResult(
         validation=validation,

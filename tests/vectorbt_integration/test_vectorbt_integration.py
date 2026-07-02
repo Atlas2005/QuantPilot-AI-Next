@@ -4,6 +4,7 @@ from dataclasses import fields
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from quantpilot_core import vectorbt_integration
 from quantpilot_core.vectorbt_integration import (
@@ -37,6 +38,27 @@ def test_vectorbt_adapter_runs_simple_buy_sell_signal() -> None:
     assert metrics.total_return is not None
     assert metrics.total_profit is not None
     assert metrics.max_drawdown is not None
+    assert metrics.trade_count == 1
+
+
+@pytest.mark.parametrize("env_value", [None, "false"])
+def test_vectorbt_integration_runs_without_legacy_engine_opt_in(
+    monkeypatch,
+    env_value: str | None,
+) -> None:
+    if env_value is None:
+        monkeypatch.delenv("USE_LEGACY_ENGINE", raising=False)
+    else:
+        monkeypatch.setenv("USE_LEGACY_ENGINE", env_value)
+
+    metrics = run_vectorbt_signal_backtest(
+        close_series(),
+        entries_series(),
+        exits_series(),
+        init_cash=1_000.0,
+    )
+
+    assert isinstance(metrics, VectorbtSignalMetrics)
     assert metrics.trade_count == 1
 
 

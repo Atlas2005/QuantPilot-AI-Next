@@ -17,10 +17,15 @@ from quantpilot_core.daily_paper_trading_loop_tradability_metrics.metrics import
 
 def build_daily_paper_trading_loop_report(
     loop_input: DailyPaperTradingInput,
+    *,
+    use_legacy_engine: bool | None = None,
 ) -> DailyPaperTradingLoopReport:
     """Run the P36 loop and build a value-oriented tradability report."""
 
-    day_results = run_daily_paper_trading_loop(loop_input)
+    day_results = run_daily_paper_trading_loop(
+        loop_input,
+        use_legacy_engine=use_legacy_engine,
+    )
     metrics = calculate_daily_tradability_metrics(
         day_results,
         safety_barrier_percent=min(loop_input.safety_barrier_percent, 140.0),
