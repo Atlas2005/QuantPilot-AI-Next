@@ -14,6 +14,9 @@ dependencies = []
 dev = [
     "pytest>=8,<9",
 ]
+vectorbt = [
+    "vectorbt==1.0.0",
+]
 replay = [
     "vectorbt>=0.26,<0.29",
     "pandas>=2,<3",
