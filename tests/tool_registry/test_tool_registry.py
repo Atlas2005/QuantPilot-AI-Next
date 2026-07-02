@@ -77,6 +77,7 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
         "normalize_baostock_history_k_frame",
         "normalize_tushare_daily_frame",
         "normalized_ohlcv_to_vbt3_signal_frame",
+        "qlib_signal_artifact_to_vbt3_signal_frame",
         "replay_provider_signals_with_vectorbt",
         "run_vectorbt_signal_backtest",
     )
@@ -132,6 +133,53 @@ def test_registered_tools_run_data2_to_vbt3_to_vectorbt_replay_path() -> None:
         signals=signal_frame,
         init_cash=1_000.0,
     )
+    assert replay.ok is True
+    assert replay.output == (
+        ProviderSignalReplayMetrics(
+            symbol="000001.SZ",
+            total_return=replay.output[0].total_return,
+            total_profit=replay.output[0].total_profit,
+            max_drawdown=replay.output[0].max_drawdown,
+            sharpe_ratio=replay.output[0].sharpe_ratio,
+            trade_count=1,
+        ),
+    )
+
+
+def test_registered_qlib_adapter_runs_through_vbt3_vectorbt_path() -> None:
+    registry = build_default_tool_registry()
+    normalized = registry.execute(
+        "normalize_baostock_history_k_frame",
+        frame=baostock_fixture(),
+        adjustment="qfq",
+    ).output
+    predictions = pd.DataFrame(
+        [
+            {"datetime": "2026-01-02", "instrument": "000001.SZ", "score": 0.9},
+            {"datetime": "2026-01-03", "instrument": "000001.SZ", "score": 0.1},
+        ]
+    )
+
+    signal_result = registry.execute(
+        "qlib_signal_artifact_to_vbt3_signal_frame",
+        predictions=predictions,
+        normalized_ohlcv=normalized,
+        top_n=1,
+        holding_period=1,
+    )
+
+    assert signal_result.ok is True
+    signal_frame = signal_result.output
+    assert isinstance(signal_frame, pd.DataFrame)
+    assert signal_frame["entry_signal"].tolist() == [True, True]
+    assert signal_frame["exit_signal"].tolist() == [False, True]
+
+    replay = registry.execute(
+        "replay_provider_signals_with_vectorbt",
+        signals=signal_frame,
+        init_cash=1_000.0,
+    )
+
     assert replay.ok is True
     assert replay.output == (
         ProviderSignalReplayMetrics(

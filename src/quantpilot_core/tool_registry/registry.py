@@ -10,6 +10,9 @@ from quantpilot_core.data_provider_normalization import (
     normalize_tushare_daily_frame,
     normalized_ohlcv_to_vbt3_signal_frame,
 )
+from quantpilot_core.qlib_signal_integration import (
+    qlib_signal_artifact_to_vbt3_signal_frame,
+)
 from quantpilot_core.tool_registry.contracts import QuantPilotTool, ToolRegistry
 from quantpilot_core.vectorbt_integration import (
     replay_provider_signals_with_vectorbt,
@@ -68,6 +71,11 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="normalized_ohlcv_to_vbt3_signal_frame",
                 description="Shape normalized OHLCV rows into a provider/Qlib-style vectorbt signal frame.",
                 callable=normalized_ohlcv_to_vbt3_signal_frame,
+            ),
+            QuantPilotTool(
+                name="qlib_signal_artifact_to_vbt3_signal_frame",
+                description="Join an in-memory Qlib-style score artifact to normalized OHLCV and emit VBT3 signals.",
+                callable=qlib_signal_artifact_to_vbt3_signal_frame,
             ),
             QuantPilotTool(
                 name="replay_provider_signals_with_vectorbt",
