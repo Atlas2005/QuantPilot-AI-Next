@@ -27,9 +27,14 @@ from quantpilot_core.information_layer import (
 )
 from quantpilot_core.information_agents import (
     build_information_decision_report,
+    run_concept_rotation_agent,
+    run_fund_positioning_agent,
     run_liquidity_regime_agent,
+    run_moneyflow_structure_agent,
     run_news_impact_agent,
     run_northbound_flow_agent,
+    run_shareholder_dividend_agent,
+    run_valuation_agent,
 )
 from quantpilot_core.qlib_signal_integration import (
     qlib_signal_artifact_to_vbt3_signal_frame,
@@ -177,6 +182,31 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="run_liquidity_regime_agent",
                 description="Summarize normalized macro, margin, money-flow, and stabilization clues into a liquidity signal.",
                 callable=run_liquidity_regime_agent,
+            ),
+            QuantPilotTool(
+                name="run_fund_positioning_agent",
+                description="Summarize normalized fund holdings into a positioning information signal.",
+                callable=run_fund_positioning_agent,
+            ),
+            QuantPilotTool(
+                name="run_valuation_agent",
+                description="Summarize normalized valuation and dividend rows into a valuation information signal.",
+                callable=run_valuation_agent,
+            ),
+            QuantPilotTool(
+                name="run_concept_rotation_agent",
+                description="Summarize normalized concepts, news, and social rows into a concept-rotation signal.",
+                callable=run_concept_rotation_agent,
+            ),
+            QuantPilotTool(
+                name="run_shareholder_dividend_agent",
+                description="Summarize normalized shareholder, dividend, and announcement rows into a support/risk signal.",
+                callable=run_shareholder_dividend_agent,
+            ),
+            QuantPilotTool(
+                name="run_moneyflow_structure_agent",
+                description="Summarize normalized money-flow rows into an institutional/retail structure signal.",
+                callable=run_moneyflow_structure_agent,
             ),
             QuantPilotTool(
                 name="build_information_decision_report",

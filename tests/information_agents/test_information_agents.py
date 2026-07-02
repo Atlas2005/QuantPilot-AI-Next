@@ -11,9 +11,14 @@ from quantpilot_core.information_agents import (
     InformationDirection,
     InformationHorizon,
     build_information_decision_report,
+    run_concept_rotation_agent,
+    run_fund_positioning_agent,
     run_liquidity_regime_agent,
+    run_moneyflow_structure_agent,
     run_news_impact_agent,
     run_northbound_flow_agent,
+    run_shareholder_dividend_agent,
+    run_valuation_agent,
 )
 from quantpilot_core.tool_registry import ToolSideEffectLevel, build_default_tool_registry
 
@@ -123,6 +128,104 @@ def liquidity_fixtures() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.D
     return macro, margin, moneyflow, stabilization
 
 
+def fund_holdings_fixture() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": ["2026-01-02", "2026-03-31"],
+            "symbol": ["000001.SZ", "000001.SZ"],
+            "source": ["fund-fixture", "fund-fixture"],
+            "provider": ["fixture-provider", "fixture-provider"],
+            "fund_code": ["F001", "F001"],
+            "fund_name": ["Fixture Fund", "Fixture Fund"],
+            "holding_shares": [1000.0, 1300.0],
+            "holding_value": [10000.0, 12800.0],
+            "portfolio_weight": [0.04, 0.07],
+            "evidence_text": ["Initial fund position.", "Fund position increased."],
+        }
+    )
+
+
+def valuation_fixture() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": ["2026-01-02"],
+            "symbol": ["000001.SZ"],
+            "source": ["valuation-fixture"],
+            "provider": ["fixture-provider"],
+            "pe_ttm": [9.0],
+            "pb": [0.9],
+            "ps_ttm": [1.1],
+            "market_cap": [100000.0],
+            "pe_percentile": [0.2],
+            "evidence_text": ["Valuation is low versus recent range."],
+        }
+    )
+
+
+def dividend_fixture() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": ["2026-01-02"],
+            "symbol": ["000001.SZ"],
+            "source": ["dividend-fixture"],
+            "provider": ["fixture-provider"],
+            "cash_dividend_per_share": [0.2],
+            "stock_dividend_ratio": [0.0],
+            "record_date": ["2026-01-05"],
+            "ex_dividend_date": ["2026-01-06"],
+            "dividend_yield": [0.03],
+            "evidence_text": ["Cash dividend continuity."],
+        }
+    )
+
+
+def concept_fixture() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": ["2026-01-02"],
+            "symbol": ["000001.SZ"],
+            "source": ["concept-fixture"],
+            "provider": ["fixture-provider"],
+            "concept_name": ["bank reform"],
+            "membership_weight": [0.7],
+            "is_active": [True],
+            "evidence_text": ["Active concept membership."],
+        }
+    )
+
+
+def social_fixture() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "datetime": ["2026-01-02T10:00:00"],
+            "symbol": ["000001.SZ"],
+            "source": ["social-fixture"],
+            "provider": ["fixture-provider"],
+            "platform": ["forum"],
+            "topic": ["bank reform"],
+            "evidence_text": ["Positive discussion volume."],
+            "sentiment_score": [0.5],
+            "mention_count": [80],
+        }
+    )
+
+
+def shareholder_fixture() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": ["2026-01-02", "2026-03-31"],
+            "symbol": ["000001.SZ", "000001.SZ"],
+            "source": ["holder-fixture", "holder-fixture"],
+            "provider": ["fixture-provider", "fixture-provider"],
+            "shareholder_name": ["Fixture Holder", "Fixture Holder"],
+            "holding_shares": [1000.0, 1150.0],
+            "holding_ratio": [0.02, 0.025],
+            "shareholder_rank": [1.0, 1.0],
+            "evidence_text": ["Stable holder.", "Holder increased position."],
+        }
+    )
+
+
 def test_news_impact_agent_emits_evidence_backed_signal() -> None:
     signal = run_news_impact_agent(news_fixture(), announcement_fixture())
 
@@ -168,6 +271,62 @@ def test_liquidity_regime_agent_detects_expansion() -> None:
     assert len(signal.evidence) >= 4
 
 
+def test_fund_positioning_agent_detects_positioning_support() -> None:
+    signal = run_fund_positioning_agent(fund_holdings_fixture())
+
+    assert signal.agent_role is InformationAgentRole.FUND_POSITIONING
+    assert signal.agent_role.value == "fund_positioning_agent"
+    assert signal.target == "000001.SZ"
+    assert signal.direction is InformationDirection.POSITIVE
+    assert signal.score > 0
+    assert signal.regime == "fund_positioning_supportive"
+    assert signal.evidence
+
+
+def test_valuation_agent_detects_valuation_support_without_profitability_claim() -> None:
+    signal = run_valuation_agent(valuation_fixture(), dividend_fixture())
+
+    assert signal.agent_role is InformationAgentRole.VALUATION
+    assert signal.agent_role.value == "valuation_agent"
+    assert signal.direction is InformationDirection.POSITIVE
+    assert signal.score > 0
+    assert signal.regime == "valuation_support"
+    assert all("profitability" not in item.lower() for item in signal.limitations)
+
+
+def test_concept_rotation_agent_detects_active_rotation() -> None:
+    signal = run_concept_rotation_agent(concept_fixture(), news_fixture(), social_fixture())
+
+    assert signal.agent_role is InformationAgentRole.CONCEPT_ROTATION
+    assert signal.agent_role.value == "concept_rotation_agent"
+    assert signal.direction is InformationDirection.POSITIVE
+    assert signal.score > 0
+    assert signal.regime == "concept_rotation_active"
+    assert len(signal.evidence) >= 3
+
+
+def test_shareholder_dividend_agent_detects_support() -> None:
+    signal = run_shareholder_dividend_agent(shareholder_fixture(), dividend_fixture(), announcement_fixture())
+
+    assert signal.agent_role is InformationAgentRole.SHAREHOLDER_DIVIDEND
+    assert signal.agent_role.value == "shareholder_dividend_agent"
+    assert signal.direction is InformationDirection.POSITIVE
+    assert signal.score > 0
+    assert signal.regime == "shareholder_support"
+    assert signal.evidence
+
+
+def test_moneyflow_structure_agent_detects_institutional_inflow() -> None:
+    signal = run_moneyflow_structure_agent(liquidity_fixtures()[2])
+
+    assert signal.agent_role is InformationAgentRole.MONEYFLOW_STRUCTURE
+    assert signal.agent_role.value == "moneyflow_structure_agent"
+    assert signal.direction is InformationDirection.POSITIVE
+    assert signal.score > 0
+    assert signal.regime == "institutional_inflow"
+    assert signal.evidence
+
+
 def test_information_decision_report_aggregates_and_reports_conflicts() -> None:
     positive = run_news_impact_agent(news_fixture(), announcement_fixture())
     negative = InformationAgentSignal(
@@ -198,6 +357,11 @@ def test_information_agent_tools_are_listed_and_execute_through_registry() -> No
         "run_news_impact_agent",
         "run_northbound_flow_agent",
         "run_liquidity_regime_agent",
+        "run_fund_positioning_agent",
+        "run_valuation_agent",
+        "run_concept_rotation_agent",
+        "run_shareholder_dividend_agent",
+        "run_moneyflow_structure_agent",
         "build_information_decision_report",
     )
     for name in expected:
@@ -221,10 +385,43 @@ def test_information_agent_tools_are_listed_and_execute_through_registry() -> No
     assert news_result.ok is True
     assert northbound_result.ok is True
     assert liquidity_result.ok is True
+    fund_result = registry.execute("run_fund_positioning_agent", fund_holdings=fund_holdings_fixture())
+    valuation_result = registry.execute(
+        "run_valuation_agent",
+        valuation_snapshots=valuation_fixture(),
+        dividend_records=dividend_fixture(),
+    )
+    concept_result = registry.execute(
+        "run_concept_rotation_agent",
+        concept_memberships=concept_fixture(),
+        news_events=news_fixture(),
+        social_sentiment_events=social_fixture(),
+    )
+    shareholder_result = registry.execute(
+        "run_shareholder_dividend_agent",
+        shareholder_snapshots=shareholder_fixture(),
+        dividend_records=dividend_fixture(),
+        announcement_events=announcement_fixture(),
+    )
+    moneyflow_result = registry.execute("run_moneyflow_structure_agent", moneyflow_snapshots=liquidity_fixtures()[2])
+    assert fund_result.ok is True
+    assert valuation_result.ok is True
+    assert concept_result.ok is True
+    assert shareholder_result.ok is True
+    assert moneyflow_result.ok is True
 
     report_result = registry.execute(
         "build_information_decision_report",
-        signals=(news_result.output, northbound_result.output, liquidity_result.output),
+        signals=(
+            news_result.output,
+            northbound_result.output,
+            liquidity_result.output,
+            fund_result.output,
+            valuation_result.output,
+            concept_result.output,
+            shareholder_result.output,
+            moneyflow_result.output,
+        ),
         target="000001.SZ",
     )
 
