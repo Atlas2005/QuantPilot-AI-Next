@@ -58,10 +58,17 @@ from quantpilot_core.quant_firm.orchestrator import (
     QuantFirmOrchestrator,
     run_quant_firm_decision_cycle,
 )
+from quantpilot_core.quant_firm.role_skills import (
+    DEFAULT_ROLE_SKILLS,
+    QuantFirmRoleSkill,
+    QuantFirmRoleSkillRegistry,
+    build_default_role_skill_registry,
+)
 
 __all__ = [
     "AGENT_CLASSES",
     "DEFAULT_QUANT_FIRM_AGENTS",
+    "DEFAULT_ROLE_SKILLS",
     "DeepSeekAdvisoryAgent",
     "DeepSeekAdvisoryInput",
     "DeepSeekAdvisoryOutput",
@@ -93,6 +100,8 @@ __all__ = [
     "QuantFirmAgentRole",
     "QuantFirmDecisionReport",
     "QuantFirmOrchestrator",
+    "QuantFirmRoleSkill",
+    "QuantFirmRoleSkillRegistry",
     "RQAlphaBacktestAgent",
     "RiskBudgetAgent",
     "StatisticalStrategyAgent",
@@ -105,6 +114,7 @@ __all__ = [
     "build_attribution_report",
     "build_experiment_record",
     "build_failure_analysis_report",
+    "build_default_role_skill_registry",
     "build_strategy_mutation_plan",
     "run_deepseek_advisory_fallback",
     "run_quant_firm_decision_cycle",
