@@ -25,6 +25,12 @@ from quantpilot_core.information_layer import (
     normalize_stabilization_flow_clues_frame,
     normalize_valuation_snapshots_frame,
 )
+from quantpilot_core.information_agents import (
+    build_information_decision_report,
+    run_liquidity_regime_agent,
+    run_news_impact_agent,
+    run_northbound_flow_agent,
+)
 from quantpilot_core.qlib_signal_integration import (
     qlib_signal_artifact_to_vbt3_signal_frame,
 )
@@ -156,6 +162,26 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="qlib_signal_artifact_to_vbt3_signal_frame",
                 description="Join an in-memory Qlib-style score artifact to normalized OHLCV and emit VBT3 signals.",
                 callable=qlib_signal_artifact_to_vbt3_signal_frame,
+            ),
+            QuantPilotTool(
+                name="run_news_impact_agent",
+                description="Summarize normalized news and announcements into an evidence-backed information signal.",
+                callable=run_news_impact_agent,
+            ),
+            QuantPilotTool(
+                name="run_northbound_flow_agent",
+                description="Summarize normalized northbound holdings into an evidence-backed flow signal.",
+                callable=run_northbound_flow_agent,
+            ),
+            QuantPilotTool(
+                name="run_liquidity_regime_agent",
+                description="Summarize normalized macro, margin, money-flow, and stabilization clues into a liquidity signal.",
+                callable=run_liquidity_regime_agent,
+            ),
+            QuantPilotTool(
+                name="build_information_decision_report",
+                description="Aggregate information-agent signals into a deterministic decision report.",
+                callable=build_information_decision_report,
             ),
             QuantPilotTool(
                 name="replay_provider_signals_with_vectorbt",
