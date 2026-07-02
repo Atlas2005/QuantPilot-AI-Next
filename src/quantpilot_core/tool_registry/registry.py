@@ -39,6 +39,10 @@ from quantpilot_core.information_agents import (
 from quantpilot_core.qlib_signal_integration import (
     qlib_signal_artifact_to_vbt3_signal_frame,
 )
+from quantpilot_core.research_committee import (
+    build_research_committee_report,
+    rank_research_candidates,
+)
 from quantpilot_core.tool_registry.contracts import QuantPilotTool, ToolRegistry
 from quantpilot_core.vectorbt_integration import (
     replay_provider_signals_with_vectorbt,
@@ -212,6 +216,16 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="build_information_decision_report",
                 description="Aggregate information-agent signals into a deterministic decision report.",
                 callable=build_information_decision_report,
+            ),
+            QuantPilotTool(
+                name="build_research_committee_report",
+                description="Synthesize information signals and replay metrics into an offline research diagnostic.",
+                callable=build_research_committee_report,
+            ),
+            QuantPilotTool(
+                name="rank_research_candidates",
+                description="Rank offline research candidates by deterministic committee composite score.",
+                callable=rank_research_candidates,
             ),
             QuantPilotTool(
                 name="replay_provider_signals_with_vectorbt",

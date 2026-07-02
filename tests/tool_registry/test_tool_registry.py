@@ -74,6 +74,7 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
 
     assert registry.list_names() == (
         "build_information_decision_report",
+        "build_research_committee_report",
         "cross_check_normalized_provider_frames",
         "normalize_announcement_events_frame",
         "normalize_baostock_history_k_frame",
@@ -92,6 +93,7 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
         "normalize_valuation_snapshots_frame",
         "normalized_ohlcv_to_vbt3_signal_frame",
         "qlib_signal_artifact_to_vbt3_signal_frame",
+        "rank_research_candidates",
         "replay_provider_signals_with_vectorbt",
         "run_concept_rotation_agent",
         "run_fund_positioning_agent",
