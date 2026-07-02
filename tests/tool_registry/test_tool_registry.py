@@ -73,6 +73,8 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
     registry = build_default_tool_registry()
 
     assert registry.list_names() == (
+        "build_execution_candidate",
+        "build_execution_candidate_report",
         "build_information_decision_report",
         "build_research_committee_report",
         "cross_check_normalized_provider_frames",
@@ -127,6 +129,8 @@ def test_default_registry_prefers_mature_replacement_path_over_legacy_blockers()
         "qlib_signal_artifact_to_vbt3_signal_frame",
         "build_information_decision_report",
         "build_research_committee_report",
+        "build_execution_candidate",
+        "build_execution_candidate_report",
         "rank_research_candidates",
         "replay_provider_signals_with_vectorbt",
         "run_vectorbt_signal_backtest",

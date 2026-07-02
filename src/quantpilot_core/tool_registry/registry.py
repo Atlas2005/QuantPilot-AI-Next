@@ -10,6 +10,10 @@ from quantpilot_core.data_provider_normalization import (
     normalize_tushare_daily_frame,
     normalized_ohlcv_to_vbt3_signal_frame,
 )
+from quantpilot_core.execution_candidate import (
+    build_execution_candidate,
+    build_execution_candidate_report,
+)
 from quantpilot_core.information_layer import (
     normalize_announcement_events_frame,
     normalize_concept_memberships_frame,
@@ -211,6 +215,16 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="run_moneyflow_structure_agent",
                 description="Summarize normalized money-flow rows into an institutional/retail structure signal.",
                 callable=run_moneyflow_structure_agent,
+            ),
+            QuantPilotTool(
+                name="build_execution_candidate",
+                description="Convert signal and research inputs into the top deterministic EXEC1 candidate.",
+                callable=build_execution_candidate,
+            ),
+            QuantPilotTool(
+                name="build_execution_candidate_report",
+                description="Build and rank deterministic EXEC1 candidates from Qlib, INFO, and RESEARCH inputs.",
+                callable=build_execution_candidate_report,
             ),
             QuantPilotTool(
                 name="build_information_decision_report",
