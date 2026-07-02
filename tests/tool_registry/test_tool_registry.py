@@ -99,6 +99,7 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
         "rank_research_candidates",
         "replay_provider_signals_with_vectorbt",
         "run_concept_rotation_agent",
+        "run_deepseek_advisory_fallback",
         "run_fund_positioning_agent",
         "run_liquidity_regime_agent",
         "run_moneyflow_structure_agent",
@@ -333,7 +334,6 @@ def test_tool_registry_has_no_forbidden_runtime_scope() -> None:
         "mod_ctp",
         "mod-vnpy",
         "vnpy",
-        "deepseek",
         "multi_agent",
         "use_legacy_engine",
     )
