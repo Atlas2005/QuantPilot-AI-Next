@@ -45,6 +45,8 @@ class PaperAccount:
 
     cash: float
     positions: Mapping[str, int] = field(default_factory=dict)
+    average_costs: Mapping[str, float] = field(default_factory=dict)
+    realized_pnl_by_symbol: Mapping[str, float] = field(default_factory=dict)
     realized_pnl: float = 0.0
     unrealized_pnl: float = 0.0
     trade_log: tuple[PaperTrade, ...] = ()
@@ -108,4 +110,3 @@ class PaperTradingLoopResult:
     fill_result: PaperFillSimulationResult
     metrics: PaperPerformanceMetrics
     learning_desk_output: PaperLoopLearningDeskOutput
-
