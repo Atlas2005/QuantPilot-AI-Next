@@ -147,6 +147,16 @@ def run_factor_ranking_baseline_v1(*args, **kwargs):
     return factor_runner(*args, **kwargs)
 
 
+def run_ml_factor_training_v1(*args, **kwargs):
+    """Resolve the offline ML factor training pipeline only when executed."""
+
+    from quantpilot_core.evaluation.ml_factor_training import (
+        run_ml_factor_training_v1 as ml_runner,
+    )
+
+    return ml_runner(*args, **kwargs)
+
+
 def run_walk_forward_paper_evaluation(*args, **kwargs):
     """Resolve the walk-forward runner only when the registry tool is executed."""
 
@@ -366,6 +376,11 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="run_factor_ranking_baseline_v1",
                 description="Run the offline factor-ranking baseline from an in-memory OHLCV frame.",
                 callable=run_factor_ranking_baseline_v1,
+            ),
+            QuantPilotTool(
+                name="run_ml_factor_training_v1",
+                description="Run the optional-LightGBM ML factor training pipeline from local OHLCV data.",
+                callable=run_ml_factor_training_v1,
             ),
             QuantPilotTool(
                 name="run_deepseek_advisory_fallback",

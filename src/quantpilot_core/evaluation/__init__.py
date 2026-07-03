@@ -12,6 +12,18 @@ from quantpilot_core.evaluation.factor_ranking_baseline import (
     FactorScore,
     run_factor_ranking_baseline_v1,
 )
+from quantpilot_core.evaluation.ml_factor_training import (
+    DEFAULT_ML_FACTOR_TRAINING_DATASET_ARTIFACT_PATH,
+    DEFAULT_ML_FACTOR_TRAINING_REPORT_ARTIFACT_PATH,
+    ML_FACTOR_BASELINE_REFERENCE,
+    ML_FACTOR_FEATURES,
+    ML_FACTOR_LABELS,
+    MLFactorDataset,
+    MLFactorTrainingConfig,
+    MLFactorTrainingReport,
+    build_ml_factor_dataset_v1,
+    run_ml_factor_training_v1,
+)
 from quantpilot_core.evaluation.real_data_walk_forward_smoke import (
     DEFAULT_FACTOR_RANKING_SWEEP_INTEGRATION_ARTIFACT_PATH,
     DEFAULT_REAL_DATA_SCALEUP_SYMBOLS,
@@ -36,6 +48,8 @@ from quantpilot_core.evaluation.real_data_walk_forward_smoke import (
 __all__ = [
     "DEFAULT_FACTOR_RANKING_BASELINE_ARTIFACT_PATH",
     "DEFAULT_FACTOR_RANKING_SWEEP_INTEGRATION_ARTIFACT_PATH",
+    "DEFAULT_ML_FACTOR_TRAINING_DATASET_ARTIFACT_PATH",
+    "DEFAULT_ML_FACTOR_TRAINING_REPORT_ARTIFACT_PATH",
     "DEFAULT_REAL_DATA_SCALEUP_SYMBOLS",
     "FACTOR_RANKING_BASELINE_MODES",
     "FACTOR_RANKING_SWEEP_BASELINE_REFERENCE",
@@ -45,6 +59,12 @@ __all__ = [
     "FactorRankingSweepIntegrationConfig",
     "FactorRankingSweepIntegrationReport",
     "FactorScore",
+    "ML_FACTOR_BASELINE_REFERENCE",
+    "ML_FACTOR_FEATURES",
+    "ML_FACTOR_LABELS",
+    "MLFactorDataset",
+    "MLFactorTrainingConfig",
+    "MLFactorTrainingReport",
     "ProfitabilitySmokeReport",
     "REAL_DATA_SCALEUP_RANKING_MODES",
     "RealDataWalkForwardScaleupConfig",
@@ -54,10 +74,12 @@ __all__ = [
     "RealDataWalkForwardSmokeConfig",
     "RealDataWalkForwardSmokeReport",
     "build_real_data_walk_forward_scaleup_sweep_grid",
+    "build_ml_factor_dataset_v1",
     "run_factor_ranking_sweep_integration_v1",
     "run_real_data_walk_forward_scaleup_sweep",
     "run_real_data_walk_forward_scaleup_v1",
     "run_real_data_walk_forward_smoke",
     "run_factor_ranking_baseline_v1",
+    "run_ml_factor_training_v1",
     "run_profitability_smoke_test",
 ]
