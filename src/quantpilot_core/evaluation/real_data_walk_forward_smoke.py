@@ -22,7 +22,7 @@ from quantpilot_core.real_data_provider import (
 )
 
 
-DEFAULT_REAL_DATA_SMOKE_SYMBOLS = ("000001.SZ", "000002.SZ", "510300.SH", "510500.SH")
+DEFAULT_REAL_DATA_SMOKE_SYMBOLS = ("000001.SZ", "000002.SZ", "600000.SH", "601318.SH")
 DEFAULT_PROVIDER = "baostock"
 AK_PROVIDER = "ak" + "share"
 BAO_PROVIDER = "bao" + "stock"
@@ -42,6 +42,8 @@ class RealDataWalkForwardSmokeConfig:
     max_windows: int = 2
     provider: str | DailyBarProvider = DEFAULT_PROVIDER
     advisory_mode: str = "fallback_only"
+    allow_partial_universe: bool = True
+    min_symbols_required: int = 2
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -66,6 +68,12 @@ class RealDataWalkForwardSmokeReport:
     notes: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _LoadedBars:
+    bars: tuple[NormalizedDailyBar, ...]
+    warnings: tuple[str, ...] = ()
+
+
 def run_real_data_walk_forward_smoke(
     config: RealDataWalkForwardSmokeConfig | None = None,
     **kwargs: Any,
@@ -76,16 +84,23 @@ def run_real_data_walk_forward_smoke(
     warnings = _validate_config(payload)
     provider_name = _provider_name(payload.provider)
     try:
-        bars = _load_bars(payload)
+        loaded = _load_bars(payload)
     except Exception as exc:
         if isinstance(exc, (RuntimeError, ProviderError, ValueError)):
             return _unavailable_report(payload, provider_name, str(exc), warnings)
         raise
 
-    price_frame = _bars_to_price_frame(bars)
-    data_warnings = warnings + _data_quality_warnings(price_frame, payload)
+    price_frame = _bars_to_price_frame(loaded.bars)
+    data_warnings = warnings + loaded.warnings + _data_quality_warnings(price_frame, payload)
     if price_frame.empty:
         return _unavailable_report(payload, provider_name, "provider returned no usable OHLCV rows", data_warnings)
+    valid_symbol_count = _valid_symbol_count(price_frame)
+    if valid_symbol_count < int(payload.min_symbols_required):
+        reason = (
+            "valid provider symbols below minimum: "
+            f"{valid_symbol_count} < {int(payload.min_symbols_required)}"
+        )
+        return _unavailable_report(payload, provider_name, reason, data_warnings)
 
     windows = _build_windows(price_frame, payload)
     if not windows:
@@ -100,7 +115,7 @@ def run_real_data_walk_forward_smoke(
         initial_cash=float(payload.initial_cash),
         current_parameters={
             "strategy_id": "real_data_walk_forward_smoke",
-            "top_n": min(3, len(payload.symbols)),
+            "top_n": min(3, valid_symbol_count),
             "capital": float(payload.initial_cash),
             "lot_size": 100,
         },
@@ -147,25 +162,43 @@ def run_real_data_walk_forward_smoke(
     )
 
 
-def _load_bars(config: RealDataWalkForwardSmokeConfig) -> list[NormalizedDailyBar]:
+def _load_bars(config: RealDataWalkForwardSmokeConfig) -> _LoadedBars:
     injected = config.metadata.get("normalized_daily_bars")
     if injected is not None:
-        return list(injected)
+        return _LoadedBars(tuple(injected))
     injected_frame = config.metadata.get("normalized_ohlcv")
     if injected_frame is not None:
-        return _normalized_frame_to_bars(injected_frame, provider=_provider_name(config.provider))
+        return _LoadedBars(tuple(_normalized_frame_to_bars(injected_frame, provider=_provider_name(config.provider))))
 
     provider = _resolve_provider(config.provider)
-    bars: list[NormalizedDailyBar] = []
+    request_batch: list[DailyBarRequest] = []
     for symbol in config.symbols:
-        request = DailyBarRequest(
-            symbol=_provider_symbol(symbol, provider.provider_name),
-            start_date=_as_date(config.start_date),
-            end_date=_as_date(config.end_date),
-            adjustment=Adjustment.NONE,
+        request_batch.append(
+            DailyBarRequest(
+                symbol=_provider_symbol(symbol, provider.provider_name),
+                start_date=_as_date(config.start_date),
+                end_date=_as_date(config.end_date),
+                adjustment=Adjustment.NONE,
+            )
         )
-        bars.extend(provider.fetch_daily_bars(request))
-    return bars
+
+    if config.allow_partial_universe and hasattr(provider, "fetch_many_daily_bars_with_empty_symbols"):
+        bars, empty_symbols = provider.fetch_many_daily_bars_with_empty_symbols(tuple(request_batch))
+        warnings = tuple(f"empty_provider_rows:{symbol}" for symbol in empty_symbols)
+        return _LoadedBars(tuple(bars), warnings)
+
+    if hasattr(provider, "fetch_many_daily_bars"):
+        return _LoadedBars(tuple(provider.fetch_many_daily_bars(tuple(request_batch))))
+
+    bars: list[NormalizedDailyBar] = []
+    warnings: list[str] = []
+    for request in request_batch:
+        symbol_bars = provider.fetch_daily_bars(request)
+        if not symbol_bars and config.allow_partial_universe:
+            warnings.append(f"empty_provider_rows:{request.symbol}")
+            continue
+        bars.extend(symbol_bars)
+    return _LoadedBars(tuple(bars), tuple(warnings))
 
 
 def _resolve_provider(provider: str | DailyBarProvider) -> DailyBarProvider:
@@ -282,6 +315,8 @@ def _validate_config(config: RealDataWalkForwardSmokeConfig) -> tuple[str, ...]:
         raise ValueError("train_window_days and test_window_days must be positive")
     if config.max_windows <= 0:
         raise ValueError("max_windows must be positive")
+    if config.min_symbols_required <= 0:
+        raise ValueError("min_symbols_required must be positive")
     if config.advisory_mode not in {"disabled", "fallback_only", "evidence_only"}:
         warnings.append("advisory_mode_forced_to_fallback_only")
     return tuple(warnings)
@@ -308,6 +343,12 @@ def _safe_advisory_mode(mode: str) -> str:
     if mode in {"disabled", "fallback_only", "evidence_only"}:
         return mode
     return "fallback_only"
+
+
+def _valid_symbol_count(frame: pd.DataFrame) -> int:
+    if "symbol" not in frame.columns:
+        return 0
+    return len({str(symbol) for symbol in frame["symbol"].dropna().unique()})
 
 
 def _unavailable_report(
