@@ -56,11 +56,46 @@ class BaoStockDailyBarProvider(DailyBarProvider):
         self._importer = importer
 
     def fetch_daily_bars(self, request: DailyBarRequest) -> list[NormalizedDailyBar]:
+        return self.fetch_many_daily_bars((request,))
+
+    def fetch_many_daily_bars(
+        self,
+        requests: Sequence[DailyBarRequest],
+    ) -> list[NormalizedDailyBar]:
+        bars, empty_symbols = self.fetch_many_daily_bars_with_empty_symbols(requests)
+        if empty_symbols:
+            raise ProviderDataError(f"BaoStock daily bar rows must be non-empty for {empty_symbols[0]}")
+        return bars
+
+    def fetch_many_daily_bars_with_empty_symbols(
+        self,
+        requests: Sequence[DailyBarRequest],
+    ) -> tuple[list[NormalizedDailyBar], tuple[str, ...]]:
         client = self._get_client()
         if not hasattr(client, "query_history_k_data_plus"):
             raise RuntimeError(
                 "BaoStock-compatible client must expose query_history_k_data_plus."
             )
+        logged_in = self._login(client)
+        try:
+            bars: list[NormalizedDailyBar] = []
+            empty_symbols: list[str] = []
+            for request in requests:
+                symbol_bars = self._query_daily_bars(client, request)
+                if not symbol_bars:
+                    empty_symbols.append(request.symbol)
+                    continue
+                bars.extend(symbol_bars)
+            return bars, tuple(empty_symbols)
+        finally:
+            if logged_in and hasattr(client, "logout"):
+                client.logout()
+
+    def _query_daily_bars(
+        self,
+        client: Any,
+        request: DailyBarRequest,
+    ) -> list[NormalizedDailyBar]:
         raw = client.query_history_k_data_plus(
             code=request.symbol,
             fields=DEFAULT_FIELDS,
@@ -69,7 +104,24 @@ class BaoStockDailyBarProvider(DailyBarProvider):
             frequency="d",
             adjustflag=ADJUSTMENT_FLAGS[request.adjustment],
         )
-        return normalize_baostock_daily_bars(_rows_from_result(raw), request.symbol)
+        rows = _rows_from_result(raw)
+        if not rows:
+            return []
+        try:
+            return normalize_baostock_daily_bars(rows, request.symbol)
+        except ProviderDataError as exc:
+            raise ProviderDataError(f"{exc} for {request.symbol}") from exc
+
+    def _login(self, client: Any) -> bool:
+        if not hasattr(client, "login"):
+            return False
+        result = client.login()
+        error_code = str(getattr(result, "error_code", ""))
+        if error_code != "0":
+            error_msg = str(getattr(result, "error_msg", "")).strip()
+            detail = f"{error_code}: {error_msg}" if error_msg else error_code
+            raise RuntimeError(f"BaoStock login failed: {detail}")
+        return True
 
     def _get_client(self) -> Any:
         if self._client is not None:
