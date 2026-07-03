@@ -53,6 +53,7 @@ from quantpilot_core.vectorbt_integration import (
     replay_provider_signals_with_vectorbt,
     run_vectorbt_signal_backtest,
 )
+from quantpilot_core.walk_forward import run_walk_forward_paper_evaluation
 
 
 def run_vectorbt_signal_backtest_frame(
@@ -296,6 +297,11 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="run_vectorbt_signal_backtest",
                 description="Run the vectorbt signal adapter from close/entry/exit columns in one DataFrame.",
                 callable=run_vectorbt_signal_backtest_frame,
+            ),
+            QuantPilotTool(
+                name="run_walk_forward_paper_evaluation",
+                description="Run deterministic rolling out-of-sample paper evaluation with leakage checks.",
+                callable=run_walk_forward_paper_evaluation,
             ),
         )
     )
