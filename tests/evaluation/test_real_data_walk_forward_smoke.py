@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -186,6 +188,69 @@ def test_fixture_provider_produces_walk_forward_report() -> None:
     assert "real_data_smoke_completed" in report.notes
     assert "no_broker_live_execution" in report.notes
     assert all(call.symbol.startswith(("sz.", "sh.")) for call in provider.requests)
+
+
+def test_position_market_value_is_not_mislabeled_as_unrealized_pnl() -> None:
+    report = run_real_data_walk_forward_smoke(config(FixtureDailyBarProvider()))
+
+    metrics = report.per_window_metrics[0]
+
+    assert metrics["position_market_value"] == metrics["gross_exposure"]
+    assert metrics["position_market_value"] > 0
+    assert metrics["unrealized_pnl"] is None
+    assert metrics["realized_pnl"] == 0.0
+    assert metrics["total_pnl"] == metrics["net_pnl"]
+    assert "legacy_unrealized_pnl_warning" in metrics
+
+
+def test_rejected_trade_reasons_and_symbols_are_exposed() -> None:
+    report = run_real_data_walk_forward_smoke(config(FixtureDailyBarProvider()))
+
+    window_reasons = [metrics["rejection_reasons"] for metrics in report.per_window_metrics]
+
+    assert any(reasons.get("insufficient_cash", 0) >= 1 for reasons in window_reasons)
+    assert report.per_window_metrics[0]["rejected_count"] == 1
+    assert "000001.SZ" in report.per_window_metrics[0]["rejected_symbols"]
+
+
+def test_per_symbol_breakdown_exists_for_window_and_aggregate_report() -> None:
+    report = run_real_data_walk_forward_smoke(config(FixtureDailyBarProvider()))
+
+    window_rows = report.per_window_metrics[0]["per_symbol_breakdown"]
+    aggregate_rows = report.aggregate_symbol_breakdown
+
+    assert len(window_rows) == 4
+    assert len(aggregate_rows) == 4
+    assert {"symbol", "shares", "last_price", "market_value", "weight"} <= set(window_rows[0])
+    assert any(row["shares"] > 0 and row["market_value"] > 0 for row in window_rows)
+
+
+def test_buy_and_hold_benchmark_is_computed_on_fixture_data() -> None:
+    report = run_real_data_walk_forward_smoke(config(FixtureDailyBarProvider()))
+
+    assert report.benchmark_final_equity is not None
+    assert report.benchmark_final_equity > report.initial_cash
+    assert report.benchmark_total_return is not None
+    assert report.strategy_excess_return == round(report.total_return - report.benchmark_total_return, 6)
+    assert "simple_equal_weight_close_to_close_no_costs" in report.benchmark_notes
+
+
+def test_json_artifact_serialization_works_with_temp_path(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "real_data_walk_forward_smoke" / "latest_report.json"
+
+    report = run_real_data_walk_forward_smoke(config(FixtureDailyBarProvider(), artifact_path=artifact_path))
+
+    assert report.artifact_path == str(artifact_path)
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert payload["provider"] == "baostock"
+    assert payload["artifact_path"] == str(artifact_path)
+    assert payload["per_window_metrics"][0]["position_market_value"] > 0
+    assert payload["per_window_metrics"][0]["unrealized_pnl"] is None
+    assert payload["benchmark_final_equity"] == report.benchmark_final_equity
+
+
+def test_generated_artifact_directory_is_gitignored() -> None:
+    assert "artifacts/" in Path(".gitignore").read_text(encoding="utf-8")
 
 
 def test_windows_are_train_before_test_without_future_leakage() -> None:
