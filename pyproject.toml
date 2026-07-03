@@ -22,6 +22,9 @@ replay = [
     "pandas>=2,<3",
     "numpy>=1.26,<3",
 ]
+ml = [
+    "lightgbm>=4,<5",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
