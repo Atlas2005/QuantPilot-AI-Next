@@ -127,6 +127,16 @@ def run_real_data_walk_forward_scaleup_sweep(*args, **kwargs):
     return sweep_runner(*args, **kwargs)
 
 
+def run_factor_ranking_sweep_integration_v1(*args, **kwargs):
+    """Resolve the manual factor-ranking scale-up integration sweep only when executed."""
+
+    from quantpilot_core.evaluation.real_data_walk_forward_smoke import (
+        run_factor_ranking_sweep_integration_v1 as factor_sweep_runner,
+    )
+
+    return factor_sweep_runner(*args, **kwargs)
+
+
 def run_factor_ranking_baseline_v1(*args, **kwargs):
     """Resolve the offline factor-ranking baseline only when executed."""
 
@@ -346,6 +356,11 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="run_real_data_walk_forward_scaleup_sweep",
                 description="Run the manual A-share real-data walk-forward scale-up parameter sweep.",
                 callable=run_real_data_walk_forward_scaleup_sweep,
+            ),
+            QuantPilotTool(
+                name="run_factor_ranking_sweep_integration_v1",
+                description="Run the manual factor-ranking modes through the real-data scale-up sweep.",
+                callable=run_factor_ranking_sweep_integration_v1,
             ),
             QuantPilotTool(
                 name="run_factor_ranking_baseline_v1",
