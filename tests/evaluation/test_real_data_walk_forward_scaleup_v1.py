@@ -9,8 +9,13 @@ import pytest
 from quantpilot_core.evaluation import real_data_walk_forward_smoke as scaleup_module
 from quantpilot_core.evaluation import (
     DEFAULT_REAL_DATA_SCALEUP_SYMBOLS,
+    REAL_DATA_SCALEUP_RANKING_MODES,
     RealDataWalkForwardScaleupConfig,
     RealDataWalkForwardScaleupReport,
+    RealDataWalkForwardScaleupSweepConfig,
+    RealDataWalkForwardScaleupSweepReport,
+    build_real_data_walk_forward_scaleup_sweep_grid,
+    run_real_data_walk_forward_scaleup_sweep,
     run_real_data_walk_forward_scaleup_v1,
 )
 from quantpilot_core.real_data_provider import (
@@ -143,10 +148,27 @@ def test_scaleup_config_defaults_are_stock_first_and_manual() -> None:
     assert config.target_position_count == 10
     assert config.reserve_cash_weight == 0.02
     assert config.rebalance_each_window is True
+    assert config.ranking_mode == "momentum_60d"
     assert config.min_order_lot == 100
     assert config.max_rejected_trade_ratio_warning == 0.20
     assert str(config.artifact_path).startswith("artifacts/real_data_walk_forward_scaleup/")
     assert not any(symbol.startswith(("510", "159")) for symbol in DEFAULT_REAL_DATA_SCALEUP_SYMBOLS)
+
+
+def test_scaleup_sweep_grid_generation_matches_requested_medium_grid() -> None:
+    grid = build_real_data_walk_forward_scaleup_sweep_grid(
+        RealDataWalkForwardScaleupSweepConfig(provider=ScaleupFixtureProvider())
+    )
+
+    assert len(grid) == 72
+    assert {config.target_position_count for config in grid} == {10, 15, 20}
+    assert {config.max_position_weight for config in grid} == {0.05, 0.08, 0.10}
+    assert {config.reserve_cash_weight for config in grid} == {0.02, 0.05}
+    assert {config.ranking_mode for config in grid} == set(REAL_DATA_SCALEUP_RANKING_MODES)
+    assert all(config.rebalance_each_window is True for config in grid)
+    assert grid[0].metadata["parameter_set_id"] == "scaleup-sweep-001"
+    assert grid[-1].metadata["parameter_set_id"] == "scaleup-sweep-072"
+    assert all(config.artifact_path is None for config in grid)
 
 
 def test_scaleup_aggregate_metrics_and_contributors_are_computed() -> None:
@@ -328,6 +350,119 @@ def test_scaleup_artifact_json_serialization_works_with_temp_path(tmp_path: Path
     assert payload["per_window_metrics"][0]["total_pnl"] == report.per_window_metrics[0]["total_pnl"]
 
 
+def test_scaleup_sweep_ranks_parameter_sets_and_serializes_json(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "sweep" / "latest_report.json"
+
+    report = run_real_data_walk_forward_scaleup_sweep(
+        RealDataWalkForwardScaleupSweepConfig(
+            symbols=FIXTURE_SYMBOLS,
+            start_date="2026-01-01",
+            end_date="2026-02-01",
+            initial_cash=120_000.0,
+            train_window_days=6,
+            test_window_days=5,
+            max_windows=3,
+            min_symbols_required=8,
+            provider=ScaleupFixtureProvider(),
+            artifact_path=artifact_path,
+            target_position_counts=(6, 8),
+            max_position_weights=(0.08,),
+            reserve_cash_weights=(0.02,),
+            ranking_modes=("momentum_20d", "low_volatility"),
+            top_n=3,
+        )
+    )
+
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert isinstance(report, RealDataWalkForwardScaleupSweepReport)
+    assert report.artifact_path == str(artifact_path)
+    assert report.parameter_set_count == 4
+    assert len(report.parameter_sets) == 4
+    assert len(report.top_parameter_sets_by_excess) == 3
+    assert len(report.top_parameter_sets_by_return) == 3
+    assert len(report.top_parameter_sets_by_drawdown_adjusted) == 3
+    assert "no_profitability_claim" in report.notes
+    assert payload["artifact_path"] == str(artifact_path)
+    assert payload["parameter_set_count"] == 4
+    assert payload["top_parameter_sets_by_excess"] == list(report.top_parameter_sets_by_excess)
+    assert payload["top_parameter_sets_by_return"] == list(report.top_parameter_sets_by_return)
+    assert payload["top_parameter_sets_by_drawdown_adjusted"] == list(report.top_parameter_sets_by_drawdown_adjusted)
+    assert all(
+        {
+            "parameter_set_id",
+            "ranking_mode",
+            "target_position_count",
+            "max_position_weight",
+            "reserve_cash_weight",
+            "total_return",
+            "benchmark_total_return",
+            "strategy_excess_return",
+            "max_drawdown",
+            "win_rate_by_window",
+            "average_window_return",
+            "median_window_return",
+            "worst_window_return",
+            "turnover",
+            "cost_total",
+            "cost_to_turnover_ratio",
+            "rejected_trade_ratio",
+            "average_position_count",
+            "average_largest_position_weight",
+            "top_contributors",
+            "worst_contributors",
+        }
+        <= set(row)
+        for row in report.parameter_sets
+    )
+    excess_values = [row["strategy_excess_return"] for row in report.top_parameter_sets_by_excess]
+    assert excess_values == sorted(excess_values, reverse=True)
+
+
+def test_scaleup_ranking_modes_change_candidate_ranking() -> None:
+    frame = scaleup_module._bars_to_price_frame(
+        ScaleupFixtureProvider().fetch_daily_bars(
+            DailyBarRequest(
+                symbol="sz.000001",
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 2, 1),
+            )
+        )
+        + ScaleupFixtureProvider().fetch_daily_bars(
+            DailyBarRequest(
+                symbol="sz.000002",
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 2, 1),
+            )
+        )
+    )
+    start_prices = {"000001.SZ": 10.0, "000002.SZ": 10.0}
+
+    momentum_selected = scaleup_module._select_scaleup_candidates(
+        frame,
+        start_prices,
+        RealDataWalkForwardScaleupConfig(
+            symbols=FIXTURE_SYMBOLS,
+            target_position_count=1,
+            ranking_mode="momentum_20d",
+            artifact_path=None,
+        ),
+    )
+    baseline_selected = scaleup_module._select_scaleup_candidates(
+        frame,
+        start_prices,
+        RealDataWalkForwardScaleupConfig(
+            symbols=FIXTURE_SYMBOLS,
+            target_position_count=1,
+            ranking_mode="equal_weight_baseline",
+            artifact_path=None,
+        ),
+    )
+
+    assert momentum_selected == ("000002.SZ",)
+    assert baseline_selected == ("000001.SZ",)
+
+
 def test_scaleup_fixture_run_uses_no_external_network_llm_or_broker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -356,3 +491,50 @@ def test_scaleup_fixture_run_uses_no_external_network_llm_or_broker(
     assert report.windows_run == 3
     assert "no_broker_live_execution" in report.notes
     assert "advisory_mode:disabled" in report.notes
+
+
+def test_scaleup_sweep_fixture_run_uses_no_external_network_llm_or_broker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_provider_constructor(*args, **kwargs):
+        raise AssertionError("real provider constructor must not be used")
+
+    def fail_deepseek(*args, **kwargs):
+        raise AssertionError("DeepSeek advisory must not run in sweep tests")
+
+    monkeypatch.setattr(
+        "quantpilot_core.evaluation.real_data_walk_forward_smoke.BaoStockDailyBarProvider",
+        fail_provider_constructor,
+    )
+    monkeypatch.setattr(
+        "quantpilot_core.evaluation.real_data_walk_forward_smoke.AkShareDailyBarProvider",
+        fail_provider_constructor,
+    )
+    monkeypatch.setattr(
+        "quantpilot_core.evaluation.real_data_walk_forward_smoke.import_module",
+        fail_provider_constructor,
+    )
+    monkeypatch.setattr("quantpilot_core.walk_forward.engine.run_deepseek_advisory_fallback", fail_deepseek)
+
+    report = run_real_data_walk_forward_scaleup_sweep(
+        RealDataWalkForwardScaleupSweepConfig(
+            symbols=FIXTURE_SYMBOLS,
+            start_date="2026-01-01",
+            end_date="2026-02-01",
+            initial_cash=120_000.0,
+            train_window_days=6,
+            test_window_days=5,
+            max_windows=2,
+            min_symbols_required=8,
+            provider=ScaleupFixtureProvider(),
+            artifact_path=None,
+            target_position_counts=(6,),
+            max_position_weights=(0.08,),
+            reserve_cash_weights=(0.02,),
+            ranking_modes=("momentum_60d", "equal_weight_baseline"),
+        )
+    )
+
+    assert report.parameter_set_count == 2
+    assert "no_broker_live_execution" in report.notes
+    assert "deepseek_live_disabled_by_default" in report.notes
