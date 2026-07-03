@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import os
 from importlib import import_module
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum
 from typing import Any, Mapping
+
+from quantpilot_core.deepseek_multi_agent.runtime_contracts import (
+    DEEPSEEK_V4_FLASH,
+    DEEPSEEK_V4_PRO,
+    DEPRECATED_DEEPSEEK_MODELS,
+)
 
 
 class DeepSeekAdvisoryRole(str, Enum):
@@ -19,6 +25,28 @@ class DeepSeekAdvisoryRole(str, Enum):
     PORTFOLIO_DESK = "portfolio_desk"
     EXECUTION_SIMULATION_DESK = "execution_simulation_desk"
     LEARNING_DESK = "learning_desk"
+
+
+_FLASH_ADVISORY_ROLES = frozenset(
+    {
+        DeepSeekAdvisoryRole.INFORMATION_DESK,
+        DeepSeekAdvisoryRole.BACKTEST_DESK,
+        DeepSeekAdvisoryRole.EXECUTION_SIMULATION_DESK,
+    }
+)
+_MEDIUM_PRO_ADVISORY_ROLES = frozenset(
+    {
+        DeepSeekAdvisoryRole.RESEARCH_DESK,
+        DeepSeekAdvisoryRole.PORTFOLIO_DESK,
+    }
+)
+_HIGH_PRO_ADVISORY_ROLES = frozenset(
+    {
+        DeepSeekAdvisoryRole.LEARNING_DESK,
+        DeepSeekAdvisoryRole.INVESTMENT_COMMITTEE,
+    }
+)
+_PRO_ADVISORY_ROLES = _MEDIUM_PRO_ADVISORY_ROLES | _HIGH_PRO_ADVISORY_ROLES
 
 
 @dataclass(frozen=True)
@@ -67,11 +95,144 @@ class DeepSeekClientConfig:
 
     api_key_env: str = "DEEPSEEK_API_KEY"
     base_url: str = "https" + "://api.deepseek.com"
-    model: str = "deepseek-chat"
+    model: str = DEEPSEEK_V4_FLASH
     timeout_seconds: float = 30.0
     enable_thinking: bool | None = None
     reasoning_effort: str | None = None
     enable_live_call: bool = False
+    _model_was_explicit: bool = field(default=False, repr=False, compare=False)
+    _model_normalization_warnings: tuple[str, ...] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
+
+    def __init__(
+        self,
+        api_key_env: str = "DEEPSEEK_API_KEY",
+        base_url: str = "https" + "://api.deepseek.com",
+        model: str | None = None,
+        timeout_seconds: float = 30.0,
+        enable_thinking: bool | None = None,
+        reasoning_effort: str | None = None,
+        enable_live_call: bool = False,
+    ) -> None:
+        default_model = os.environ.get("DEEPSEEK_MODEL_DEFAULT", DEEPSEEK_V4_FLASH)
+        normalized = _normalize_deepseek_model(model or default_model)
+        object.__setattr__(self, "api_key_env", api_key_env)
+        object.__setattr__(self, "base_url", base_url)
+        object.__setattr__(self, "model", normalized.model)
+        object.__setattr__(self, "timeout_seconds", timeout_seconds)
+        object.__setattr__(self, "enable_thinking", enable_thinking)
+        object.__setattr__(self, "reasoning_effort", reasoning_effort)
+        object.__setattr__(self, "enable_live_call", enable_live_call)
+        object.__setattr__(self, "_model_was_explicit", model is not None)
+        object.__setattr__(self, "_model_normalization_warnings", normalized.warnings)
+
+
+@dataclass(frozen=True)
+class QuantFirmDeepSeekModelSelection:
+    """Resolved advisory model settings for a Quant Firm role."""
+
+    model: str
+    enable_thinking: bool
+    reasoning_effort: str
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class QuantFirmDeepSeekModelPolicy:
+    """Role-based DeepSeek V4 model policy for advisory-only Quant Firm desks."""
+
+    default_model: str = DEEPSEEK_V4_FLASH
+    flash_model: str = DEEPSEEK_V4_FLASH
+    pro_model: str = DEEPSEEK_V4_PRO
+    reasoning_effort_default: str = "low"
+
+    @classmethod
+    def from_environment(cls) -> "QuantFirmDeepSeekModelPolicy":
+        return cls(
+            default_model=os.environ.get("DEEPSEEK_MODEL_DEFAULT", DEEPSEEK_V4_FLASH),
+            flash_model=os.environ.get("DEEPSEEK_MODEL_FLASH", DEEPSEEK_V4_FLASH),
+            pro_model=os.environ.get("DEEPSEEK_MODEL_PRO", DEEPSEEK_V4_PRO),
+            reasoning_effort_default=os.environ.get(
+                "DEEPSEEK_REASONING_EFFORT_DEFAULT",
+                "low",
+            ),
+        )
+
+    def selection_for(
+        self,
+        role: DeepSeekAdvisoryRole,
+        config: DeepSeekClientConfig | None = None,
+    ) -> QuantFirmDeepSeekModelSelection:
+        base = self._role_selection(role)
+        warnings = list(base.warnings)
+        model = base.model
+        if config is not None and config._model_was_explicit:
+            normalized = _normalize_deepseek_model(config.model, policy=self)
+            model = normalized.model
+            warnings.extend(config._model_normalization_warnings)
+            warnings.extend(normalized.warnings)
+        elif role in _FLASH_ADVISORY_ROLES:
+            normalized = _normalize_deepseek_model(self.flash_model, policy=self)
+            model = normalized.model
+            warnings.extend(normalized.warnings)
+        elif role in _PRO_ADVISORY_ROLES:
+            normalized = _normalize_deepseek_model(self.pro_model, policy=self)
+            model = normalized.model
+            warnings.extend(normalized.warnings)
+        else:
+            normalized = _normalize_deepseek_model(self.default_model, policy=self)
+            model = normalized.model
+            warnings.extend(normalized.warnings)
+
+        enable_thinking = base.enable_thinking
+        reasoning_effort = base.reasoning_effort
+        if config is not None and config.enable_thinking is not None:
+            enable_thinking = config.enable_thinking
+        if config is not None and config.reasoning_effort is not None:
+            reasoning_effort = config.reasoning_effort
+        return QuantFirmDeepSeekModelSelection(
+            model=model,
+            enable_thinking=enable_thinking,
+            reasoning_effort=reasoning_effort,
+            warnings=tuple(warnings),
+        )
+
+    def normalize_requested_model(self, model: str) -> QuantFirmDeepSeekModelSelection:
+        normalized = _normalize_deepseek_model(model, policy=self)
+        return QuantFirmDeepSeekModelSelection(
+            model=normalized.model,
+            enable_thinking=normalized.model == self.pro_model,
+            reasoning_effort=self.reasoning_effort_default,
+            warnings=normalized.warnings,
+        )
+
+    def _role_selection(self, role: DeepSeekAdvisoryRole) -> QuantFirmDeepSeekModelSelection:
+        if role in _FLASH_ADVISORY_ROLES:
+            return QuantFirmDeepSeekModelSelection(
+                model=self.flash_model,
+                enable_thinking=False,
+                reasoning_effort=self.reasoning_effort_default,
+            )
+        if role in _MEDIUM_PRO_ADVISORY_ROLES:
+            return QuantFirmDeepSeekModelSelection(
+                model=self.pro_model,
+                enable_thinking=True,
+                reasoning_effort="medium",
+            )
+        return QuantFirmDeepSeekModelSelection(
+            model=self.pro_model,
+            enable_thinking=True,
+            reasoning_effort="high",
+        )
+
+
+@dataclass(frozen=True)
+class _NormalizedDeepSeekModel:
+    model: str
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -141,15 +302,17 @@ class DeepSeekAdvisoryAgent:
 
     def __init__(self, config: DeepSeekClientConfig | None = None) -> None:
         self.config = config or DeepSeekClientConfig()
+        self.model_policy = QuantFirmDeepSeekModelPolicy.from_environment()
 
     def advise(self, advisory_input: DeepSeekAdvisoryInput) -> DeepSeekAdvisoryOutput:
         """Return live DeepSeek advice only when explicitly enabled and keyed."""
 
         prompt = self.build_prompt(advisory_input)
+        model_selection = self.model_policy.selection_for(advisory_input.role, self.config)
         api_key = os.environ.get(self.config.api_key_env)
         if not self.config.enable_live_call or not api_key:
-            return self._fallback(advisory_input, prompt)
-        return self._live_advisory(advisory_input, prompt, api_key)
+            return self._fallback(advisory_input, prompt, model_selection)
+        return self._live_advisory(advisory_input, prompt, api_key, model_selection)
 
     def build_prompt(self, advisory_input: DeepSeekAdvisoryInput) -> str:
         """Construct a role-specific advisory-only prompt."""
@@ -181,7 +344,12 @@ class DeepSeekAdvisoryAgent:
         )
         return "\n".join(lines)
 
-    def _fallback(self, advisory_input: DeepSeekAdvisoryInput, prompt: str) -> DeepSeekAdvisoryOutput:
+    def _fallback(
+        self,
+        advisory_input: DeepSeekAdvisoryInput,
+        prompt: str,
+        model_selection: QuantFirmDeepSeekModelSelection | None = None,
+    ) -> DeepSeekAdvisoryOutput:
         evidence_names = tuple(name for name, _ in _evidence_sections(advisory_input))
         guidance = ROLE_GUIDANCE[advisory_input.role]
         regime_notes = (
@@ -189,6 +357,7 @@ class DeepSeekAdvisoryAgent:
             if advisory_input.market_regime is not None
             else ("market_regime_not_supplied",)
         )
+        selection_notes = _model_selection_notes(model_selection)
         return DeepSeekAdvisoryOutput(
             role=advisory_input.role,
             advisory_summary=f"Deterministic fallback advisory for {advisory_input.role.value}: {guidance.summary}",
@@ -199,7 +368,9 @@ class DeepSeekAdvisoryAgent:
             research_directions=guidance.research,
             regime_notes=regime_notes,
             risk_notes=guidance.risk,
-            tool_integration_notes=guidance.tool_notes + ("advisory_only_no_network_call",),
+            tool_integration_notes=guidance.tool_notes
+            + selection_notes
+            + ("advisory_only_no_network_call",),
             confidence=_fallback_confidence(evidence_names),
             used_model="deterministic_fallback",
             is_fallback=True,
@@ -211,11 +382,12 @@ class DeepSeekAdvisoryAgent:
         advisory_input: DeepSeekAdvisoryInput,
         prompt: str,
         api_key: str,
+        model_selection: QuantFirmDeepSeekModelSelection,
     ) -> DeepSeekAdvisoryOutput:
         try:
             openai_module = import_module("openai")
         except ImportError:
-            return self._fallback(advisory_input, prompt)
+            return self._fallback(advisory_input, prompt, model_selection)
 
         client = openai_module.OpenAI(
             api_key=api_key,
@@ -223,19 +395,20 @@ class DeepSeekAdvisoryAgent:
             timeout=self.config.timeout_seconds,
         )
         request: dict[str, Any] = {
-            "model": self.config.model,
+            "model": model_selection.model,
             "messages": [
-                {"role": "system", "content": "You provide advisory-only quant research review. Never execute trades."},
+                {
+                    "role": "system",
+                    "content": "You provide advisory-only quant research review. Never execute trades.",
+                },
                 {"role": "user", "content": prompt},
             ],
         }
-        if self.config.reasoning_effort is not None:
-            request["reasoning_effort"] = self.config.reasoning_effort
-        if self.config.enable_thinking is not None:
-            request["extra_body"] = {"enable_thinking": self.config.enable_thinking}
+        request["reasoning_effort"] = model_selection.reasoning_effort
+        request["extra_body"] = {"enable_thinking": model_selection.enable_thinking}
         response = client.chat.completions.create(**request)
         raw = response.choices[0].message.content or ""
-        fallback = self._fallback(advisory_input, prompt)
+        fallback = self._fallback(advisory_input, prompt, model_selection)
         return DeepSeekAdvisoryOutput(
             role=advisory_input.role,
             advisory_summary=raw.strip() or fallback.advisory_summary,
@@ -246,9 +419,10 @@ class DeepSeekAdvisoryAgent:
             research_directions=fallback.research_directions,
             regime_notes=fallback.regime_notes,
             risk_notes=fallback.risk_notes,
-            tool_integration_notes=fallback.tool_integration_notes + ("live_deepseek_chat_completions_used",),
+            tool_integration_notes=fallback.tool_integration_notes
+            + ("live_deepseek_chat_completions_used",),
             confidence=fallback.confidence,
-            used_model=self.config.model,
+            used_model=model_selection.model,
             is_fallback=False,
             raw_model_response=raw,
         )
@@ -306,6 +480,51 @@ def _mutation_rationale(advisory_input: DeepSeekAdvisoryInput) -> str:
 
 def _fallback_confidence(evidence_names: tuple[str, ...]) -> float:
     return round(min(0.45 + len(evidence_names) * 0.05, 0.80), 6)
+
+
+def _normalize_deepseek_model(
+    model: str,
+    policy: QuantFirmDeepSeekModelPolicy | None = None,
+) -> _NormalizedDeepSeekModel:
+    if model == "deepseek-chat":
+        flash_model = (
+            policy.flash_model
+            if policy is not None
+            else os.environ.get("DEEPSEEK_MODEL_FLASH", DEEPSEEK_V4_FLASH)
+        )
+        return _NormalizedDeepSeekModel(
+            model=flash_model,
+            warnings=("deprecated_model_normalized:deepseek-chat->deepseek-v4-flash",),
+        )
+    if model == "deepseek-reasoner":
+        pro_model = (
+            policy.pro_model
+            if policy is not None
+            else os.environ.get("DEEPSEEK_MODEL_PRO", DEEPSEEK_V4_PRO)
+        )
+        return _NormalizedDeepSeekModel(
+            model=pro_model,
+            warnings=("deprecated_model_normalized:deepseek-reasoner->deepseek-v4-pro",),
+        )
+    if model in DEPRECATED_DEEPSEEK_MODELS:
+        return _NormalizedDeepSeekModel(
+            model=DEEPSEEK_V4_FLASH,
+            warnings=(f"deprecated_model_normalized:{model}->deepseek-v4-flash",),
+        )
+    return _NormalizedDeepSeekModel(model=model)
+
+
+def _model_selection_notes(
+    model_selection: QuantFirmDeepSeekModelSelection | None,
+) -> tuple[str, ...]:
+    if model_selection is None:
+        return ()
+    thinking = "enabled" if model_selection.enable_thinking else "disabled"
+    return (
+        f"deepseek_model:{model_selection.model}",
+        f"deepseek_thinking:{thinking}",
+        f"deepseek_reasoning_effort:{model_selection.reasoning_effort}",
+    ) + model_selection.warnings
 
 
 def _compact(value: Any) -> str:
