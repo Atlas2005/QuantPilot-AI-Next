@@ -105,6 +105,7 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
         "run_factor_ranking_sweep_integration_v1",
         "run_fund_positioning_agent",
         "run_liquidity_regime_agent",
+        "run_ml_factor_training_v1",
         "run_moneyflow_structure_agent",
         "run_news_impact_agent",
         "run_northbound_flow_agent",
@@ -157,6 +158,7 @@ def test_default_registry_prefers_mature_replacement_path_over_legacy_blockers()
         "run_real_data_walk_forward_scaleup_sweep",
         "run_factor_ranking_baseline_v1",
         "run_factor_ranking_sweep_integration_v1",
+        "run_ml_factor_training_v1",
     } <= names
 
     assert names.isdisjoint(
