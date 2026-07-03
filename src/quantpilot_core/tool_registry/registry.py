@@ -117,6 +117,16 @@ def run_real_data_walk_forward_scaleup_v1(*args, **kwargs):
     return scaleup_runner(*args, **kwargs)
 
 
+def run_real_data_walk_forward_scaleup_sweep(*args, **kwargs):
+    """Resolve the manual real-data scale-up parameter sweep only when executed."""
+
+    from quantpilot_core.evaluation.real_data_walk_forward_smoke import (
+        run_real_data_walk_forward_scaleup_sweep as sweep_runner,
+    )
+
+    return sweep_runner(*args, **kwargs)
+
+
 def run_walk_forward_paper_evaluation(*args, **kwargs):
     """Resolve the walk-forward runner only when the registry tool is executed."""
 
@@ -321,6 +331,11 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="run_real_data_walk_forward_scaleup_v1",
                 description="Run the manual A-share real-data walk-forward scale-up wrapper.",
                 callable=run_real_data_walk_forward_scaleup_v1,
+            ),
+            QuantPilotTool(
+                name="run_real_data_walk_forward_scaleup_sweep",
+                description="Run the manual A-share real-data walk-forward scale-up parameter sweep.",
+                callable=run_real_data_walk_forward_scaleup_sweep,
             ),
             QuantPilotTool(
                 name="run_deepseek_advisory_fallback",
