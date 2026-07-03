@@ -12,7 +12,13 @@ from typing import Any, Mapping, Sequence
 import pandas as pd
 
 from quantpilot_core.data_provider_normalization import canonicalize_a_share_symbol
-from quantpilot_core.paper_trading import PaperAccount, account_symbol_pnl_breakdown
+from quantpilot_core.order_intent import OrderIntent, OrderIntentProposal, OrderIntentProposalSource, OrderIntentSide
+from quantpilot_core.paper_trading import (
+    PaperAccount,
+    PaperFillCostAssumptions,
+    account_symbol_pnl_breakdown,
+    run_paper_trading_loop,
+)
 from quantpilot_core.real_data_provider import (
     Adjustment,
     AkShareDailyBarProvider,
@@ -26,7 +32,50 @@ from quantpilot_core.real_data_provider import (
 
 
 DEFAULT_REAL_DATA_SMOKE_SYMBOLS = ("000001.SZ", "000002.SZ", "600000.SH", "601318.SH")
+DEFAULT_REAL_DATA_SCALEUP_SYMBOLS = (
+    "000001.SZ",
+    "000002.SZ",
+    "000063.SZ",
+    "000100.SZ",
+    "000333.SZ",
+    "000338.SZ",
+    "000538.SZ",
+    "000568.SZ",
+    "000596.SZ",
+    "000651.SZ",
+    "000725.SZ",
+    "000858.SZ",
+    "002027.SZ",
+    "002050.SZ",
+    "002230.SZ",
+    "002241.SZ",
+    "002415.SZ",
+    "002475.SZ",
+    "002594.SZ",
+    "300059.SZ",
+    "300750.SZ",
+    "600000.SH",
+    "600009.SH",
+    "600016.SH",
+    "600028.SH",
+    "600030.SH",
+    "600031.SH",
+    "600036.SH",
+    "600050.SH",
+    "600104.SH",
+    "600276.SH",
+    "600309.SH",
+    "600519.SH",
+    "600585.SH",
+    "600690.SH",
+    "600887.SH",
+    "601088.SH",
+    "601166.SH",
+    "601318.SH",
+    "601398.SH",
+)
 DEFAULT_PROVIDER = "baostock"
+DEFAULT_REAL_DATA_SCALEUP_ARTIFACT_PATH = Path("artifacts/real_data_walk_forward_scaleup/latest_report.json")
 AK_PROVIDER = "ak" + "share"
 BAO_PROVIDER = "bao" + "stock"
 TU_PROVIDER = "tu" + "share"
@@ -48,6 +97,33 @@ class RealDataWalkForwardSmokeConfig:
     allow_partial_universe: bool = True
     min_symbols_required: int = 2
     artifact_path: str | Path | None = None
+    benchmark_mode: str = "equal_weight_close_to_close"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RealDataWalkForwardScaleupConfig:
+    """Configuration for the manual A-share walk-forward scale-up run."""
+
+    symbols: tuple[str, ...] = DEFAULT_REAL_DATA_SCALEUP_SYMBOLS
+    start_date: date | str = "2023-01-01"
+    end_date: date | str = "2024-12-31"
+    initial_cash: float = 1_000_000.0
+    train_window_days: int = 60
+    test_window_days: int = 20
+    max_windows: int = 12
+    min_symbols_required: int = 20
+    allow_partial_universe: bool = True
+    artifact_path: str | Path | None = DEFAULT_REAL_DATA_SCALEUP_ARTIFACT_PATH
+    benchmark_mode: str = "equal_weight_close_to_close"
+    provider: str | DailyBarProvider = DEFAULT_PROVIDER
+    advisory_mode: str = "disabled"
+    max_position_weight: float = 0.10
+    target_position_count: int = 10
+    reserve_cash_weight: float = 0.02
+    rebalance_each_window: bool = True
+    min_order_lot: int = 100
+    max_rejected_trade_ratio_warning: float = 0.20
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -75,6 +151,54 @@ class RealDataWalkForwardSmokeReport:
     benchmark_total_return: float | None = None
     strategy_excess_return: float | None = None
     benchmark_notes: tuple[str, ...] = ()
+    artifact_path: str | None = None
+
+
+@dataclass(frozen=True)
+class RealDataWalkForwardScaleupReport:
+    """Aggregate report for a larger manual A-share walk-forward run."""
+
+    symbols: tuple[str, ...]
+    date_range: tuple[str, str]
+    provider: str
+    benchmark_mode: str
+    windows_run: int
+    valid_symbols: tuple[str, ...]
+    skipped_symbols: tuple[str, ...]
+    initial_cash: float
+    final_equity: float | None
+    total_return: float | None
+    benchmark_total_return: float | None
+    strategy_excess_return: float | None
+    max_drawdown: float | None
+    win_rate_by_window: float | None
+    average_window_return: float | None
+    median_window_return: float | None
+    worst_window_return: float | None
+    equity_window_return: tuple[float, ...]
+    actual_position_count_by_window: tuple[int, ...]
+    cash_weight_by_window: tuple[float | None, ...]
+    gross_exposure_by_window: tuple[float | None, ...]
+    largest_position_weight_by_window: tuple[float | None, ...]
+    filled_trades: int
+    rejected_trades: int
+    rejected_trade_ratio: float | None
+    rejection_reasons: Mapping[str, int]
+    resized_order_count: int
+    skipped_below_lot_count: int
+    rebalance_sell_count: int
+    rebalance_buy_count: int
+    turnover: float
+    cost_total: float
+    cost_to_turnover_ratio: float | None
+    top_contributors: tuple[Mapping[str, Any], ...]
+    worst_contributors: tuple[Mapping[str, Any], ...]
+    per_symbol_total_pnl: Mapping[str, float]
+    contribution_to_total_return: Mapping[str, float]
+    per_window_metrics: tuple[Mapping[str, Any], ...]
+    data_quality_warnings: tuple[str, ...]
+    mature_framework_hooks: Mapping[str, Any]
+    notes: tuple[str, ...]
     artifact_path: str | None = None
 
 
@@ -143,7 +267,7 @@ def run_real_data_walk_forward_smoke(
     result = WalkForwardEngine().run(walk_input)
     per_window = tuple(_window_report_metrics(window_result, price_frame) for window_result in result.window_results)
     final_equity = _final_equity(per_window)
-    benchmark = _buy_and_hold_benchmark(price_frame, windows, float(payload.initial_cash))
+    benchmark = _benchmark_metrics(price_frame, windows, float(payload.initial_cash), payload.benchmark_mode)
     strategy_return = _total_return(payload.initial_cash, final_equity)
     report = RealDataWalkForwardSmokeReport(
         symbols=tuple(canonicalize_a_share_symbol(symbol) for symbol in payload.symbols),
@@ -175,6 +299,504 @@ def run_real_data_walk_forward_smoke(
     if artifact_path is not None:
         report = replace(report, artifact_path=artifact_path)
     return report
+
+
+def run_real_data_walk_forward_scaleup_v1(
+    config: RealDataWalkForwardScaleupConfig | None = None,
+    **kwargs: Any,
+) -> RealDataWalkForwardScaleupReport:
+    """Run the manual scale-up wrapper without broker or live LLM calls."""
+
+    payload = config or RealDataWalkForwardScaleupConfig(**kwargs)
+    _validate_scaleup_config(payload)
+    smoke_config = RealDataWalkForwardSmokeConfig(
+        symbols=payload.symbols,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        initial_cash=payload.initial_cash,
+        train_window_days=payload.train_window_days,
+        test_window_days=payload.test_window_days,
+        max_windows=payload.max_windows,
+        provider=payload.provider,
+        advisory_mode=payload.advisory_mode,
+        allow_partial_universe=payload.allow_partial_universe,
+        min_symbols_required=payload.min_symbols_required,
+        artifact_path=None,
+        benchmark_mode=payload.benchmark_mode,
+        metadata={
+            **dict(payload.metadata),
+            "real_data_walk_forward_scaleup_v1": True,
+            "mature_framework_hooks": _mature_framework_hooks(payload.metadata),
+        },
+    )
+    provider_name = _provider_name(payload.provider)
+    warnings = _validate_config(smoke_config)
+    try:
+        loaded = _load_bars(smoke_config)
+    except Exception as exc:
+        if isinstance(exc, (RuntimeError, ProviderError, ValueError)):
+            unavailable = _unavailable_report(smoke_config, provider_name, str(exc), warnings)
+            report = _scaleup_report_from_smoke(unavailable, payload)
+            artifact_path = _write_scaleup_report_artifact(report, payload.artifact_path)
+            return replace(report, artifact_path=artifact_path) if artifact_path is not None else report
+        raise
+
+    price_frame = _bars_to_price_frame(loaded.bars)
+    data_warnings = warnings + loaded.warnings + _data_quality_warnings(price_frame, smoke_config)
+    if price_frame.empty:
+        unavailable = _unavailable_report(smoke_config, provider_name, "provider returned no usable OHLCV rows", data_warnings)
+        report = _scaleup_report_from_smoke(unavailable, payload)
+        artifact_path = _write_scaleup_report_artifact(report, payload.artifact_path)
+        return replace(report, artifact_path=artifact_path) if artifact_path is not None else report
+
+    valid_symbol_count = _valid_symbol_count(price_frame)
+    if valid_symbol_count < int(payload.min_symbols_required):
+        reason = (
+            "valid provider symbols below minimum: "
+            f"{valid_symbol_count} < {int(payload.min_symbols_required)}"
+        )
+        unavailable = _unavailable_report(smoke_config, provider_name, reason, data_warnings)
+        report = _scaleup_report_from_smoke(unavailable, payload)
+        artifact_path = _write_scaleup_report_artifact(report, payload.artifact_path)
+        return replace(report, artifact_path=artifact_path) if artifact_path is not None else report
+
+    windows = _build_windows(price_frame, smoke_config)
+    if not windows:
+        unavailable = _unavailable_report(smoke_config, provider_name, "not enough trading dates for configured windows", data_warnings)
+        report = _scaleup_report_from_smoke(unavailable, payload)
+        artifact_path = _write_scaleup_report_artifact(report, payload.artifact_path)
+        return replace(report, artifact_path=artifact_path) if artifact_path is not None else report
+
+    per_window, final_account = _run_scaleup_rebalance_windows(price_frame, windows, payload)
+    final_equity = _final_equity(per_window)
+    benchmark = _benchmark_metrics(price_frame, windows, float(payload.initial_cash), payload.benchmark_mode)
+    strategy_return = _total_return(payload.initial_cash, final_equity)
+    valid_symbols = tuple(sorted(str(symbol) for symbol in price_frame["symbol"].dropna().unique()))
+    expected_symbols = tuple(canonicalize_a_share_symbol(symbol) for symbol in payload.symbols)
+    skipped_symbols = tuple(symbol for symbol in expected_symbols if symbol not in set(valid_symbols))
+    aggregate_breakdown = _aggregate_symbol_breakdown(per_window)
+    scaleup_data_warnings = data_warnings + _scaleup_diagnostic_warnings(per_window, payload)
+    smoke_report = RealDataWalkForwardSmokeReport(
+        symbols=expected_symbols,
+        date_range=(str(_as_date(payload.start_date)), str(_as_date(payload.end_date))),
+        provider=provider_name,
+        windows_run=len(per_window),
+        initial_cash=float(payload.initial_cash),
+        final_equity=final_equity,
+        total_return=strategy_return,
+        max_drawdown=_max_drawdown(float(payload.initial_cash), per_window),
+        filled_trades=sum(int(metrics.get("trade_count", 0)) for metrics in per_window),
+        rejected_trades=sum(int(metrics.get("rejected_count", 0)) for metrics in per_window),
+        cost_total=round(sum(float(metrics.get("cost_total", 0.0)) for metrics in per_window), 6),
+        per_window_metrics=per_window,
+        leakage_checks=tuple(f"{window.run_label}:scaleup_train_and_test_slices_validated" for window in windows),
+        data_quality_warnings=scaleup_data_warnings,
+        notes=(
+            "real_data_scaleup_completed",
+            "no_broker_live_execution",
+            "cash_aware_rebalance",
+            f"advisory_mode:{_safe_advisory_mode(payload.advisory_mode)}",
+            f"final_account_trade_log:{len(final_account.trade_log)}",
+        ),
+        aggregate_symbol_breakdown=aggregate_breakdown,
+        benchmark_final_equity=benchmark["benchmark_final_equity"],
+        benchmark_total_return=benchmark["benchmark_total_return"],
+        strategy_excess_return=(
+            round(strategy_return - benchmark["benchmark_total_return"], 6)
+            if strategy_return is not None and benchmark["benchmark_total_return"] is not None
+            else None
+        ),
+        benchmark_notes=tuple(benchmark["benchmark_notes"]),
+    )
+    report = _scaleup_report_from_smoke(smoke_report, payload)
+    report = replace(report, valid_symbols=valid_symbols, skipped_symbols=skipped_symbols)
+    artifact_path = _write_scaleup_report_artifact(report, payload.artifact_path)
+    if artifact_path is not None:
+        report = replace(report, artifact_path=artifact_path)
+    return report
+
+
+def _run_scaleup_rebalance_windows(
+    price_frame: pd.DataFrame,
+    windows: Sequence[Any],
+    config: RealDataWalkForwardScaleupConfig,
+) -> tuple[tuple[Mapping[str, Any], ...], PaperAccount]:
+    account = PaperAccount(cash=float(config.initial_cash))
+    per_window: list[Mapping[str, Any]] = []
+    cost_assumptions = PaperFillCostAssumptions(lot_size=int(config.min_order_lot))
+    for window in windows:
+        train_prices = _slice_price_frame(price_frame, window.train_start, window.train_end)
+        start_prices = _first_prices_for_window(price_frame, window.test_start, window.test_end)
+        end_prices = _latest_prices_for_window(price_frame, window.test_start, window.test_end)
+        starting_equity = _account_equity(account, start_prices)
+        selected = _select_scaleup_candidates(train_prices, start_prices, config)
+        target_weights = _target_weights(selected, config)
+        proposal, build_notes = _build_rebalance_proposal(
+            account=account,
+            prices=start_prices,
+            selected_symbols=selected,
+            target_weights=target_weights,
+            equity=starting_equity,
+            config=config,
+            cost_assumptions=cost_assumptions,
+            run_label=window.run_label,
+        )
+        loop_result = run_paper_trading_loop(
+            proposal,
+            start_prices,
+            account,
+            cost_assumptions=cost_assumptions,
+        )
+        account = _mark_account_to_prices(loop_result.account, end_prices)
+        ending_equity = _account_equity(account, end_prices)
+        metrics = _scaleup_window_metrics(
+            window=window,
+            account=account,
+            fill_result=loop_result.fill_result,
+            starting_equity=starting_equity,
+            ending_equity=ending_equity,
+            start_prices=start_prices,
+            end_prices=end_prices,
+            selected_symbols=selected,
+            target_weights=target_weights,
+            proposal=proposal,
+            build_notes=build_notes,
+        )
+        per_window.append(metrics)
+    return tuple(per_window), account
+
+
+def _slice_price_frame(frame: pd.DataFrame, start: Any, end: Any) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    start_ts = pd.Timestamp(start)
+    end_ts = pd.Timestamp(end)
+    dates = pd.to_datetime(frame["date"]).dt.tz_localize(None)
+    return frame.loc[(dates >= start_ts) & (dates <= end_ts)].copy()
+
+
+def _first_prices_for_window(frame: pd.DataFrame, start: Any, end: Any) -> Mapping[str, float]:
+    window = _slice_price_frame(frame, start, end)
+    if window.empty:
+        return {}
+    ordered = window.sort_values(["date", "symbol"], kind="stable")
+    return {
+        str(symbol): round(float(group["close"].iloc[0]), 6)
+        for symbol, group in ordered.groupby("symbol", sort=True)
+    }
+
+
+def _select_scaleup_candidates(
+    train_prices: pd.DataFrame,
+    start_prices: Mapping[str, float],
+    config: RealDataWalkForwardScaleupConfig,
+) -> tuple[str, ...]:
+    if train_prices.empty:
+        return tuple(sorted(start_prices))[: int(config.target_position_count)]
+    scores: list[tuple[float, str]] = []
+    ordered = train_prices.sort_values(["date", "symbol"], kind="stable")
+    for symbol, group in ordered.groupby("symbol", sort=True):
+        if str(symbol) not in start_prices:
+            continue
+        first = float(group["close"].iloc[0])
+        last = float(group["close"].iloc[-1])
+        momentum = (last - first) / first if first > 0 else -1.0
+        scores.append((round(momentum, 12), str(symbol)))
+    ranked = sorted(scores, key=lambda item: (-item[0], item[1]))
+    return tuple(symbol for _, symbol in ranked[: int(config.target_position_count)])
+
+
+def _target_weights(
+    selected_symbols: tuple[str, ...],
+    config: RealDataWalkForwardScaleupConfig,
+) -> Mapping[str, float]:
+    if not selected_symbols:
+        return {}
+    investable = max(0.0, 1.0 - float(config.reserve_cash_weight))
+    equal_weight = investable / len(selected_symbols)
+    target_weight = min(float(config.max_position_weight), equal_weight)
+    return {symbol: round(target_weight, 6) for symbol in selected_symbols}
+
+
+def _build_rebalance_proposal(
+    *,
+    account: PaperAccount,
+    prices: Mapping[str, float],
+    selected_symbols: tuple[str, ...],
+    target_weights: Mapping[str, float],
+    equity: float,
+    config: RealDataWalkForwardScaleupConfig,
+    cost_assumptions: PaperFillCostAssumptions,
+    run_label: str,
+) -> tuple[OrderIntentProposal, Mapping[str, Any]]:
+    if not config.rebalance_each_window and account.positions:
+        return _rebalance_proposal((), run_label), {
+            "resized_order_count": 0,
+            "skipped_below_lot_count": 0,
+            "rebalance_sell_count": 0,
+            "rebalance_buy_count": 0,
+            "rebalance_order_sides": (),
+            "skipped_rebalance_orders": (),
+        }
+
+    lot = int(config.min_order_lot)
+    intents: list[OrderIntent] = []
+    skipped: list[Mapping[str, Any]] = []
+    resized_count = 0
+    selected_set = set(selected_symbols)
+    target_values = {symbol: float(weight) * equity for symbol, weight in target_weights.items()}
+
+    for symbol in sorted(set(account.positions) | selected_set):
+        price = float(prices.get(symbol, 0.0))
+        if price <= 0:
+            continue
+        current_shares = int(account.positions.get(symbol, 0))
+        current_value = current_shares * price
+        target_value = target_values.get(symbol, 0.0)
+        reduce_value = current_value - target_value
+        if current_shares > 0 and reduce_value >= price * lot:
+            quantity = min(current_shares, _floor_lot(reduce_value / price, lot))
+            if quantity >= lot:
+                intents.append(
+                    _rebalance_intent(
+                        symbol=symbol,
+                        side=OrderIntentSide.SELL,
+                        quantity=quantity,
+                        target_weight=target_weights.get(symbol, 0.0),
+                        run_label=run_label,
+                        reason="scaleup_rebalance_reduce_to_target",
+                    )
+                )
+
+    estimated_cash = float(account.cash)
+    for intent in intents:
+        price = float(prices.get(intent.symbol, 0.0))
+        estimated_cash += _estimated_sell_cash(int(intent.target_shares or 0), price, cost_assumptions)
+
+    reserve_cash = max(0.0, equity * float(config.reserve_cash_weight))
+    for symbol in selected_symbols:
+        price = float(prices.get(symbol, 0.0))
+        if price <= 0:
+            continue
+        current_value = int(account.positions.get(symbol, 0)) * price
+        target_value = target_values.get(symbol, 0.0)
+        add_value = target_value - current_value
+        if add_value < price * lot:
+            if add_value > 0:
+                skipped.append({"symbol": symbol, "reason": "below_min_lot_after_resize"})
+            continue
+        desired_quantity = _floor_lot(add_value / price, lot)
+        affordable_quantity = _max_affordable_buy_quantity(
+            cash=max(0.0, estimated_cash - reserve_cash),
+            price=price,
+            lot=lot,
+            cost_assumptions=cost_assumptions,
+        )
+        quantity = min(desired_quantity, affordable_quantity)
+        if quantity < lot:
+            skipped.append({"symbol": symbol, "reason": "below_min_lot_after_resize"})
+            continue
+        if quantity < desired_quantity:
+            resized_count += 1
+        estimated_cash -= _estimated_buy_cash(quantity, price, cost_assumptions)
+        intents.append(
+            _rebalance_intent(
+                symbol=symbol,
+                side=OrderIntentSide.BUY,
+                quantity=quantity,
+                target_weight=target_weights.get(symbol, 0.0),
+                run_label=run_label,
+                reason="scaleup_rebalance_add_to_target",
+                resized=quantity < desired_quantity,
+            )
+        )
+
+    proposal = _rebalance_proposal(tuple(intents), run_label)
+    sides = tuple(str(intent.side.value if isinstance(intent.side, OrderIntentSide) else intent.side) for intent in intents)
+    return proposal, {
+        "resized_order_count": resized_count,
+        "skipped_below_lot_count": len(skipped),
+        "rebalance_sell_count": sum(1 for side in sides if side == "sell"),
+        "rebalance_buy_count": sum(1 for side in sides if side == "buy"),
+        "rebalance_order_sides": sides,
+        "skipped_rebalance_orders": tuple(skipped),
+        "target_weights": dict(target_weights),
+    }
+
+
+def _rebalance_intent(
+    *,
+    symbol: str,
+    side: OrderIntentSide,
+    quantity: int,
+    target_weight: float,
+    run_label: str,
+    reason: str,
+    resized: bool = False,
+) -> OrderIntent:
+    metadata: dict[str, Any] = {
+        "no_broker_live_execution": True,
+        "rebalance_intent": True,
+        "resized_order": resized,
+    }
+    return OrderIntent(
+        symbol=symbol,
+        side=side,
+        target_weight=round(float(target_weight), 6),
+        target_shares=int(quantity),
+        reason=reason,
+        source_agent="scaleup_rebalance",
+        confidence=1.0,
+        strategy_id="real_data_walk_forward_scaleup_v1",
+        run_label=run_label,
+        metadata=metadata,
+    )
+
+
+def _rebalance_proposal(intents: tuple[OrderIntent, ...], run_label: str) -> OrderIntentProposal:
+    return OrderIntentProposal(
+        intents=intents,
+        proposal_source=OrderIntentProposalSource.EXEC2,
+        advisory_only=True,
+        run_label=run_label,
+        metadata={
+            "strategy_id": "real_data_walk_forward_scaleup_v1",
+            "no_broker_live_execution": True,
+            "cash_aware_rebalance": True,
+        },
+    )
+
+
+def _floor_lot(shares: float, lot: int) -> int:
+    return int(shares // lot) * lot
+
+
+def _estimated_buy_cash(quantity: int, price: float, cost_assumptions: PaperFillCostAssumptions) -> float:
+    fill_price = price * (1 + cost_assumptions.slippage_bps / 10_000)
+    gross = quantity * fill_price
+    fee = max(gross * cost_assumptions.fee_rate, cost_assumptions.min_fee)
+    return round(gross + fee, 6)
+
+
+def _estimated_sell_cash(quantity: int, price: float, cost_assumptions: PaperFillCostAssumptions) -> float:
+    fill_price = price * (1 - cost_assumptions.slippage_bps / 10_000)
+    gross = quantity * fill_price
+    fee = max(gross * cost_assumptions.fee_rate, cost_assumptions.min_fee)
+    stamp_tax = gross * cost_assumptions.stamp_tax_rate
+    return round(gross - fee - stamp_tax, 6)
+
+
+def _max_affordable_buy_quantity(
+    *,
+    cash: float,
+    price: float,
+    lot: int,
+    cost_assumptions: PaperFillCostAssumptions,
+) -> int:
+    if cash <= 0 or price <= 0:
+        return 0
+    rough = _floor_lot(cash / (price * (1 + cost_assumptions.slippage_bps / 10_000)), lot)
+    while rough >= lot and _estimated_buy_cash(rough, price, cost_assumptions) > cash:
+        rough -= lot
+    return max(0, rough)
+
+
+def _scaleup_window_metrics(
+    *,
+    window: Any,
+    account: PaperAccount,
+    fill_result: Any,
+    starting_equity: float,
+    ending_equity: float,
+    start_prices: Mapping[str, float],
+    end_prices: Mapping[str, float],
+    selected_symbols: tuple[str, ...],
+    target_weights: Mapping[str, float],
+    proposal: OrderIntentProposal,
+    build_notes: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    gross_exposure = _position_market_value(account.positions, end_prices)
+    turnover = round(sum(float(trade.gross_notional) for trade in fill_result.filled_trades), 6)
+    cost_total = round(sum(float(trade.total_cost) for trade in fill_result.filled_trades), 6)
+    rejected_details = _rejected_trade_details(tuple(fill_result.rejected_fills))
+    symbol_breakdown = _symbol_breakdown(
+        account=account,
+        latest_prices=end_prices,
+        ending_equity=ending_equity,
+        symbols=tuple(sorted(set(end_prices) | set(account.positions) | set(account.average_costs))),
+        starting_equity=starting_equity,
+    )
+    largest_weight = _largest_position_weight(account.positions, end_prices, ending_equity)
+    equity_return = _ratio(ending_equity - starting_equity, starting_equity)
+    return {
+        "run_label": window.run_label,
+        "train_start": str(window.train_start),
+        "train_end": str(window.train_end),
+        "test_start": str(window.test_start),
+        "test_end": str(window.test_end),
+        "starting_equity": round(starting_equity, 6),
+        "ending_equity": round(ending_equity, 6),
+        "equity_window_return": equity_return,
+        "cash": round(float(account.cash), 6),
+        "position_market_value": round(gross_exposure, 6),
+        "gross_exposure": round(gross_exposure, 6),
+        "net_exposure": round(gross_exposure, 6),
+        "realized_pnl": round(float(account.realized_pnl), 6),
+        "unrealized_pnl": round(float(account.unrealized_pnl), 6),
+        "total_pnl": round(float(account.realized_pnl) + float(account.unrealized_pnl), 6),
+        "net_pnl": round(ending_equity - starting_equity, 6),
+        "trade_count": len(fill_result.filled_trades),
+        "rejected_count": len(fill_result.rejected_fills),
+        "fill_rate": round(len(fill_result.filled_trades) / len(proposal.intents), 6) if proposal.intents else 0.0,
+        "turnover": turnover,
+        "cost_total": cost_total,
+        "cost_to_turnover_ratio": _ratio(cost_total, turnover),
+        "rejection_reasons": rejected_details["rejection_reasons"],
+        "rejected_symbols": rejected_details["rejected_symbols"],
+        "per_symbol_breakdown": symbol_breakdown,
+        "cash_ratio": _ratio(float(account.cash), ending_equity),
+        "cash_weight": _ratio(float(account.cash), ending_equity),
+        "gross_exposure_ratio": _ratio(gross_exposure, ending_equity),
+        "gross_exposure_weight": _ratio(gross_exposure, ending_equity),
+        "invested_ratio": _ratio(gross_exposure, ending_equity),
+        "largest_position_weight": largest_weight,
+        "actual_position_count": sum(1 for quantity in account.positions.values() if int(quantity) > 0),
+        "candidate_symbols": selected_symbols,
+        "target_weights": dict(target_weights),
+        "rebalance_order_sides": build_notes.get("rebalance_order_sides", ()),
+        "resized_order_count": int(build_notes.get("resized_order_count", 0)),
+        "skipped_below_lot_count": int(build_notes.get("skipped_below_lot_count", 0)),
+        "rebalance_sell_count": int(build_notes.get("rebalance_sell_count", 0)),
+        "rebalance_buy_count": int(build_notes.get("rebalance_buy_count", 0)),
+        "skipped_rebalance_orders": build_notes.get("skipped_rebalance_orders", ()),
+        "start_prices": dict(start_prices),
+        "end_prices": dict(end_prices),
+    }
+
+
+def _mark_account_to_prices(account: PaperAccount, prices: Mapping[str, float]) -> PaperAccount:
+    unrealized = 0.0
+    for symbol, shares in account.positions.items():
+        latest_price = prices.get(symbol)
+        if latest_price is None:
+            continue
+        unrealized += int(shares) * (float(latest_price) - float(account.average_costs.get(symbol, 0.0)))
+    return replace(account, unrealized_pnl=round(unrealized, 6))
+
+
+def _account_equity(account: PaperAccount, prices: Mapping[str, float]) -> float:
+    return round(float(account.cash) + _position_market_value(account.positions, prices), 6)
+
+
+def _largest_position_weight(
+    positions: Mapping[str, int],
+    prices: Mapping[str, float],
+    equity: float,
+) -> float | None:
+    if equity <= 0:
+        return None
+    values = [abs(int(quantity) * float(prices.get(symbol, 0.0))) / equity for symbol, quantity in positions.items()]
+    return round(max(values), 6) if values else 0.0
 
 
 def _load_bars(config: RealDataWalkForwardSmokeConfig) -> _LoadedBars:
@@ -339,6 +961,214 @@ def _aggregate_symbol_breakdown(per_window: tuple[Mapping[str, Any], ...]) -> tu
     return tuple(per_window[-1].get("per_symbol_breakdown", ()))
 
 
+def _scaleup_report_from_smoke(
+    smoke_report: RealDataWalkForwardSmokeReport,
+    config: RealDataWalkForwardScaleupConfig,
+) -> RealDataWalkForwardScaleupReport:
+    expected_symbols = tuple(canonicalize_a_share_symbol(symbol) for symbol in config.symbols)
+    valid_symbols = _valid_symbols_from_report(smoke_report)
+    skipped_symbols = _skipped_symbols_from_report(smoke_report, expected_symbols, valid_symbols)
+    if not valid_symbols and skipped_symbols and set(skipped_symbols) != set(expected_symbols):
+        valid_symbols = tuple(symbol for symbol in expected_symbols if symbol not in set(skipped_symbols))
+    window_returns = _window_returns(smoke_report.per_window_metrics)
+    turnover = round(sum(float(metrics.get("turnover", 0.0)) for metrics in smoke_report.per_window_metrics), 6)
+    per_symbol_total_pnl = _per_symbol_total_pnl(smoke_report.aggregate_symbol_breakdown)
+    ranked = _rank_contributors(per_symbol_total_pnl)
+    rejected_ratio = _rejected_trade_ratio(smoke_report.filled_trades, smoke_report.rejected_trades)
+    contribution = _contribution_to_total_return(per_symbol_total_pnl, smoke_report.initial_cash)
+    unavailable = smoke_report.notes[0] == "real_data_provider_unavailable" if smoke_report.notes else False
+    notes = (
+        "real_data_walk_forward_scaleup_v1_completed" if not unavailable else "real_data_walk_forward_scaleup_v1_unavailable",
+        "manual_only_real_provider_run",
+        "no_broker_live_execution",
+        "deepseek_live_disabled_by_default",
+        f"advisory_mode:{config.advisory_mode}",
+    )
+    return RealDataWalkForwardScaleupReport(
+        symbols=expected_symbols,
+        date_range=smoke_report.date_range,
+        provider=smoke_report.provider,
+        benchmark_mode=config.benchmark_mode,
+        windows_run=smoke_report.windows_run,
+        valid_symbols=valid_symbols,
+        skipped_symbols=skipped_symbols,
+        initial_cash=smoke_report.initial_cash,
+        final_equity=smoke_report.final_equity,
+        total_return=smoke_report.total_return,
+        benchmark_total_return=smoke_report.benchmark_total_return,
+        strategy_excess_return=smoke_report.strategy_excess_return,
+        max_drawdown=smoke_report.max_drawdown,
+        win_rate_by_window=_win_rate(window_returns),
+        average_window_return=_average(window_returns),
+        median_window_return=_median(window_returns),
+        worst_window_return=min(window_returns) if window_returns else None,
+        equity_window_return=window_returns,
+        actual_position_count_by_window=tuple(int(metrics.get("actual_position_count", 0)) for metrics in smoke_report.per_window_metrics),
+        cash_weight_by_window=tuple(_optional_float(metrics.get("cash_weight")) for metrics in smoke_report.per_window_metrics),
+        gross_exposure_by_window=tuple(_optional_float(metrics.get("gross_exposure_weight")) for metrics in smoke_report.per_window_metrics),
+        largest_position_weight_by_window=tuple(_optional_float(metrics.get("largest_position_weight")) for metrics in smoke_report.per_window_metrics),
+        filled_trades=smoke_report.filled_trades,
+        rejected_trades=smoke_report.rejected_trades,
+        rejected_trade_ratio=rejected_ratio,
+        rejection_reasons=_aggregate_rejection_reasons(smoke_report.per_window_metrics),
+        resized_order_count=sum(int(metrics.get("resized_order_count", 0)) for metrics in smoke_report.per_window_metrics),
+        skipped_below_lot_count=sum(int(metrics.get("skipped_below_lot_count", 0)) for metrics in smoke_report.per_window_metrics),
+        rebalance_sell_count=sum(int(metrics.get("rebalance_sell_count", 0)) for metrics in smoke_report.per_window_metrics),
+        rebalance_buy_count=sum(int(metrics.get("rebalance_buy_count", 0)) for metrics in smoke_report.per_window_metrics),
+        turnover=turnover,
+        cost_total=smoke_report.cost_total,
+        cost_to_turnover_ratio=_ratio(smoke_report.cost_total, turnover),
+        top_contributors=ranked[:5],
+        worst_contributors=tuple(reversed(ranked[-5:])) if ranked else (),
+        per_symbol_total_pnl=per_symbol_total_pnl,
+        contribution_to_total_return=contribution,
+        per_window_metrics=smoke_report.per_window_metrics,
+        data_quality_warnings=smoke_report.data_quality_warnings,
+        mature_framework_hooks=_mature_framework_hooks(config.metadata),
+        notes=notes + tuple(note for note in smoke_report.notes if note not in {"real_data_smoke_completed"}),
+    )
+
+
+def _valid_symbols_from_report(report: RealDataWalkForwardSmokeReport) -> tuple[str, ...]:
+    symbols: set[str] = set()
+    for metrics in report.per_window_metrics:
+        for row in metrics.get("per_symbol_breakdown", ()):
+            symbol = row.get("symbol") if isinstance(row, Mapping) else None
+            if symbol:
+                symbols.add(str(symbol))
+    return tuple(sorted(symbols))
+
+
+def _skipped_symbols_from_report(
+    report: RealDataWalkForwardSmokeReport,
+    expected_symbols: tuple[str, ...],
+    valid_symbols: tuple[str, ...],
+) -> tuple[str, ...]:
+    missing_prefix = "missing_symbols:"
+    for warning in report.data_quality_warnings:
+        if warning.startswith(missing_prefix):
+            return tuple(symbol for symbol in warning.removeprefix(missing_prefix).split(",") if symbol)
+    return tuple(symbol for symbol in expected_symbols if symbol not in set(valid_symbols))
+
+
+def _window_returns(per_window: tuple[Mapping[str, Any], ...]) -> tuple[float, ...]:
+    returns: list[float] = []
+    for metrics in per_window:
+        if metrics.get("equity_window_return") is not None:
+            returns.append(round(float(metrics["equity_window_return"]), 6))
+            continue
+        starting = float(metrics.get("starting_equity", 0.0))
+        ending = float(metrics.get("ending_equity", 0.0))
+        if starting > 0:
+            returns.append(round((ending - starting) / starting, 6))
+    return tuple(returns)
+
+
+def _win_rate(values: tuple[float, ...]) -> float | None:
+    if not values:
+        return None
+    return round(sum(1 for value in values if value > 0) / len(values), 6)
+
+
+def _average(values: tuple[float, ...]) -> float | None:
+    if not values:
+        return None
+    return round(sum(values) / len(values), 6)
+
+
+def _median(values: tuple[float, ...]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return round(ordered[middle], 6)
+    return round((ordered[middle - 1] + ordered[middle]) / 2, 6)
+
+
+def _aggregate_rejection_reasons(per_window: tuple[Mapping[str, Any], ...]) -> Mapping[str, int]:
+    reasons: dict[str, int] = {}
+    for metrics in per_window:
+        for reason, count in dict(metrics.get("rejection_reasons", {})).items():
+            reasons[str(reason)] = reasons.get(str(reason), 0) + int(count)
+    return dict(sorted(reasons.items()))
+
+
+def _per_symbol_total_pnl(rows: tuple[Mapping[str, Any], ...]) -> Mapping[str, float]:
+    values: dict[str, float] = {}
+    for row in rows:
+        symbol = str(row.get("symbol", ""))
+        if not symbol:
+            continue
+        values[symbol] = round(float(row.get("total_pnl", 0.0)), 6)
+    return dict(sorted(values.items()))
+
+
+def _rank_contributors(per_symbol_total_pnl: Mapping[str, float]) -> tuple[Mapping[str, Any], ...]:
+    non_zero = {symbol: pnl for symbol, pnl in per_symbol_total_pnl.items() if float(pnl) != 0.0}
+    values = non_zero or dict(per_symbol_total_pnl)
+    rows = [
+        {"symbol": symbol, "total_pnl": pnl}
+        for symbol, pnl in sorted(
+            values.items(),
+            key=lambda item: (-float(item[1]), item[0]),
+        )
+    ]
+    return tuple(rows)
+
+
+def _rejected_trade_ratio(filled_trades: int, rejected_trades: int) -> float | None:
+    total = int(filled_trades) + int(rejected_trades)
+    if total <= 0:
+        return None
+    return round(int(rejected_trades) / total, 6)
+
+
+def _contribution_to_total_return(
+    per_symbol_total_pnl: Mapping[str, float],
+    initial_cash: float,
+) -> Mapping[str, float]:
+    if initial_cash == 0:
+        return {}
+    return {
+        symbol: round(float(pnl) / float(initial_cash), 6)
+        for symbol, pnl in sorted(per_symbol_total_pnl.items())
+    }
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return round(float(value), 6)
+
+
+def _mature_framework_hooks(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
+    return {
+        "vectorbt_stats_adapter": "optional_not_required",
+        "qlib_report_adapter": "optional_not_required",
+        "rqalpha_artifact_adapter": "optional_not_required",
+        "provided_vectorbt_stats": metadata.get("vectorbt_stats") is not None,
+        "provided_qlib_report": metadata.get("qlib_report") is not None,
+        "provided_rqalpha_artifact": metadata.get("rqalpha_artifact") is not None,
+    }
+
+
+def _benchmark_metrics(
+    frame: pd.DataFrame,
+    windows: Sequence[Any],
+    initial_cash: float,
+    benchmark_mode: str,
+) -> Mapping[str, Any]:
+    if benchmark_mode != "equal_weight_close_to_close":
+        unavailable = f"benchmark_unavailable:unsupported_mode:{benchmark_mode}"
+        return {
+            "benchmark_final_equity": None,
+            "benchmark_total_return": None,
+            "benchmark_notes": (unavailable,),
+        }
+    return _buy_and_hold_benchmark(frame, windows, initial_cash)
+
+
 def _buy_and_hold_benchmark(
     frame: pd.DataFrame,
     windows: Sequence[Any],
@@ -386,6 +1216,19 @@ def _buy_and_hold_benchmark(
 
 
 def _write_report_artifact(report: RealDataWalkForwardSmokeReport, artifact_path: str | Path | None) -> str | None:
+    if artifact_path is None:
+        return None
+    path = Path(artifact_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _json_ready(asdict(replace(report, artifact_path=str(path))))
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def _write_scaleup_report_artifact(
+    report: RealDataWalkForwardScaleupReport,
+    artifact_path: str | Path | None,
+) -> str | None:
     if artifact_path is None:
         return None
     path = Path(artifact_path)
@@ -515,6 +1358,19 @@ def _build_windows(
     return tuple(windows)
 
 
+def _validate_scaleup_config(config: RealDataWalkForwardScaleupConfig) -> None:
+    if config.max_position_weight <= 0 or config.max_position_weight > 1:
+        raise ValueError("max_position_weight must be in (0, 1]")
+    if config.target_position_count <= 0:
+        raise ValueError("target_position_count must be positive")
+    if config.reserve_cash_weight < 0 or config.reserve_cash_weight >= 1:
+        raise ValueError("reserve_cash_weight must be in [0, 1)")
+    if config.min_order_lot <= 0:
+        raise ValueError("min_order_lot must be positive")
+    if config.max_rejected_trade_ratio_warning < 0 or config.max_rejected_trade_ratio_warning > 1:
+        raise ValueError("max_rejected_trade_ratio_warning must be in [0, 1]")
+
+
 def _validate_config(config: RealDataWalkForwardSmokeConfig) -> tuple[str, ...]:
     warnings: list[str] = []
     if not config.symbols:
@@ -531,6 +1387,35 @@ def _validate_config(config: RealDataWalkForwardSmokeConfig) -> tuple[str, ...]:
         raise ValueError("min_symbols_required must be positive")
     if config.advisory_mode not in {"disabled", "fallback_only", "evidence_only"}:
         warnings.append("advisory_mode_forced_to_fallback_only")
+    if config.benchmark_mode != "equal_weight_close_to_close":
+        warnings.append(f"benchmark_mode_unsupported:{config.benchmark_mode}")
+    return tuple(warnings)
+
+
+def _scaleup_diagnostic_warnings(
+    per_window: tuple[Mapping[str, Any], ...],
+    config: RealDataWalkForwardScaleupConfig,
+) -> tuple[str, ...]:
+    warnings: list[str] = []
+    tolerance = 0.01
+    for metrics in per_window:
+        label = str(metrics.get("run_label", "window"))
+        largest = metrics.get("largest_position_weight")
+        if largest is not None and float(largest) > float(config.max_position_weight) + tolerance:
+            warnings.append(f"{label}:largest_position_weight_above_target:{float(largest):.6f}")
+        position_count = int(metrics.get("actual_position_count", 0))
+        if position_count < max(1, int(config.target_position_count) / 2):
+            warnings.append(f"{label}:actual_position_count_below_half_target:{position_count}")
+    filled = sum(int(metrics.get("trade_count", 0)) for metrics in per_window)
+    rejected = sum(int(metrics.get("rejected_count", 0)) for metrics in per_window)
+    rejected_ratio = _rejected_trade_ratio(filled, rejected)
+    if rejected_ratio is not None and rejected_ratio > float(config.max_rejected_trade_ratio_warning):
+        warnings.append(f"rejected_trade_ratio_above_warning:{rejected_ratio:.6f}")
+    reasons = _aggregate_rejection_reasons(per_window)
+    if reasons:
+        dominant_reason, dominant_count = max(reasons.items(), key=lambda item: item[1])
+        if dominant_reason == "insufficient_cash" and dominant_count > rejected / 2:
+            warnings.append("insufficient_cash_dominant_after_resizing")
     return tuple(warnings)
 
 
