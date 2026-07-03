@@ -59,6 +59,7 @@ def test_mature_framework_labels_cover_current_adapter_layers() -> None:
     assert "rqalpha_order_intent_adapter" in labels
     assert "backtrader_order_intent_adapter" in labels
     assert "paper_trading_loop" in labels
+    assert "walk_forward_paper_evaluation" in labels
     assert "mlflow_style_in_memory_experiment_tracking" in labels
     assert "deepseek_advisory_fallback" in labels
 

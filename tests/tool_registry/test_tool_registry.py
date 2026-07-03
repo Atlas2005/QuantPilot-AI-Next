@@ -111,6 +111,7 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
         "run_shareholder_dividend_agent",
         "run_valuation_agent",
         "run_vectorbt_signal_backtest",
+        "run_walk_forward_paper_evaluation",
         "signal_artifact_to_vbt3_signal_frame",
     )
     assert all(tool.side_effect_level is ToolSideEffectLevel.PURE_IN_MEMORY for tool in registry.list_tools())
@@ -145,6 +146,7 @@ def test_default_registry_prefers_mature_replacement_path_over_legacy_blockers()
         "replay_provider_signals_with_vectorbt",
         "run_quant_firm_decision_cycle",
         "run_vectorbt_signal_backtest",
+        "run_walk_forward_paper_evaluation",
     } <= names
 
     assert names.isdisjoint(
