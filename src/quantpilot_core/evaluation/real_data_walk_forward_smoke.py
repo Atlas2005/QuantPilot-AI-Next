@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import pandas as pd
 
@@ -84,6 +84,9 @@ DEFAULT_REAL_DATA_SCALEUP_ARTIFACT_PATH = Path("artifacts/real_data_walk_forward
 DEFAULT_REAL_DATA_SCALEUP_SWEEP_ARTIFACT_PATH = Path(
     "artifacts/real_data_walk_forward_scaleup_sweep/latest_report.json"
 )
+DEFAULT_FACTOR_RANKING_SWEEP_INTEGRATION_ARTIFACT_PATH = Path(
+    "artifacts/factor_ranking_sweep_integration/latest_report.json"
+)
 REAL_DATA_SCALEUP_RANKING_MODES = (
     "momentum_20d",
     "momentum_60d",
@@ -91,6 +94,16 @@ REAL_DATA_SCALEUP_RANKING_MODES = (
     "equal_weight_baseline",
 )
 SUPPORTED_REAL_DATA_SCALEUP_RANKING_MODES = REAL_DATA_SCALEUP_RANKING_MODES + FACTOR_RANKING_BASELINE_MODES
+FACTOR_RANKING_SWEEP_INTEGRATION_MODES = FACTOR_RANKING_BASELINE_MODES
+FACTOR_RANKING_SWEEP_BASELINE_REFERENCE = {
+    "source": "PR #96 best real-data scale-up baseline",
+    "ranking_mode": "low_volatility",
+    "total_return": -0.000061,
+    "benchmark_total_return": -0.08708,
+    "strategy_excess_return": 0.087019,
+    "max_drawdown": -0.12525,
+    "rejected_trade_ratio": 0.0,
+}
 AK_PROVIDER = "ak" + "share"
 BAO_PROVIDER = "bao" + "stock"
 TU_PROVIDER = "tu" + "share"
@@ -169,6 +182,35 @@ class RealDataWalkForwardScaleupSweepConfig:
     max_rejected_trade_ratio_warning: float = 0.20
     top_n: int = 5
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class FactorRankingSweepIntegrationConfig:
+    """Manual-only sweep over factor-ranking modes using the scale-up runner."""
+
+    symbols: tuple[str, ...] = DEFAULT_REAL_DATA_SCALEUP_SYMBOLS
+    start_date: date | str = "2023-01-01"
+    end_date: date | str = "2024-12-31"
+    initial_cash: float = 1_000_000.0
+    train_window_days: int = 60
+    test_window_days: int = 20
+    max_windows: int = 12
+    min_symbols_required: int = 20
+    allow_partial_universe: bool = True
+    artifact_path: str | Path | None = DEFAULT_FACTOR_RANKING_SWEEP_INTEGRATION_ARTIFACT_PATH
+    benchmark_mode: str = "equal_weight_close_to_close"
+    provider: str | DailyBarProvider = DEFAULT_PROVIDER
+    advisory_mode: str = "disabled"
+    target_position_counts: tuple[int, ...] = (10, 15, 20)
+    max_position_weights: tuple[float, ...] = (0.05, 0.08, 0.10)
+    reserve_cash_weights: tuple[float, ...] = (0.02, 0.05)
+    factor_ranking_modes: tuple[str, ...] = FACTOR_RANKING_SWEEP_INTEGRATION_MODES
+    rebalance_each_window: bool = True
+    min_order_lot: int = 100
+    max_rejected_trade_ratio_warning: float = 0.20
+    top_n: int = 5
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    progress_callback: Callable[[Mapping[str, Any]], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -265,6 +307,26 @@ class RealDataWalkForwardScaleupSweepReport:
     top_parameter_sets_by_excess: tuple[Mapping[str, Any], ...]
     top_parameter_sets_by_return: tuple[Mapping[str, Any], ...]
     top_parameter_sets_by_drawdown_adjusted: tuple[Mapping[str, Any], ...]
+    notes: tuple[str, ...]
+    artifact_path: str | None = None
+
+
+@dataclass(frozen=True)
+class FactorRankingSweepIntegrationReport:
+    """Factor-mode integration diagnostics for manual-only scale-up sweeps."""
+
+    provider: str
+    date_range: tuple[str, str]
+    symbols_requested: tuple[str, ...]
+    valid_symbols: tuple[str, ...]
+    factor_ranking_modes: tuple[str, ...]
+    parameter_set_count: int
+    parameter_sets: tuple[Mapping[str, Any], ...]
+    top_parameter_sets_by_excess: tuple[Mapping[str, Any], ...]
+    top_parameter_sets_by_return: tuple[Mapping[str, Any], ...]
+    top_parameter_sets_by_drawdown_adjusted: tuple[Mapping[str, Any], ...]
+    baseline_reference: Mapping[str, Any]
+    per_mode_summary: tuple[Mapping[str, Any], ...]
     notes: tuple[str, ...]
     artifact_path: str | None = None
 
@@ -496,17 +558,94 @@ def run_real_data_walk_forward_scaleup_sweep(
         reports.append(run_real_data_walk_forward_scaleup_v1(parameter_config))
 
     rows = tuple(_scaleup_parameter_set_row(report) for report in reports)
+    report = _scaleup_sweep_report_from_reports(payload, rows)
+    artifact_path = _write_scaleup_sweep_report_artifact(report, payload.artifact_path)
+    if artifact_path is not None:
+        report = replace(report, artifact_path=artifact_path)
+    return report
+
+
+def _scaleup_sweep_report_from_reports(
+    config: RealDataWalkForwardScaleupSweepConfig,
+    rows: tuple[Mapping[str, Any], ...],
+) -> RealDataWalkForwardScaleupSweepReport:
     report = RealDataWalkForwardScaleupSweepReport(
-        provider=_provider_name(payload.provider),
-        date_range=(str(_as_date(payload.start_date)), str(_as_date(payload.end_date))),
-        symbols=tuple(canonicalize_a_share_symbol(symbol) for symbol in payload.symbols),
+        provider=_provider_name(config.provider),
+        date_range=(str(_as_date(config.start_date)), str(_as_date(config.end_date))),
+        symbols=tuple(canonicalize_a_share_symbol(symbol) for symbol in config.symbols),
         parameter_set_count=len(rows),
         parameter_sets=rows,
-        top_parameter_sets_by_excess=_top_parameter_sets(rows, "strategy_excess_return", int(payload.top_n)),
-        top_parameter_sets_by_return=_top_parameter_sets(rows, "total_return", int(payload.top_n)),
-        top_parameter_sets_by_drawdown_adjusted=_top_drawdown_adjusted_parameter_sets(rows, int(payload.top_n)),
+        top_parameter_sets_by_excess=_top_parameter_sets(rows, "strategy_excess_return", int(config.top_n)),
+        top_parameter_sets_by_return=_top_parameter_sets(rows, "total_return", int(config.top_n)),
+        top_parameter_sets_by_drawdown_adjusted=_top_drawdown_adjusted_parameter_sets(rows, int(config.top_n)),
         notes=(
             "real_data_walk_forward_scaleup_sweep_completed",
+            "manual_only_real_provider_run",
+            "no_broker_live_execution",
+            "deepseek_live_disabled_by_default",
+            "no_profitability_claim",
+            f"advisory_mode:{config.advisory_mode}",
+        ),
+    )
+    return report
+
+
+def run_factor_ranking_sweep_integration_v1(
+    config: FactorRankingSweepIntegrationConfig | None = None,
+    **kwargs: Any,
+) -> FactorRankingSweepIntegrationReport:
+    """Run the factor-ranking mode sweep through the existing scale-up path."""
+
+    payload = config or FactorRankingSweepIntegrationConfig(**kwargs)
+    _validate_factor_ranking_sweep_config(payload)
+    sweep_config = RealDataWalkForwardScaleupSweepConfig(
+        symbols=payload.symbols,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        initial_cash=payload.initial_cash,
+        train_window_days=payload.train_window_days,
+        test_window_days=payload.test_window_days,
+        max_windows=payload.max_windows,
+        min_symbols_required=payload.min_symbols_required,
+        allow_partial_universe=payload.allow_partial_universe,
+        artifact_path=None,
+        benchmark_mode=payload.benchmark_mode,
+        provider=payload.provider,
+        advisory_mode=payload.advisory_mode,
+        target_position_counts=payload.target_position_counts,
+        max_position_weights=payload.max_position_weights,
+        reserve_cash_weights=payload.reserve_cash_weights,
+        ranking_modes=payload.factor_ranking_modes,
+        rebalance_each_window=payload.rebalance_each_window,
+        min_order_lot=payload.min_order_lot,
+        max_rejected_trade_ratio_warning=payload.max_rejected_trade_ratio_warning,
+        top_n=payload.top_n,
+        metadata={
+            **dict(payload.metadata),
+            "factor_ranking_sweep_integration_v1": True,
+        },
+    )
+    sweep_report = _run_factor_ranking_sweep_with_cached_bars(
+        sweep_config,
+        progress_callback=payload.progress_callback,
+    )
+    rows = sweep_report.parameter_sets
+    report = FactorRankingSweepIntegrationReport(
+        provider=sweep_report.provider,
+        date_range=sweep_report.date_range,
+        symbols_requested=tuple(canonicalize_a_share_symbol(symbol) for symbol in payload.symbols),
+        valid_symbols=_valid_symbols_from_parameter_rows(rows),
+        factor_ranking_modes=tuple(payload.factor_ranking_modes),
+        parameter_set_count=sweep_report.parameter_set_count,
+        parameter_sets=rows,
+        top_parameter_sets_by_excess=sweep_report.top_parameter_sets_by_excess,
+        top_parameter_sets_by_return=sweep_report.top_parameter_sets_by_return,
+        top_parameter_sets_by_drawdown_adjusted=sweep_report.top_parameter_sets_by_drawdown_adjusted,
+        baseline_reference=dict(FACTOR_RANKING_SWEEP_BASELINE_REFERENCE),
+        per_mode_summary=_factor_mode_summary(rows),
+        notes=(
+            "factor_ranking_sweep_integration_v1_completed",
+            "reuses_real_data_walk_forward_scaleup_sweep",
             "manual_only_real_provider_run",
             "no_broker_live_execution",
             "deepseek_live_disabled_by_default",
@@ -514,10 +653,183 @@ def run_real_data_walk_forward_scaleup_sweep(
             f"advisory_mode:{payload.advisory_mode}",
         ),
     )
-    artifact_path = _write_scaleup_sweep_report_artifact(report, payload.artifact_path)
+    artifact_path = _write_factor_ranking_sweep_integration_artifact(report, payload.artifact_path)
     if artifact_path is not None:
         report = replace(report, artifact_path=artifact_path)
     return report
+
+
+def _run_factor_ranking_sweep_with_cached_bars(
+    config: RealDataWalkForwardScaleupSweepConfig,
+    *,
+    progress_callback: Callable[[Mapping[str, Any]], None] | None = None,
+) -> RealDataWalkForwardScaleupSweepReport:
+    parameter_configs = build_real_data_walk_forward_scaleup_sweep_grid(config)
+    provider_name = _provider_name(config.provider)
+    smoke_config = RealDataWalkForwardSmokeConfig(
+        symbols=config.symbols,
+        start_date=config.start_date,
+        end_date=config.end_date,
+        initial_cash=config.initial_cash,
+        train_window_days=config.train_window_days,
+        test_window_days=config.test_window_days,
+        max_windows=config.max_windows,
+        provider=config.provider,
+        advisory_mode=config.advisory_mode,
+        allow_partial_universe=config.allow_partial_universe,
+        min_symbols_required=config.min_symbols_required,
+        artifact_path=None,
+        benchmark_mode=config.benchmark_mode,
+        metadata={
+            **dict(config.metadata),
+            "real_data_walk_forward_scaleup_v1": True,
+            "mature_framework_hooks": _mature_framework_hooks(config.metadata),
+        },
+    )
+    validation_warnings = _validate_config(smoke_config)
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "event": "data_load_started",
+                "provider": provider_name,
+                "date_range": (str(_as_date(config.start_date)), str(_as_date(config.end_date))),
+                "symbols_requested": tuple(canonicalize_a_share_symbol(symbol) for symbol in config.symbols),
+                "factor_modes_count": len(config.ranking_modes),
+                "parameter_sets_count": len(parameter_configs),
+                "completed_parameter_sets": 0,
+            }
+        )
+    try:
+        loaded = _load_bars(smoke_config)
+    except Exception as exc:
+        if not isinstance(exc, (RuntimeError, ProviderError, ValueError)):
+            raise
+        reports = tuple(
+            _scaleup_report_from_smoke(
+                _unavailable_report(smoke_config, provider_name, str(exc), validation_warnings),
+                parameter_config,
+            )
+            for parameter_config in parameter_configs
+        )
+        return _scaleup_sweep_report_from_reports(config, tuple(_scaleup_parameter_set_row(report) for report in reports))
+
+    price_frame = _bars_to_price_frame(loaded.bars)
+    data_warnings = validation_warnings + loaded.warnings + _data_quality_warnings(price_frame, smoke_config)
+    valid_symbols = tuple(sorted(str(symbol) for symbol in price_frame["symbol"].dropna().unique())) if not price_frame.empty else ()
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "event": "data_load_completed",
+                "provider": provider_name,
+                "date_range": (str(_as_date(config.start_date)), str(_as_date(config.end_date))),
+                "symbols_requested": tuple(canonicalize_a_share_symbol(symbol) for symbol in config.symbols),
+                "valid_symbols": valid_symbols,
+                "factor_modes_count": len(config.ranking_modes),
+                "parameter_sets_count": len(parameter_configs),
+                "completed_parameter_sets": 0,
+            }
+        )
+
+    rows: list[Mapping[str, Any]] = []
+    for index, parameter_config in enumerate(parameter_configs, start=1):
+        report = _run_scaleup_with_loaded_price_frame(
+            parameter_config,
+            smoke_config=smoke_config,
+            provider_name=provider_name,
+            price_frame=price_frame,
+            data_warnings=data_warnings,
+        )
+        rows.append(_scaleup_parameter_set_row(report))
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "event": "parameter_set_completed",
+                    "provider": provider_name,
+                    "date_range": (str(_as_date(config.start_date)), str(_as_date(config.end_date))),
+                    "symbols_requested": tuple(canonicalize_a_share_symbol(symbol) for symbol in config.symbols),
+                    "valid_symbols": valid_symbols,
+                    "factor_modes_count": len(config.ranking_modes),
+                    "parameter_sets_count": len(parameter_configs),
+                    "completed_parameter_sets": index,
+                    "parameter_set_id": parameter_config.metadata.get("parameter_set_id"),
+                    "ranking_mode": parameter_config.ranking_mode,
+                }
+            )
+    return _scaleup_sweep_report_from_reports(config, tuple(rows))
+
+
+def _run_scaleup_with_loaded_price_frame(
+    config: RealDataWalkForwardScaleupConfig,
+    *,
+    smoke_config: RealDataWalkForwardSmokeConfig,
+    provider_name: str,
+    price_frame: pd.DataFrame,
+    data_warnings: tuple[str, ...],
+) -> RealDataWalkForwardScaleupReport:
+    if price_frame.empty:
+        unavailable = _unavailable_report(smoke_config, provider_name, "provider returned no usable OHLCV rows", data_warnings)
+        return _scaleup_report_from_smoke(unavailable, config)
+
+    valid_symbol_count = _valid_symbol_count(price_frame)
+    if valid_symbol_count < int(config.min_symbols_required):
+        reason = (
+            "valid provider symbols below minimum: "
+            f"{valid_symbol_count} < {int(config.min_symbols_required)}"
+        )
+        unavailable = _unavailable_report(smoke_config, provider_name, reason, data_warnings)
+        return _scaleup_report_from_smoke(unavailable, config)
+
+    windows = _build_windows(price_frame, smoke_config)
+    if not windows:
+        unavailable = _unavailable_report(smoke_config, provider_name, "not enough trading dates for configured windows", data_warnings)
+        return _scaleup_report_from_smoke(unavailable, config)
+
+    per_window, final_account = _run_scaleup_rebalance_windows(price_frame, windows, config)
+    final_equity = _final_equity(per_window)
+    benchmark = _benchmark_metrics(price_frame, windows, float(config.initial_cash), config.benchmark_mode)
+    strategy_return = _total_return(config.initial_cash, final_equity)
+    valid_symbols = tuple(sorted(str(symbol) for symbol in price_frame["symbol"].dropna().unique()))
+    expected_symbols = tuple(canonicalize_a_share_symbol(symbol) for symbol in config.symbols)
+    skipped_symbols = tuple(symbol for symbol in expected_symbols if symbol not in set(valid_symbols))
+    aggregate_breakdown = _aggregate_symbol_breakdown(per_window)
+    scaleup_data_warnings = data_warnings + _scaleup_diagnostic_warnings(per_window, config)
+    smoke_report = RealDataWalkForwardSmokeReport(
+        symbols=expected_symbols,
+        date_range=(str(_as_date(config.start_date)), str(_as_date(config.end_date))),
+        provider=provider_name,
+        windows_run=len(per_window),
+        initial_cash=float(config.initial_cash),
+        final_equity=final_equity,
+        total_return=strategy_return,
+        max_drawdown=_max_drawdown(float(config.initial_cash), per_window),
+        filled_trades=sum(int(metrics.get("trade_count", 0)) for metrics in per_window),
+        rejected_trades=sum(int(metrics.get("rejected_count", 0)) for metrics in per_window),
+        cost_total=round(sum(float(metrics.get("cost_total", 0.0)) for metrics in per_window), 6),
+        per_window_metrics=per_window,
+        leakage_checks=tuple(f"{window.run_label}:scaleup_train_and_test_slices_validated" for window in windows),
+        data_quality_warnings=scaleup_data_warnings,
+        notes=(
+            "real_data_scaleup_completed",
+            "no_broker_live_execution",
+            "cash_aware_rebalance",
+            f"advisory_mode:{_safe_advisory_mode(config.advisory_mode)}",
+            f"final_account_trade_log:{len(final_account.trade_log)}",
+        ),
+        aggregate_symbol_breakdown=aggregate_breakdown,
+        benchmark_final_equity=benchmark["benchmark_final_equity"],
+        benchmark_total_return=benchmark["benchmark_total_return"],
+        strategy_excess_return=(
+            round(strategy_return - benchmark["benchmark_total_return"], 6)
+            if strategy_return is not None and benchmark["benchmark_total_return"] is not None
+            else None
+        ),
+        benchmark_notes=tuple(benchmark["benchmark_notes"]),
+    )
+    return replace(
+        _scaleup_report_from_smoke(smoke_report, config),
+        valid_symbols=valid_symbols,
+        skipped_symbols=skipped_symbols,
+    )
 
 
 def build_real_data_walk_forward_scaleup_sweep_grid(
@@ -569,6 +881,18 @@ def build_real_data_walk_forward_scaleup_sweep_grid(
                     )
                     index += 1
     return tuple(configs)
+
+
+def _validate_factor_ranking_sweep_config(config: FactorRankingSweepIntegrationConfig) -> None:
+    if config.top_n <= 0:
+        raise ValueError("top_n must be positive")
+    if not config.factor_ranking_modes:
+        raise ValueError("factor_ranking_modes must not be empty")
+    unsupported = tuple(
+        mode for mode in config.factor_ranking_modes if mode not in FACTOR_RANKING_SWEEP_INTEGRATION_MODES
+    )
+    if unsupported:
+        raise ValueError(f"unsupported factor_ranking_modes: {', '.join(unsupported)}")
 
 
 def _run_scaleup_rebalance_windows(
@@ -1459,6 +1783,19 @@ def _write_scaleup_sweep_report_artifact(
     return str(path)
 
 
+def _write_factor_ranking_sweep_integration_artifact(
+    report: FactorRankingSweepIntegrationReport,
+    artifact_path: str | Path | None,
+) -> str | None:
+    if artifact_path is None:
+        return None
+    path = Path(artifact_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _json_ready(asdict(replace(report, artifact_path=str(path))))
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return str(path)
+
+
 def _scaleup_parameter_set_row(report: RealDataWalkForwardScaleupReport) -> Mapping[str, Any]:
     return {
         "parameter_set_id": report.parameter_set_id,
@@ -1485,6 +1822,7 @@ def _scaleup_parameter_set_row(report: RealDataWalkForwardScaleupReport) -> Mapp
         "windows_run": report.windows_run,
         "filled_trades": report.filled_trades,
         "rejected_trades": report.rejected_trades,
+        "valid_symbols": report.valid_symbols,
         "data_quality_warnings": report.data_quality_warnings,
         "notes": report.notes,
     }
@@ -1530,6 +1868,47 @@ def _top_drawdown_adjusted_parameter_sets(
     )
 
 
+def _valid_symbols_from_parameter_rows(rows: tuple[Mapping[str, Any], ...]) -> tuple[str, ...]:
+    symbols: set[str] = set()
+    for row in rows:
+        for symbol in row.get("valid_symbols", ()):
+            symbols.add(str(symbol))
+    return tuple(sorted(symbols))
+
+
+def _factor_mode_summary(rows: tuple[Mapping[str, Any], ...]) -> tuple[Mapping[str, Any], ...]:
+    summary: list[Mapping[str, Any]] = []
+    for ranking_mode in FACTOR_RANKING_SWEEP_INTEGRATION_MODES:
+        mode_rows = tuple(row for row in rows if row.get("ranking_mode") == ranking_mode)
+        if not mode_rows:
+            continue
+        best_by_excess = _top_parameter_sets(mode_rows, "strategy_excess_return", 1)
+        best_by_return = _top_parameter_sets(mode_rows, "total_return", 1)
+        best_by_drawdown = _top_drawdown_adjusted_parameter_sets(mode_rows, 1)
+        summary.append(
+            {
+                "ranking_mode": ranking_mode,
+                "parameter_set_count": len(mode_rows),
+                "best_by_excess": best_by_excess[0] if best_by_excess else None,
+                "best_by_return": best_by_return[0] if best_by_return else None,
+                "best_by_drawdown_adjusted": best_by_drawdown[0] if best_by_drawdown else None,
+                "average_total_return": _average_metric(mode_rows, "total_return"),
+                "average_strategy_excess_return": _average_metric(mode_rows, "strategy_excess_return"),
+                "average_max_drawdown": _average_metric(mode_rows, "max_drawdown"),
+                "average_turnover": _average_metric(mode_rows, "turnover"),
+                "average_cost_total": _average_metric(mode_rows, "cost_total"),
+                "average_cost_to_turnover_ratio": _average_metric(mode_rows, "cost_to_turnover_ratio"),
+                "average_rejected_trade_ratio": _average_metric(mode_rows, "rejected_trade_ratio"),
+            }
+        )
+    return tuple(summary)
+
+
+def _average_metric(rows: tuple[Mapping[str, Any], ...], metric: str) -> float | None:
+    values = tuple(float(row[metric]) for row in rows if row.get(metric) is not None)
+    return _average(values)
+
+
 def _ranking_summary(row: Mapping[str, Any]) -> Mapping[str, Any]:
     fields = (
         "parameter_set_id",
@@ -1543,6 +1922,7 @@ def _ranking_summary(row: Mapping[str, Any]) -> Mapping[str, Any]:
         "max_drawdown",
         "turnover",
         "cost_total",
+        "cost_to_turnover_ratio",
         "rejected_trade_ratio",
         "average_position_count",
         "average_largest_position_weight",
@@ -1699,7 +2079,7 @@ def _validate_scaleup_config(config: RealDataWalkForwardScaleupConfig) -> None:
         raise ValueError("min_order_lot must be positive")
     if config.max_rejected_trade_ratio_warning < 0 or config.max_rejected_trade_ratio_warning > 1:
         raise ValueError("max_rejected_trade_ratio_warning must be in [0, 1]")
-    if config.ranking_mode not in REAL_DATA_SCALEUP_RANKING_MODES:
+    if config.ranking_mode not in SUPPORTED_REAL_DATA_SCALEUP_RANKING_MODES:
         raise ValueError(f"unsupported ranking_mode: {config.ranking_mode}")
 
 

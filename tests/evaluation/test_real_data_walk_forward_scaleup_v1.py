@@ -9,12 +9,17 @@ import pytest
 from quantpilot_core.evaluation import real_data_walk_forward_smoke as scaleup_module
 from quantpilot_core.evaluation import (
     DEFAULT_REAL_DATA_SCALEUP_SYMBOLS,
+    FACTOR_RANKING_SWEEP_BASELINE_REFERENCE,
+    FACTOR_RANKING_SWEEP_INTEGRATION_MODES,
+    FactorRankingSweepIntegrationConfig,
+    FactorRankingSweepIntegrationReport,
     REAL_DATA_SCALEUP_RANKING_MODES,
     RealDataWalkForwardScaleupConfig,
     RealDataWalkForwardScaleupReport,
     RealDataWalkForwardScaleupSweepConfig,
     RealDataWalkForwardScaleupSweepReport,
     build_real_data_walk_forward_scaleup_sweep_grid,
+    run_factor_ranking_sweep_integration_v1,
     run_real_data_walk_forward_scaleup_sweep,
     run_real_data_walk_forward_scaleup_v1,
 )
@@ -169,6 +174,26 @@ def test_scaleup_sweep_grid_generation_matches_requested_medium_grid() -> None:
     assert grid[0].metadata["parameter_set_id"] == "scaleup-sweep-001"
     assert grid[-1].metadata["parameter_set_id"] == "scaleup-sweep-072"
     assert all(config.artifact_path is None for config in grid)
+
+
+def test_factor_modes_are_accepted_by_scaleup_sweep_grid_without_changing_default() -> None:
+    default_grid = build_real_data_walk_forward_scaleup_sweep_grid(
+        RealDataWalkForwardScaleupSweepConfig(provider=ScaleupFixtureProvider())
+    )
+    factor_grid = build_real_data_walk_forward_scaleup_sweep_grid(
+        RealDataWalkForwardScaleupSweepConfig(
+            provider=ScaleupFixtureProvider(),
+            ranking_modes=FACTOR_RANKING_SWEEP_INTEGRATION_MODES,
+            target_position_counts=(6,),
+            max_position_weights=(0.08,),
+            reserve_cash_weights=(0.02,),
+        )
+    )
+
+    assert len(default_grid) == 72
+    assert {config.ranking_mode for config in default_grid} == set(REAL_DATA_SCALEUP_RANKING_MODES)
+    assert len(factor_grid) == len(FACTOR_RANKING_SWEEP_INTEGRATION_MODES)
+    assert {config.ranking_mode for config in factor_grid} == set(FACTOR_RANKING_SWEEP_INTEGRATION_MODES)
 
 
 def test_scaleup_aggregate_metrics_and_contributors_are_computed() -> None:
@@ -419,6 +444,106 @@ def test_scaleup_sweep_ranks_parameter_sets_and_serializes_json(tmp_path: Path) 
     assert excess_values == sorted(excess_values, reverse=True)
 
 
+def test_factor_mode_sweep_report_serializes_baseline_and_per_mode_summary(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "factor_sweep" / "latest_report.json"
+
+    report = run_factor_ranking_sweep_integration_v1(
+        FactorRankingSweepIntegrationConfig(
+            symbols=FIXTURE_SYMBOLS,
+            start_date="2026-01-01",
+            end_date="2026-02-01",
+            initial_cash=120_000.0,
+            train_window_days=6,
+            test_window_days=5,
+            max_windows=2,
+            min_symbols_required=8,
+            provider=ScaleupFixtureProvider(),
+            artifact_path=artifact_path,
+            target_position_counts=(6,),
+            max_position_weights=(0.08,),
+            reserve_cash_weights=(0.02,),
+            factor_ranking_modes=(
+                "low_volatility_v1",
+                "defensive_composite_v1",
+                "momentum_reversal_guarded",
+            ),
+            top_n=2,
+        )
+    )
+
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert isinstance(report, FactorRankingSweepIntegrationReport)
+    assert report.artifact_path == str(artifact_path)
+    assert report.provider == "baostock"
+    assert report.symbols_requested == FIXTURE_SYMBOLS
+    assert report.valid_symbols == tuple(sorted(FIXTURE_SYMBOLS))
+    assert report.factor_ranking_modes == (
+        "low_volatility_v1",
+        "defensive_composite_v1",
+        "momentum_reversal_guarded",
+    )
+    assert report.parameter_set_count == 3
+    assert report.baseline_reference == FACTOR_RANKING_SWEEP_BASELINE_REFERENCE
+    assert {row["ranking_mode"] for row in report.per_mode_summary} == set(report.factor_ranking_modes)
+    assert len(report.top_parameter_sets_by_excess) == 2
+    assert len(report.top_parameter_sets_by_return) == 2
+    assert len(report.top_parameter_sets_by_drawdown_adjusted) == 2
+    assert "no_profitability_claim" in report.notes
+    assert payload["artifact_path"] == str(artifact_path)
+    assert payload["provider"] == "baostock"
+    assert payload["date_range"] == ["2026-01-01", "2026-02-01"]
+    assert payload["symbols_requested"] == list(FIXTURE_SYMBOLS)
+    assert payload["valid_symbols"] == sorted(FIXTURE_SYMBOLS)
+    assert payload["factor_ranking_modes"] == list(report.factor_ranking_modes)
+    assert payload["baseline_reference"] == FACTOR_RANKING_SWEEP_BASELINE_REFERENCE
+    assert payload["per_mode_summary"] == list(report.per_mode_summary)
+    assert all(
+        {
+            "rejected_trade_ratio",
+            "turnover",
+            "cost_total",
+            "cost_to_turnover_ratio",
+            "max_drawdown",
+            "total_return",
+            "benchmark_total_return",
+            "strategy_excess_return",
+        }
+        <= set(row)
+        for row in payload["parameter_sets"]
+    )
+
+
+def test_factor_mode_sweep_reuses_loaded_provider_data_across_parameter_sets() -> None:
+    provider = ScaleupFixtureProvider()
+
+    report = run_factor_ranking_sweep_integration_v1(
+        FactorRankingSweepIntegrationConfig(
+            symbols=FIXTURE_SYMBOLS,
+            start_date="2026-01-01",
+            end_date="2026-02-01",
+            initial_cash=120_000.0,
+            train_window_days=6,
+            test_window_days=5,
+            max_windows=2,
+            min_symbols_required=8,
+            provider=provider,
+            artifact_path=None,
+            target_position_counts=(6, 8),
+            max_position_weights=(0.08,),
+            reserve_cash_weights=(0.02,),
+            factor_ranking_modes=("low_volatility_v1", "defensive_composite_v1"),
+        )
+    )
+
+    assert report.parameter_set_count == 4
+    assert len(provider.requests) == len(FIXTURE_SYMBOLS)
+    assert {(request.symbol, request.start_date, request.end_date) for request in provider.requests} == {
+        (f"{symbol[-2:].lower()}.{symbol[:6]}", date(2026, 1, 1), date(2026, 2, 1))
+        for symbol in FIXTURE_SYMBOLS
+    }
+
+
 def test_scaleup_ranking_modes_change_candidate_ranking() -> None:
     frame = scaleup_module._bars_to_price_frame(
         ScaleupFixtureProvider().fetch_daily_bars(
@@ -536,5 +661,54 @@ def test_scaleup_sweep_fixture_run_uses_no_external_network_llm_or_broker(
     )
 
     assert report.parameter_set_count == 2
+    assert "no_broker_live_execution" in report.notes
+    assert "deepseek_live_disabled_by_default" in report.notes
+
+
+def test_factor_sweep_fixture_run_uses_no_external_network_llm_or_broker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_provider_constructor(*args, **kwargs):
+        raise AssertionError("real provider constructor must not be used")
+
+    def fail_deepseek(*args, **kwargs):
+        raise AssertionError("DeepSeek advisory must not run in factor sweep tests")
+
+    monkeypatch.setattr(
+        "quantpilot_core.evaluation.real_data_walk_forward_smoke.BaoStockDailyBarProvider",
+        fail_provider_constructor,
+    )
+    monkeypatch.setattr(
+        "quantpilot_core.evaluation.real_data_walk_forward_smoke.AkShareDailyBarProvider",
+        fail_provider_constructor,
+    )
+    monkeypatch.setattr(
+        "quantpilot_core.evaluation.real_data_walk_forward_smoke.import_module",
+        fail_provider_constructor,
+    )
+    monkeypatch.setattr("quantpilot_core.walk_forward.engine.run_deepseek_advisory_fallback", fail_deepseek)
+
+    report = run_factor_ranking_sweep_integration_v1(
+        FactorRankingSweepIntegrationConfig(
+            symbols=FIXTURE_SYMBOLS,
+            start_date="2026-01-01",
+            end_date="2026-02-01",
+            initial_cash=120_000.0,
+            train_window_days=6,
+            test_window_days=5,
+            max_windows=2,
+            min_symbols_required=8,
+            provider=ScaleupFixtureProvider(),
+            artifact_path=None,
+            target_position_counts=(6,),
+            max_position_weights=(0.08,),
+            reserve_cash_weights=(0.02,),
+            factor_ranking_modes=("low_volatility_v1", "defensive_composite_v1"),
+        )
+    )
+
+    assert report.parameter_set_count == 2
+    assert report.baseline_reference["ranking_mode"] == "low_volatility"
+    assert report.per_mode_summary
     assert "no_broker_live_execution" in report.notes
     assert "deepseek_live_disabled_by_default" in report.notes
