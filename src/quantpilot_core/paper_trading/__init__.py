@@ -17,7 +17,11 @@ from quantpilot_core.paper_trading.contracts import (
     PaperTradingLoopResult,
     RejectedPaperFill,
 )
-from quantpilot_core.paper_trading.loop import PaperTradingLoop, run_paper_trading_loop
+from quantpilot_core.paper_trading.loop import (
+    PaperTradingLoop,
+    account_symbol_pnl_breakdown,
+    run_paper_trading_loop,
+)
 from quantpilot_core.paper_trading.simulator import PaperFillSimulator
 
 __all__ = [
@@ -36,5 +40,6 @@ __all__ = [
     "RQAlphaPaperIntentAdapter",
     "VectorbtOrderIntentAdapter",
     "VectorbtOrderIntentMapping",
+    "account_symbol_pnl_breakdown",
     "run_paper_trading_loop",
 ]

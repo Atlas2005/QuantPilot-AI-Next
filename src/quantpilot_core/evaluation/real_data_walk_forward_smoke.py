@@ -12,6 +12,7 @@ from typing import Any, Mapping, Sequence
 import pandas as pd
 
 from quantpilot_core.data_provider_normalization import canonicalize_a_share_symbol
+from quantpilot_core.paper_trading import PaperAccount, account_symbol_pnl_breakdown
 from quantpilot_core.real_data_provider import (
     Adjustment,
     AkShareDailyBarProvider,
@@ -217,7 +218,6 @@ def _load_bars(config: RealDataWalkForwardSmokeConfig) -> _LoadedBars:
 
 def _window_report_metrics(window_result: Any, price_frame: pd.DataFrame) -> Mapping[str, Any]:
     metrics = dict(window_result.performance_metrics)
-    ambiguous_unrealized = metrics.pop("unrealized_pnl", None)
     account = window_result.paper_trading_result.account
     fill_result = window_result.paper_trading_result.fill_result
     latest_prices = _latest_prices_for_window(price_frame, window_result.window.test_start, window_result.window.test_end)
@@ -230,17 +230,22 @@ def _window_report_metrics(window_result: Any, price_frame: pd.DataFrame) -> Map
     rejected_fills = tuple(fill_result.rejected_fills)
     rejected_details = _rejected_trade_details(rejected_fills)
     symbol_breakdown = _symbol_breakdown(
-        positions=account.positions,
+        account=account,
         latest_prices=latest_prices,
         ending_equity=ending_equity,
         symbols=tuple(
             sorted(
                 set(latest_prices)
                 | set(account.positions)
+                | set(account.average_costs)
+                | set(account.realized_pnl_by_symbol)
                 | {str(rejected.symbol) for rejected in rejected_fills if rejected.symbol}
             )
         ),
+        starting_equity=float(metrics.get("starting_equity", 0.0)),
     )
+    unrealized_pnl = round(float(metrics.get("unrealized_pnl", account.unrealized_pnl)), 6)
+    realized_pnl = round(float(metrics.get("realized_pnl", account.realized_pnl)), 6)
     report: dict[str, Any] = {
         "run_label": window_result.window.run_label,
         "train_start": str(window_result.window.train_start),
@@ -253,9 +258,9 @@ def _window_report_metrics(window_result: Any, price_frame: pd.DataFrame) -> Map
         "position_market_value": position_market_value,
         "gross_exposure": gross_exposure,
         "net_exposure": net_exposure,
-        "realized_pnl": round(float(metrics.get("realized_pnl", account.realized_pnl)), 6),
-        "unrealized_pnl": None,
-        "total_pnl": round(float(metrics.get("net_pnl", ending_equity - float(metrics.get("starting_equity", 0.0)))), 6),
+        "realized_pnl": realized_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "total_pnl": round(realized_pnl + unrealized_pnl, 6),
         "rejected_count": len(rejected_fills),
         "rejection_reasons": rejected_details["rejection_reasons"],
         "rejected_symbols": rejected_details["rejected_symbols"],
@@ -266,11 +271,6 @@ def _window_report_metrics(window_result: Any, price_frame: pd.DataFrame) -> Map
         "turnover": round(turnover, 6),
         "cost_to_turnover_ratio": _ratio(cost_total, turnover),
     }
-    if ambiguous_unrealized is not None:
-        report["legacy_unrealized_pnl_warning"] = (
-            "legacy paper_trading unrealized_pnl is position market value; "
-            "use position_market_value/gross_exposure unless cost basis is added"
-        )
     return report
 
 
@@ -318,29 +318,19 @@ def _rejected_trade_details(rejected_fills: Sequence[Any]) -> Mapping[str, Any]:
 
 def _symbol_breakdown(
     *,
-    positions: Mapping[str, int],
+    account: PaperAccount,
     latest_prices: Mapping[str, float],
     ending_equity: float,
     symbols: Sequence[str],
+    starting_equity: float | None = None,
 ) -> tuple[Mapping[str, Any], ...]:
-    rows: list[Mapping[str, Any]] = []
-    for symbol in sorted(set(symbols)):
-        shares = int(positions.get(symbol, 0))
-        last_price = latest_prices.get(symbol)
-        market_value = round(shares * float(last_price), 6) if last_price is not None else 0.0
-        rows.append(
-            {
-                "symbol": symbol,
-                "shares": shares,
-                "last_price": last_price,
-                "market_value": market_value,
-                "weight": _ratio(market_value, ending_equity),
-                "realized_pnl": None,
-                "unrealized_pnl": None,
-                "contribution_to_equity_change": None,
-            }
-        )
-    return tuple(rows)
+    return account_symbol_pnl_breakdown(
+        account,
+        latest_prices,
+        ending_equity=ending_equity,
+        starting_equity=starting_equity,
+        symbols=tuple(symbols),
+    )
 
 
 def _aggregate_symbol_breakdown(per_window: tuple[Mapping[str, Any], ...]) -> tuple[Mapping[str, Any], ...]:

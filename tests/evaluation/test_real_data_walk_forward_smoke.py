@@ -197,10 +197,11 @@ def test_position_market_value_is_not_mislabeled_as_unrealized_pnl() -> None:
 
     assert metrics["position_market_value"] == metrics["gross_exposure"]
     assert metrics["position_market_value"] > 0
-    assert metrics["unrealized_pnl"] is None
+    assert metrics["unrealized_pnl"] != metrics["position_market_value"]
+    assert metrics["unrealized_pnl"] == -54.970304
     assert metrics["realized_pnl"] == 0.0
     assert metrics["total_pnl"] == metrics["net_pnl"]
-    assert "legacy_unrealized_pnl_warning" in metrics
+    assert "legacy_unrealized_pnl_warning" not in metrics
 
 
 def test_rejected_trade_reasons_and_symbols_are_exposed() -> None:
@@ -221,8 +222,21 @@ def test_per_symbol_breakdown_exists_for_window_and_aggregate_report() -> None:
 
     assert len(window_rows) == 4
     assert len(aggregate_rows) == 4
-    assert {"symbol", "shares", "last_price", "market_value", "weight"} <= set(window_rows[0])
+    assert {
+        "symbol",
+        "shares",
+        "average_cost",
+        "latest_price",
+        "market_value",
+        "cost_basis_value",
+        "unrealized_pnl",
+        "realized_pnl",
+        "total_pnl",
+        "weight",
+        "contribution_to_equity_change",
+    } <= set(window_rows[0])
     assert any(row["shares"] > 0 and row["market_value"] > 0 for row in window_rows)
+    assert any(row["shares"] > 0 and row["unrealized_pnl"] != row["market_value"] for row in window_rows)
 
 
 def test_buy_and_hold_benchmark_is_computed_on_fixture_data() -> None:
@@ -245,7 +259,7 @@ def test_json_artifact_serialization_works_with_temp_path(tmp_path: Path) -> Non
     assert payload["provider"] == "baostock"
     assert payload["artifact_path"] == str(artifact_path)
     assert payload["per_window_metrics"][0]["position_market_value"] > 0
-    assert payload["per_window_metrics"][0]["unrealized_pnl"] is None
+    assert payload["per_window_metrics"][0]["unrealized_pnl"] == -54.970304
     assert payload["benchmark_final_equity"] == report.benchmark_final_equity
 
 
