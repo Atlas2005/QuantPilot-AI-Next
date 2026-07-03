@@ -115,11 +115,20 @@ def test_supervisor_decision_can_use_pro_during_peak_when_critical_and_in_budget
     assert decision.ok is True
 
 
-def test_deprecated_model_names_are_rejected() -> None:
+def test_deprecated_chat_model_name_normalizes_to_flash() -> None:
     decision = route_model_for_request(route_request(requested_model="deepseek-chat"))
 
-    assert decision.ok is False
-    assert decision.reason == "deprecated_model_not_allowed"
+    assert decision.ok is True
+    assert decision.model == DEEPSEEK_V4_FLASH
+    assert "deprecated_model_normalized:deepseek-chat->deepseek-v4-flash" in decision.warnings
+
+
+def test_deprecated_reasoner_model_name_normalizes_to_pro() -> None:
+    decision = route_model_for_request(route_request(requested_model="deepseek-reasoner"))
+
+    assert decision.ok is True
+    assert decision.model == DEEPSEEK_V4_PRO
+    assert "deprecated_model_normalized:deepseek-reasoner->deepseek-v4-pro" in decision.warnings
 
 
 def test_unsupported_model_names_are_rejected() -> None:
@@ -172,7 +181,7 @@ def test_excessive_token_estimate_is_rejected() -> None:
 
 
 def test_fake_client_refuses_invalid_decisions() -> None:
-    decision = route_model_for_request(route_request(requested_model="deepseek-reasoner"))
+    decision = route_model_for_request(route_request(requested_model="not-a-model"))
 
     with pytest.raises(RuntimeError, match="not ok"):
         FakeAIClient().run(decision)

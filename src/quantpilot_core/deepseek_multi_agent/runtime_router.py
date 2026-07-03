@@ -173,10 +173,9 @@ def _parse_time(value: str | datetime | time) -> time:
 
 def _validate_request(request: ModelRouteRequest) -> tuple[str, ...]:
     reasons: list[str] = []
-    if request.requested_model in DEPRECATED_DEEPSEEK_MODELS:
-        reasons.append("deprecated_model_not_allowed")
-    elif (
+    if (
         request.requested_model is not None
+        and request.requested_model not in DEPRECATED_DEEPSEEK_MODELS
         and request.requested_model not in SUPPORTED_DEEPSEEK_MODELS
     ):
         reasons.append("unsupported_model_not_allowed")
@@ -199,6 +198,16 @@ def _select_model(
     peak: bool,
 ) -> tuple[str, tuple[str, ...]]:
     warnings: list[str] = []
+    if request.requested_model == "deepseek-chat":
+        return (
+            DEEPSEEK_V4_FLASH,
+            ("deprecated_model_normalized:deepseek-chat->deepseek-v4-flash",),
+        )
+    if request.requested_model == "deepseek-reasoner":
+        return (
+            DEEPSEEK_V4_PRO,
+            ("deprecated_model_normalized:deepseek-reasoner->deepseek-v4-pro",),
+        )
     if request.requested_model == DEEPSEEK_V4_FLASH:
         return DEEPSEEK_V4_FLASH, ()
     if request.requested_model == DEEPSEEK_V4_PRO and peak and not request.critical:

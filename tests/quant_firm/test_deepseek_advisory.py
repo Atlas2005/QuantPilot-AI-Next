@@ -4,12 +4,14 @@ import builtins
 
 import pytest
 
+from quantpilot_core.deepseek_multi_agent import DEEPSEEK_V4_FLASH, DEEPSEEK_V4_PRO
 from quantpilot_core.quant_firm import (
     DeepSeekAdvisoryAgent,
     DeepSeekAdvisoryInput,
     DeepSeekAdvisoryOutput,
     DeepSeekAdvisoryRole,
     DeepSeekClientConfig,
+    QuantFirmDeepSeekModelPolicy,
     run_deepseek_advisory_fallback,
     run_quant_firm_decision_cycle,
 )
@@ -32,6 +34,92 @@ def rich_advisory_input(role: DeepSeekAdvisoryRole) -> DeepSeekAdvisoryInput:
         market_regime="risk_off",
         run_label="unit-test-run",
     )
+
+
+def test_default_config_uses_v4_flash() -> None:
+    assert DeepSeekClientConfig().model == DEEPSEEK_V4_FLASH
+
+
+def test_deprecated_deepseek_chat_normalizes_to_v4_flash() -> None:
+    policy = QuantFirmDeepSeekModelPolicy()
+
+    selection = policy.normalize_requested_model("deepseek-chat")
+
+    assert selection.model == DEEPSEEK_V4_FLASH
+    assert "deprecated_model_normalized:deepseek-chat->deepseek-v4-flash" in selection.warnings
+    assert DeepSeekClientConfig(model="deepseek-chat").model == DEEPSEEK_V4_FLASH
+
+
+def test_deprecated_config_model_warning_is_preserved_in_fallback_notes() -> None:
+    output = DeepSeekAdvisoryAgent(DeepSeekClientConfig(model="deepseek-chat")).advise(
+        rich_advisory_input(DeepSeekAdvisoryRole.RESEARCH_DESK)
+    )
+
+    assert output.is_fallback is True
+    assert "deepseek_model:deepseek-v4-flash" in output.tool_integration_notes
+    assert (
+        "deprecated_model_normalized:deepseek-chat->deepseek-v4-flash"
+        in output.tool_integration_notes
+    )
+
+
+def test_deprecated_deepseek_reasoner_normalizes_to_v4_pro() -> None:
+    policy = QuantFirmDeepSeekModelPolicy()
+
+    selection = policy.normalize_requested_model("deepseek-reasoner")
+
+    assert selection.model == DEEPSEEK_V4_PRO
+    assert "deprecated_model_normalized:deepseek-reasoner->deepseek-v4-pro" in selection.warnings
+    assert DeepSeekClientConfig(model="deepseek-reasoner").model == DEEPSEEK_V4_PRO
+
+
+def test_role_model_policy_maps_roles_to_model_and_reasoning_defaults() -> None:
+    policy = QuantFirmDeepSeekModelPolicy()
+    expected = {
+        DeepSeekAdvisoryRole.INFORMATION_DESK: (DEEPSEEK_V4_FLASH, False, "low"),
+        DeepSeekAdvisoryRole.BACKTEST_DESK: (DEEPSEEK_V4_FLASH, False, "low"),
+        DeepSeekAdvisoryRole.EXECUTION_SIMULATION_DESK: (DEEPSEEK_V4_FLASH, False, "low"),
+        DeepSeekAdvisoryRole.RESEARCH_DESK: (DEEPSEEK_V4_PRO, True, "medium"),
+        DeepSeekAdvisoryRole.PORTFOLIO_DESK: (DEEPSEEK_V4_PRO, True, "medium"),
+        DeepSeekAdvisoryRole.LEARNING_DESK: (DEEPSEEK_V4_PRO, True, "high"),
+        DeepSeekAdvisoryRole.INVESTMENT_COMMITTEE: (DEEPSEEK_V4_PRO, True, "high"),
+    }
+
+    for role, values in expected.items():
+        selection = policy.selection_for(role)
+
+        assert (selection.model, selection.enable_thinking, selection.reasoning_effort) == values
+
+
+def test_explicit_config_model_overrides_role_default() -> None:
+    selection = QuantFirmDeepSeekModelPolicy().selection_for(
+        DeepSeekAdvisoryRole.INVESTMENT_COMMITTEE,
+        DeepSeekClientConfig(model=DEEPSEEK_V4_FLASH),
+    )
+
+    assert selection.model == DEEPSEEK_V4_FLASH
+    assert selection.enable_thinking is True
+    assert selection.reasoning_effort == "high"
+
+
+def test_environment_model_policy_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_MODEL_DEFAULT", "deepseek-v4-flash-env")
+    monkeypatch.setenv("DEEPSEEK_MODEL_FLASH", "deepseek-v4-flash-env")
+    monkeypatch.setenv("DEEPSEEK_MODEL_PRO", "deepseek-v4-pro-env")
+    monkeypatch.setenv("DEEPSEEK_REASONING_EFFORT_DEFAULT", "minimal")
+
+    policy = QuantFirmDeepSeekModelPolicy.from_environment()
+
+    assert DeepSeekClientConfig().model == "deepseek-v4-flash-env"
+    assert (
+        policy.selection_for(DeepSeekAdvisoryRole.BACKTEST_DESK).model
+        == "deepseek-v4-flash-env"
+    )
+    assert (
+        policy.selection_for(DeepSeekAdvisoryRole.BACKTEST_DESK).reasoning_effort
+        == "minimal"
+    )
+    assert policy.selection_for(DeepSeekAdvisoryRole.RESEARCH_DESK).model == "deepseek-v4-pro-env"
 
 
 def test_missing_api_key_returns_deterministic_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
