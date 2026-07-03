@@ -108,6 +108,7 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
         "run_northbound_flow_agent",
         "run_paper_trading_loop",
         "run_quant_firm_decision_cycle",
+        "run_real_data_walk_forward_scaleup_v1",
         "run_real_data_walk_forward_smoke",
         "run_shareholder_dividend_agent",
         "run_valuation_agent",
@@ -149,6 +150,7 @@ def test_default_registry_prefers_mature_replacement_path_over_legacy_blockers()
         "run_vectorbt_signal_backtest",
         "run_walk_forward_paper_evaluation",
         "run_real_data_walk_forward_smoke",
+        "run_real_data_walk_forward_scaleup_v1",
     } <= names
 
     assert names.isdisjoint(
