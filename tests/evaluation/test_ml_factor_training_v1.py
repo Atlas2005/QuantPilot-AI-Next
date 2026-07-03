@@ -22,11 +22,50 @@ FIXTURE_SYMBOLS = ("000001.SZ", "000002.SZ", "000003.SZ", "600000.SH")
 
 class TinyRegressor:
     def fit(self, x, y):
-        self.feature_importances_ = [index + 1 for index in range(len(x[0]))]
+        self.feature_importances_ = [index + 1 for index in range(len(x.columns))]
         return self
 
     def predict(self, x):
-        return [round(row[2] + row[3] + row[-1], 12) for row in x]
+        return [
+            round(float(row["momentum_20d"]) + float(row["momentum_60d"]) + float(row["composite_score"]), 12)
+            for _, row in x.iterrows()
+        ]
+
+
+class FakeLGBMRegressor:
+    fit_calls = []
+    predict_calls = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    def fit(self, x, y, eval_set=None):
+        self.__class__.fit_calls.append(
+            {
+                "train_count": len(x),
+                "target_count": len(y),
+                "train_columns": tuple(x.columns),
+                "eval_count": len(eval_set[0][0]) if eval_set else 0,
+                "eval_columns": tuple(eval_set[0][0].columns) if eval_set else (),
+                "kwargs": self.kwargs,
+            }
+        )
+        self.feature_importances_ = [index + 2 for index in range(len(x.columns))]
+        return self
+
+    def predict(self, x):
+        self.__class__.predict_calls.append({"prediction_count": len(x), "predict_columns": tuple(x.columns)})
+        return [
+            round(
+                float(row["volatility_20d"]) * -0.1 + float(row["momentum_20d"]) + float(row["composite_score"]),
+                12,
+            )
+            for _, row in x.iterrows()
+        ]
+
+
+class FakeLightGBMModule:
+    LGBMRegressor = FakeLGBMRegressor
 
 
 def ml_fixture_frame(days: int = 90) -> pd.DataFrame:
@@ -142,7 +181,7 @@ def test_lightgbm_unavailable_fallback_is_clean(tmp_path: Path) -> None:
 def test_injected_backend_training_metrics_feature_importance_and_report_artifact(tmp_path: Path) -> None:
     report = run_ml_factor_training_v1(
         config(tmp_path),
-        price_frame=ml_fixture_frame(),
+        price_frame=ml_fixture_frame(days=130),
         model_backend_factory=TinyRegressor,
     )
 
@@ -158,16 +197,54 @@ def test_injected_backend_training_metrics_feature_importance_and_report_artifac
     assert report.prediction_metrics["bottom_quantile_forward_return"] is not None
     assert report.prediction_metrics["long_short_spread"] is not None
     assert report.feature_importance[0] == {"feature": "volatility_20d", "importance": 1.0}
-    assert report.ml_total_return is not None
-    assert report.ml_strategy_excess_return is not None
-    assert report.ml_max_drawdown is not None
-    assert report.rejected_trade_ratio == 0.0
+    assert report.ml_total_return is None
+    assert report.ml_strategy_excess_return is None
+    assert report.ml_max_drawdown is None
+    assert report.rejected_trade_ratio is None
 
     payload = json.loads((tmp_path / "ml" / "latest_report.json").read_text(encoding="utf-8"))
     assert payload["model_trained"] is True
     assert payload["lightgbm_available"] is True
     assert payload["dataset_artifact_path"] == str(tmp_path / "ml" / "latest_dataset.json")
     assert payload["no_profitability_claim"] is True
+
+
+def test_lightgbm_installed_path_uses_lgbm_regressor_and_validation_split(tmp_path: Path) -> None:
+    FakeLGBMRegressor.fit_calls = []
+    FakeLGBMRegressor.predict_calls = []
+
+    report = run_ml_factor_training_v1(
+        config(tmp_path),
+        price_frame=ml_fixture_frame(days=130),
+        lightgbm_importer=lambda _name: FakeLightGBMModule,
+    )
+
+    assert report.lightgbm_available is True
+    assert report.model_backend == "lightgbm"
+    assert report.model_trained is True
+    assert report.fallback_reason is None
+    assert FakeLGBMRegressor.fit_calls
+    assert FakeLGBMRegressor.fit_calls[0]["train_count"] > 0
+    assert FakeLGBMRegressor.fit_calls[0]["eval_count"] > 0
+    assert FakeLGBMRegressor.fit_calls[0]["train_columns"] == ML_FACTOR_FEATURES
+    assert FakeLGBMRegressor.fit_calls[0]["eval_columns"] == ML_FACTOR_FEATURES
+    assert FakeLGBMRegressor.predict_calls[0]["predict_columns"] == ML_FACTOR_FEATURES
+    assert FakeLGBMRegressor.fit_calls[0]["kwargs"]["random_state"] == 17
+    assert FakeLGBMRegressor.predict_calls[0]["prediction_count"] == report.prediction_metrics["prediction_count"]
+    assert report.feature_importance[0] == {"feature": "volatility_20d", "importance": 2.0}
+
+
+def test_null_target_labels_are_filtered_before_prediction_metrics(tmp_path: Path) -> None:
+    report = run_ml_factor_training_v1(
+        config(tmp_path),
+        price_frame=ml_fixture_frame(days=110),
+        model_backend_factory=TinyRegressor,
+    )
+
+    assert report.model_trained is True
+    assert report.prediction_metrics["prediction_count"] == len(FIXTURE_SYMBOLS) * 2
+    assert report.prediction_metrics["prediction_ic"] is not None
+    assert report.feature_importance
 
 
 def test_ml_factor_training_uses_no_broker_deepseek_or_network(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -185,7 +262,7 @@ def test_ml_factor_training_uses_no_broker_deepseek_or_network(monkeypatch: pyte
 
     report = run_ml_factor_training_v1(
         config(tmp_path),
-        price_frame=ml_fixture_frame(),
+        price_frame=ml_fixture_frame(days=130),
         model_backend_factory=TinyRegressor,
     )
     assert report.model_trained is True

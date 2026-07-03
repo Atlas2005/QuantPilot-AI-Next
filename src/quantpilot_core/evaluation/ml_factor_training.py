@@ -239,7 +239,6 @@ def run_ml_factor_training_v1(
     )
     prediction_rows = _prediction_rows(dataset.rows, predictions)
     prediction_metrics = _prediction_metrics(prediction_rows, payload)
-    ml_eval = _ml_scaleup_metrics(price_frame, prediction_rows, payload) if status["model_trained"] else {}
     notes = _report_notes(status, data_warnings)
     report = MLFactorTrainingReport(
         provider=dataset.provider,
@@ -256,10 +255,10 @@ def run_ml_factor_training_v1(
         baseline_reference=dict(ML_FACTOR_BASELINE_REFERENCE),
         prediction_metrics=prediction_metrics,
         feature_importance=tuple(feature_importance),
-        ml_total_return=ml_eval.get("ml_total_return"),
-        ml_strategy_excess_return=ml_eval.get("ml_strategy_excess_return"),
-        ml_max_drawdown=ml_eval.get("ml_max_drawdown"),
-        rejected_trade_ratio=ml_eval.get("rejected_trade_ratio", 0.0 if status["model_trained"] else None),
+        ml_total_return=None,
+        ml_strategy_excess_return=None,
+        ml_max_drawdown=None,
+        rejected_trade_ratio=None,
         notes=notes,
         no_profitability_claim=True,
         dataset_artifact_path=dataset.artifact_path,
@@ -408,6 +407,8 @@ def _train_and_predict(
                 max_depth=3,
                 random_state=17,
                 verbosity=-1,
+                deterministic=True,
+                force_col_wise=True,
             )
             lightgbm_available = True
         except ImportError:
@@ -423,8 +424,9 @@ def _train_and_predict(
             (),
         )
     train_rows = _rows_for_split(dataset, "train", config.target_label)
-    predict_rows = tuple(row for row in dataset.rows if _is_in_split(row, dataset, "validation") or _is_in_split(row, dataset, "test"))
-    if not train_rows or not predict_rows:
+    validation_rows = _rows_for_split(dataset, "validation", config.target_label)
+    test_rows = _rows_for_split(dataset, "test", config.target_label)
+    if not train_rows or not validation_rows or not test_rows:
         return (
             {
                 "model_backend": model_backend,
@@ -436,14 +438,16 @@ def _train_and_predict(
             (),
         )
     model = backend_factory()
-    x_train = [[float(row[feature]) for feature in dataset.features] for row in train_rows]
+    x_train = _feature_frame(train_rows, dataset.features)
     y_train = [float(row[config.target_label]) for row in train_rows]
-    model.fit(x_train, y_train)
-    x_predict = [[float(row[feature]) for feature in dataset.features] for row in predict_rows]
+    x_validation = _feature_frame(validation_rows, dataset.features)
+    y_validation = [float(row[config.target_label]) for row in validation_rows]
+    _fit_model(model, x_train, y_train, x_validation, y_validation)
+    x_predict = _feature_frame(test_rows, dataset.features)
     predicted = model.predict(x_predict)
     predictions = {
         (str(row["date"]), str(row["symbol"])): round(float(score), 12)
-        for row, score in zip(predict_rows, predicted)
+        for row, score in zip(test_rows, predicted)
     }
     importance_values = getattr(model, "feature_importances_", None)
     if importance_values is None:
@@ -463,6 +467,26 @@ def _train_and_predict(
         predictions,
         importance,
     )
+
+
+def _feature_frame(rows: Sequence[Mapping[str, Any]], features: Sequence[str]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [{feature: float(row[feature]) for feature in features} for row in rows],
+        columns=list(features),
+    )
+
+
+def _fit_model(
+    model: Any,
+    x_train: pd.DataFrame,
+    y_train: Sequence[float],
+    x_validation: pd.DataFrame,
+    y_validation: Sequence[float],
+) -> Any:
+    try:
+        return model.fit(x_train, y_train, eval_set=[(x_validation, y_validation)])
+    except TypeError:
+        return model.fit(x_train, y_train)
 
 
 def _prediction_rows(
