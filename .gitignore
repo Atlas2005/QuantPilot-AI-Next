@@ -28,6 +28,7 @@ temp/
 outputs/
 local_outputs/
 local_artifacts/
+artifacts/
 *.local.csv
 *.local.json
 

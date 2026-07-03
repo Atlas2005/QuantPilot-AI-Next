@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 from importlib import import_module
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import pandas as pd
@@ -44,6 +46,7 @@ class RealDataWalkForwardSmokeConfig:
     advisory_mode: str = "fallback_only"
     allow_partial_universe: bool = True
     min_symbols_required: int = 2
+    artifact_path: str | Path | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -66,6 +69,12 @@ class RealDataWalkForwardSmokeReport:
     leakage_checks: tuple[str, ...]
     data_quality_warnings: tuple[str, ...]
     notes: tuple[str, ...]
+    aggregate_symbol_breakdown: tuple[Mapping[str, Any], ...] = ()
+    benchmark_final_equity: float | None = None
+    benchmark_total_return: float | None = None
+    strategy_excess_return: float | None = None
+    benchmark_notes: tuple[str, ...] = ()
+    artifact_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -131,35 +140,40 @@ def run_real_data_walk_forward_smoke(
     from quantpilot_core.walk_forward.engine import WalkForwardEngine
 
     result = WalkForwardEngine().run(walk_input)
-    per_window = tuple(
-        {
-            "run_label": window_result.window.run_label,
-            "train_start": str(window_result.window.train_start),
-            "train_end": str(window_result.window.train_end),
-            "test_start": str(window_result.window.test_start),
-            "test_end": str(window_result.window.test_end),
-            **dict(window_result.performance_metrics),
-        }
-        for window_result in result.window_results
-    )
+    per_window = tuple(_window_report_metrics(window_result, price_frame) for window_result in result.window_results)
     final_equity = _final_equity(per_window)
-    return RealDataWalkForwardSmokeReport(
+    benchmark = _buy_and_hold_benchmark(price_frame, windows, float(payload.initial_cash))
+    strategy_return = _total_return(payload.initial_cash, final_equity)
+    report = RealDataWalkForwardSmokeReport(
         symbols=tuple(canonicalize_a_share_symbol(symbol) for symbol in payload.symbols),
         date_range=(str(_as_date(payload.start_date)), str(_as_date(payload.end_date))),
         provider=provider_name,
         windows_run=len(result.window_results),
         initial_cash=float(payload.initial_cash),
         final_equity=final_equity,
-        total_return=_total_return(payload.initial_cash, final_equity),
+        total_return=strategy_return,
         max_drawdown=_max_drawdown(float(payload.initial_cash), per_window),
         filled_trades=sum(int(metrics.get("trade_count", 0)) for metrics in per_window),
         rejected_trades=sum(int(metrics.get("rejected_count", 0)) for metrics in per_window),
         cost_total=round(sum(float(metrics.get("cost_total", 0.0)) for metrics in per_window), 6),
         per_window_metrics=per_window,
+        aggregate_symbol_breakdown=_aggregate_symbol_breakdown(per_window),
+        benchmark_final_equity=benchmark["benchmark_final_equity"],
+        benchmark_total_return=benchmark["benchmark_total_return"],
+        strategy_excess_return=(
+            round(strategy_return - benchmark["benchmark_total_return"], 6)
+            if strategy_return is not None and benchmark["benchmark_total_return"] is not None
+            else None
+        ),
+        benchmark_notes=tuple(benchmark["benchmark_notes"]),
         leakage_checks=result.leakage_checks,
         data_quality_warnings=data_warnings,
         notes=("real_data_smoke_completed", "no_broker_live_execution", f"advisory_mode:{walk_input.advisory_mode}"),
     )
+    artifact_path = _write_report_artifact(report, payload.artifact_path)
+    if artifact_path is not None:
+        report = replace(report, artifact_path=artifact_path)
+    return report
 
 
 def _load_bars(config: RealDataWalkForwardSmokeConfig) -> _LoadedBars:
@@ -199,6 +213,214 @@ def _load_bars(config: RealDataWalkForwardSmokeConfig) -> _LoadedBars:
             continue
         bars.extend(symbol_bars)
     return _LoadedBars(tuple(bars), tuple(warnings))
+
+
+def _window_report_metrics(window_result: Any, price_frame: pd.DataFrame) -> Mapping[str, Any]:
+    metrics = dict(window_result.performance_metrics)
+    ambiguous_unrealized = metrics.pop("unrealized_pnl", None)
+    account = window_result.paper_trading_result.account
+    fill_result = window_result.paper_trading_result.fill_result
+    latest_prices = _latest_prices_for_window(price_frame, window_result.window.test_start, window_result.window.test_end)
+    position_market_value = _position_market_value(account.positions, latest_prices)
+    gross_exposure = _gross_exposure(account.positions, latest_prices)
+    net_exposure = _net_exposure(account.positions, latest_prices)
+    ending_equity = float(metrics.get("ending_equity", account.cash + position_market_value))
+    turnover = float(metrics.get("turnover", 0.0))
+    cost_total = float(metrics.get("cost_total", 0.0))
+    rejected_fills = tuple(fill_result.rejected_fills)
+    rejected_details = _rejected_trade_details(rejected_fills)
+    symbol_breakdown = _symbol_breakdown(
+        positions=account.positions,
+        latest_prices=latest_prices,
+        ending_equity=ending_equity,
+        symbols=tuple(
+            sorted(
+                set(latest_prices)
+                | set(account.positions)
+                | {str(rejected.symbol) for rejected in rejected_fills if rejected.symbol}
+            )
+        ),
+    )
+    report: dict[str, Any] = {
+        "run_label": window_result.window.run_label,
+        "train_start": str(window_result.window.train_start),
+        "train_end": str(window_result.window.train_end),
+        "test_start": str(window_result.window.test_start),
+        "test_end": str(window_result.window.test_end),
+        **metrics,
+        "cash": round(float(metrics.get("cash", account.cash)), 6),
+        "ending_equity": round(ending_equity, 6),
+        "position_market_value": position_market_value,
+        "gross_exposure": gross_exposure,
+        "net_exposure": net_exposure,
+        "realized_pnl": round(float(metrics.get("realized_pnl", account.realized_pnl)), 6),
+        "unrealized_pnl": None,
+        "total_pnl": round(float(metrics.get("net_pnl", ending_equity - float(metrics.get("starting_equity", 0.0)))), 6),
+        "rejected_count": len(rejected_fills),
+        "rejection_reasons": rejected_details["rejection_reasons"],
+        "rejected_symbols": rejected_details["rejected_symbols"],
+        "per_symbol_breakdown": symbol_breakdown,
+        "cash_ratio": _ratio(float(metrics.get("cash", account.cash)), ending_equity),
+        "gross_exposure_ratio": _ratio(gross_exposure, ending_equity),
+        "invested_ratio": _ratio(position_market_value, ending_equity),
+        "turnover": round(turnover, 6),
+        "cost_to_turnover_ratio": _ratio(cost_total, turnover),
+    }
+    if ambiguous_unrealized is not None:
+        report["legacy_unrealized_pnl_warning"] = (
+            "legacy paper_trading unrealized_pnl is position market value; "
+            "use position_market_value/gross_exposure unless cost basis is added"
+        )
+    return report
+
+
+def _latest_prices_for_window(frame: pd.DataFrame, start: Any, end: Any) -> Mapping[str, float]:
+    if frame.empty:
+        return {}
+    start_ts = pd.Timestamp(start)
+    end_ts = pd.Timestamp(end)
+    dates = pd.to_datetime(frame["date"]).dt.tz_localize(None)
+    window = frame.loc[(dates >= start_ts) & (dates <= end_ts)].copy()
+    if window.empty:
+        return {}
+    window = window.sort_values(["date", "symbol"], kind="stable")
+    return {
+        str(symbol): round(float(group["close"].iloc[-1]), 6)
+        for symbol, group in window.groupby("symbol", sort=True)
+    }
+
+
+def _position_market_value(positions: Mapping[str, int], latest_prices: Mapping[str, float]) -> float:
+    return round(sum(int(quantity) * float(latest_prices.get(symbol, 0.0)) for symbol, quantity in positions.items()), 6)
+
+
+def _gross_exposure(positions: Mapping[str, int], latest_prices: Mapping[str, float]) -> float:
+    return round(sum(abs(int(quantity) * float(latest_prices.get(symbol, 0.0))) for symbol, quantity in positions.items()), 6)
+
+
+def _net_exposure(positions: Mapping[str, int], latest_prices: Mapping[str, float]) -> float:
+    return _position_market_value(positions, latest_prices)
+
+
+def _rejected_trade_details(rejected_fills: Sequence[Any]) -> Mapping[str, Any]:
+    reasons: dict[str, int] = {}
+    symbols: set[str] = set()
+    for rejected in rejected_fills:
+        if rejected.symbol:
+            symbols.add(str(rejected.symbol))
+        for reason in rejected.reasons:
+            reasons[str(reason)] = reasons.get(str(reason), 0) + 1
+    return {
+        "rejection_reasons": dict(sorted(reasons.items())),
+        "rejected_symbols": tuple(sorted(symbols)),
+    }
+
+
+def _symbol_breakdown(
+    *,
+    positions: Mapping[str, int],
+    latest_prices: Mapping[str, float],
+    ending_equity: float,
+    symbols: Sequence[str],
+) -> tuple[Mapping[str, Any], ...]:
+    rows: list[Mapping[str, Any]] = []
+    for symbol in sorted(set(symbols)):
+        shares = int(positions.get(symbol, 0))
+        last_price = latest_prices.get(symbol)
+        market_value = round(shares * float(last_price), 6) if last_price is not None else 0.0
+        rows.append(
+            {
+                "symbol": symbol,
+                "shares": shares,
+                "last_price": last_price,
+                "market_value": market_value,
+                "weight": _ratio(market_value, ending_equity),
+                "realized_pnl": None,
+                "unrealized_pnl": None,
+                "contribution_to_equity_change": None,
+            }
+        )
+    return tuple(rows)
+
+
+def _aggregate_symbol_breakdown(per_window: tuple[Mapping[str, Any], ...]) -> tuple[Mapping[str, Any], ...]:
+    if not per_window:
+        return ()
+    return tuple(per_window[-1].get("per_symbol_breakdown", ()))
+
+
+def _buy_and_hold_benchmark(
+    frame: pd.DataFrame,
+    windows: Sequence[Any],
+    initial_cash: float,
+) -> Mapping[str, Any]:
+    if frame.empty:
+        return {
+            "benchmark_final_equity": None,
+            "benchmark_total_return": None,
+            "benchmark_notes": ("simple_equal_weight_benchmark_unavailable:no_price_rows",),
+        }
+    start_date = str(windows[0].test_start) if windows else str(frame["date"].min())
+    end_date = str(windows[-1].test_end) if windows else str(frame["date"].max())
+    ordered = frame.sort_values(["date", "symbol"], kind="stable")
+    symbols = tuple(sorted(str(symbol) for symbol in ordered["symbol"].dropna().unique()))
+    valid: list[tuple[str, float, float]] = []
+    for symbol in symbols:
+        group = ordered.loc[ordered["symbol"] == symbol].copy()
+        start_rows = group.loc[group["date"] >= start_date]
+        end_rows = group.loc[group["date"] <= end_date]
+        if start_rows.empty or end_rows.empty:
+            continue
+        start_price = float(start_rows.iloc[0]["close"])
+        end_price = float(end_rows.iloc[-1]["close"])
+        if start_price > 0 and end_price > 0:
+            valid.append((symbol, start_price, end_price))
+    if not valid:
+        return {
+            "benchmark_final_equity": None,
+            "benchmark_total_return": None,
+            "benchmark_notes": ("simple_equal_weight_benchmark_unavailable:no_valid_symbol_prices",),
+        }
+    allocation = initial_cash / len(valid)
+    final_equity = round(sum((allocation / start_price) * end_price for _, start_price, end_price in valid), 6)
+    return {
+        "benchmark_final_equity": final_equity,
+        "benchmark_total_return": _total_return(initial_cash, final_equity),
+        "benchmark_notes": (
+            "simple_equal_weight_close_to_close_no_costs",
+            f"benchmark_start:{start_date}",
+            f"benchmark_end:{end_date}",
+            f"benchmark_symbols:{','.join(symbol for symbol, _, _ in valid)}",
+        ),
+    }
+
+
+def _write_report_artifact(report: RealDataWalkForwardSmokeReport, artifact_path: str | Path | None) -> str | None:
+    if artifact_path is None:
+        return None
+    path = Path(artifact_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _json_ready(asdict(replace(report, artifact_path=str(path))))
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def _json_ready(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _json_ready(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, list):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
+def _ratio(numerator: float, denominator: float) -> float | None:
+    if denominator == 0:
+        return None
+    return round(float(numerator) / float(denominator), 6)
 
 
 def _resolve_provider(provider: str | DailyBarProvider) -> DailyBarProvider:
