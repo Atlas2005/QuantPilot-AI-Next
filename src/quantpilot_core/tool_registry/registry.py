@@ -53,7 +53,6 @@ from quantpilot_core.vectorbt_integration import (
     replay_provider_signals_with_vectorbt,
     run_vectorbt_signal_backtest,
 )
-from quantpilot_core.walk_forward import run_walk_forward_paper_evaluation
 
 
 def run_vectorbt_signal_backtest_frame(
@@ -96,6 +95,26 @@ def signal_artifact_to_vbt3_signal_frame(*args, **kwargs):
 
 def qlib_signal_artifact_to_vbt3_signal_frame(*args, **kwargs):
     return signal_artifact_to_vbt3_signal_frame(*args, **kwargs)
+
+
+def run_real_data_walk_forward_smoke(*args, **kwargs):
+    """Resolve the real-data smoke runner only when the registry tool is executed."""
+
+    from quantpilot_core.evaluation.real_data_walk_forward_smoke import (
+        run_real_data_walk_forward_smoke as smoke_runner,
+    )
+
+    return smoke_runner(*args, **kwargs)
+
+
+def run_walk_forward_paper_evaluation(*args, **kwargs):
+    """Resolve the walk-forward runner only when the registry tool is executed."""
+
+    from quantpilot_core.walk_forward.engine import (
+        run_walk_forward_paper_evaluation as walk_forward_runner,
+    )
+
+    return walk_forward_runner(*args, **kwargs)
 
 
 def build_default_tool_registry() -> ToolRegistry:
@@ -282,6 +301,11 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="run_quant_firm_decision_cycle",
                 description="Run the deterministic Quant Firm multi-agent decision cycle.",
                 callable=run_quant_firm_decision_cycle,
+            ),
+            QuantPilotTool(
+                name="run_real_data_walk_forward_smoke",
+                description="Run a small real-data walk-forward smoke path with provider injection support.",
+                callable=run_real_data_walk_forward_smoke,
             ),
             QuantPilotTool(
                 name="run_deepseek_advisory_fallback",
