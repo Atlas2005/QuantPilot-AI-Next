@@ -12,6 +12,11 @@ from typing import Any, Mapping, Sequence
 import pandas as pd
 
 from quantpilot_core.data_provider_normalization import canonicalize_a_share_symbol
+from quantpilot_core.evaluation.factor_ranking_baseline import (
+    FACTOR_RANKING_BASELINE_MODES,
+    FactorRankingBaselineConfig,
+    run_factor_ranking_baseline_v1,
+)
 from quantpilot_core.order_intent import OrderIntent, OrderIntentProposal, OrderIntentProposalSource, OrderIntentSide
 from quantpilot_core.paper_trading import (
     PaperAccount,
@@ -85,6 +90,7 @@ REAL_DATA_SCALEUP_RANKING_MODES = (
     "low_volatility",
     "equal_weight_baseline",
 )
+SUPPORTED_REAL_DATA_SCALEUP_RANKING_MODES = REAL_DATA_SCALEUP_RANKING_MODES + FACTOR_RANKING_BASELINE_MODES
 AK_PROVIDER = "ak" + "share"
 BAO_PROVIDER = "bao" + "stock"
 TU_PROVIDER = "tu" + "share"
@@ -526,7 +532,7 @@ def build_real_data_walk_forward_scaleup_sweep_grid(
     configs: list[RealDataWalkForwardScaleupConfig] = []
     index = 1
     for ranking_mode in payload.ranking_modes:
-        if ranking_mode not in REAL_DATA_SCALEUP_RANKING_MODES:
+        if ranking_mode not in SUPPORTED_REAL_DATA_SCALEUP_RANKING_MODES:
             raise ValueError(f"unsupported ranking_mode: {ranking_mode}")
         for target_position_count in payload.target_position_counts:
             for max_position_weight in payload.max_position_weights:
@@ -642,6 +648,16 @@ def _select_scaleup_candidates(
 ) -> tuple[str, ...]:
     if train_prices.empty or config.ranking_mode == "equal_weight_baseline":
         return tuple(sorted(start_prices))[: int(config.target_position_count)]
+    if config.ranking_mode in FACTOR_RANKING_BASELINE_MODES:
+        report = run_factor_ranking_baseline_v1(
+            train_prices.loc[train_prices["symbol"].isin(set(start_prices))],
+            FactorRankingBaselineConfig(
+                ranking_mode=config.ranking_mode,
+                target_symbol_count=int(config.target_position_count),
+                artifact_path=None,
+            ),
+        )
+        return report.selected_symbols
     scores: list[tuple[float, str]] = []
     ordered = train_prices.sort_values(["date", "symbol"], kind="stable")
     for symbol, group in ordered.groupby("symbol", sort=True):
