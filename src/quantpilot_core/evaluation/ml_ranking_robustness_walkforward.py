@@ -492,6 +492,8 @@ def _evaluate_prediction_records(
 
 
 def _scenario_row(fold_index: int, fold: Mapping[str, str], multiplier: float, ml_report: Any, rule_report: Any) -> Mapping[str, Any]:
+    execution = _execution_metrics_from_scaleup(ml_report)
+    rule_execution = _execution_metrics_from_scaleup(rule_report)
     return {
         "fold_id": fold["fold_id"],
         "fold_index": fold_index,
@@ -504,6 +506,12 @@ def _scenario_row(fold_index: int, fold: Mapping[str, str], multiplier: float, m
         "cost_total": ml_report.cost_total if ml_report.windows_run else None,
         "turnover": ml_report.turnover if ml_report.windows_run else None,
         "trade_count": ml_report.filled_trades if ml_report.windows_run else None,
+        "attempted_order_count": execution["attempted_order_count"],
+        "fill_ratio": execution["fill_ratio"],
+        "partial_fill_count": execution["partial_fill_count"],
+        "rejected_order_count": execution["rejected_order_count"],
+        "deferred_order_count": execution["deferred_order_count"],
+        "execution_rejection_reasons": execution["rejection_reasons"],
         "rejected_trade_ratio": ml_report.rejected_trade_ratio,
         "rule_total_return": rule_report.total_return,
         "rule_strategy_excess_return": rule_report.strategy_excess_return,
@@ -511,6 +519,12 @@ def _scenario_row(fold_index: int, fold: Mapping[str, str], multiplier: float, m
         "rule_cost_total": rule_report.cost_total if rule_report.windows_run else None,
         "rule_turnover": rule_report.turnover if rule_report.windows_run else None,
         "rule_trade_count": rule_report.filled_trades if rule_report.windows_run else None,
+        "rule_attempted_order_count": rule_execution["attempted_order_count"],
+        "rule_fill_ratio": rule_execution["fill_ratio"],
+        "rule_partial_fill_count": rule_execution["partial_fill_count"],
+        "rule_rejected_order_count": rule_execution["rejected_order_count"],
+        "rule_deferred_order_count": rule_execution["deferred_order_count"],
+        "rule_execution_rejection_reasons": rule_execution["rejection_reasons"],
         "rule_rejected_trade_ratio": rule_report.rejected_trade_ratio,
         "ml_beats_rule": _gt(ml_report.strategy_excess_return, rule_report.strategy_excess_return),
     }
@@ -540,7 +554,8 @@ def _fold_row_from_scenario(
         "model_trained": bool(status.get("model_trained")),
         "prediction_count": prediction_count,
         "invalid_prediction_count": invalid_prediction_count,
-        "ml_result": {key: scenario.get(key) for key in ("total_return", "benchmark_total_return", "strategy_excess_return", "max_drawdown", "cost_total", "turnover", "trade_count", "rejected_trade_ratio")},
+        "ml_result": {key: scenario.get(key) for key in ("total_return", "benchmark_total_return", "strategy_excess_return", "max_drawdown", "cost_total", "turnover", "trade_count", "attempted_order_count", "fill_ratio", "partial_fill_count", "rejected_order_count", "deferred_order_count", "execution_rejection_reasons", "rejected_trade_ratio")},
+        "ml_execution_windows": _execution_windows_from_scaleup(ml_report),
         "same_window_rule_baseline": {
             "ranking_mode": rule_report.ranking_mode,
             "total_return": scenario.get("rule_total_return"),
@@ -549,8 +564,15 @@ def _fold_row_from_scenario(
             "cost_total": scenario.get("rule_cost_total"),
             "turnover": scenario.get("rule_turnover"),
             "trade_count": scenario.get("rule_trade_count"),
+            "attempted_order_count": scenario.get("rule_attempted_order_count"),
+            "fill_ratio": scenario.get("rule_fill_ratio"),
+            "partial_fill_count": scenario.get("rule_partial_fill_count"),
+            "rejected_order_count": scenario.get("rule_rejected_order_count"),
+            "deferred_order_count": scenario.get("rule_deferred_order_count"),
+            "execution_rejection_reasons": scenario.get("rule_execution_rejection_reasons"),
             "rejected_trade_ratio": scenario.get("rule_rejected_trade_ratio"),
         },
+        "rule_execution_windows": _execution_windows_from_scaleup(rule_report),
         "identical_ml_rule_evaluation_window": (
             _first_window_test_start(ml_report.per_window_metrics) == _first_window_test_start(rule_report.per_window_metrics)
             and _last_window_test_end(ml_report.per_window_metrics) == _last_window_test_end(rule_report.per_window_metrics)
@@ -590,6 +612,60 @@ def _failed_fold_row(
         "leakage_audit": audit,
         "concentration_diagnostics": _empty_concentration("fold_failed_before_existing_evaluator_output"),
     }
+
+
+def _execution_metrics_from_scaleup(report: Any) -> Mapping[str, Any]:
+    per_window = tuple(getattr(report, "per_window_metrics", ()) or ())
+    attempted = sum(int(row.get("attempted_order_count", row.get("trade_count", 0) + row.get("rejected_count", 0))) for row in per_window)
+    partial = sum(int(row.get("partial_fill_count", 0)) for row in per_window)
+    rejected = sum(int(row.get("rejected_order_count", row.get("rejected_count", 0))) for row in per_window)
+    deferred = sum(int(row.get("deferred_order_count", 0)) for row in per_window)
+    filled_qty = 0
+    normalized_qty = 0
+    reasons: dict[str, int] = {}
+    for row in per_window:
+        if "execution_outcomes" in row:
+            for outcome in row.get("execution_outcomes", ()):
+                if not isinstance(outcome, Mapping):
+                    continue
+                filled_qty += int(outcome.get("filled_quantity", 0))
+                normalized_qty += int(outcome.get("normalized_quantity", 0))
+        for reason, count in dict(row.get("execution_rejection_reasons", row.get("rejection_reasons", {}))).items():
+            reasons[str(reason)] = reasons.get(str(reason), 0) + int(count)
+    if normalized_qty:
+        fill_ratio = round(filled_qty / normalized_qty, 6)
+    else:
+        filled_orders = int(getattr(report, "filled_trades", 0) or 0)
+        fill_ratio = round(filled_orders / attempted, 6) if attempted else 0.0
+    return {
+        "attempted_order_count": attempted,
+        "fill_ratio": fill_ratio,
+        "partial_fill_count": partial,
+        "rejected_order_count": rejected,
+        "deferred_order_count": deferred,
+        "rejection_reasons": dict(sorted(reasons.items())),
+    }
+
+
+def _execution_windows_from_scaleup(report: Any) -> tuple[Mapping[str, Any], ...]:
+    rows: list[Mapping[str, Any]] = []
+    for row in tuple(getattr(report, "per_window_metrics", ()) or ()):
+        rows.append(
+            {
+                "run_label": row.get("run_label"),
+                "execution_reality": row.get("execution_reality"),
+                "attempted_order_count": row.get("attempted_order_count"),
+                "execution_fill_ratio": row.get("execution_fill_ratio"),
+                "partial_fill_count": row.get("partial_fill_count"),
+                "rejected_order_count": row.get("rejected_order_count"),
+                "deferred_order_count": row.get("deferred_order_count"),
+                "execution_rejection_reasons": row.get("execution_rejection_reasons", {}),
+                "rule_coverage": row.get("rule_coverage", {}),
+                "metadata_availability": row.get("metadata_availability", {}),
+                "execution_outcomes": row.get("execution_outcomes", ()),
+            }
+        )
+    return tuple(rows)
 
 
 def _report_from_rows(
