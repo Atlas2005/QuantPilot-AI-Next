@@ -6,12 +6,17 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from quantpilot_core.evaluation import real_data_walk_forward_smoke as scaleup_module
 from quantpilot_core.evaluation import (
     ML_FACTOR_BASELINE_REFERENCE,
     ML_FACTOR_FEATURES,
     ML_FACTOR_LABELS,
+    MLFactorPredictionRecord,
+    MLRankingScaleupEvaluationConfig,
     MLFactorTrainingConfig,
+    build_ml_prediction_records,
     build_ml_factor_dataset_v1,
+    run_ml_ranking_scaleup_evaluation_v1,
     run_ml_factor_training_v1,
 )
 from quantpilot_core.tool_registry import build_default_tool_registry
@@ -68,6 +73,16 @@ class FakeLightGBMModule:
     LGBMRegressor = FakeLGBMRegressor
 
 
+class InvalidScoreRegressor(TinyRegressor):
+    def predict(self, x):
+        values = super().predict(x)
+        if len(values) >= 3:
+            values[0] = None
+            values[1] = float("nan")
+            values[2] = float("inf")
+        return values
+
+
 def ml_fixture_frame(days: int = 90) -> pd.DataFrame:
     rows = []
     specs = {
@@ -111,6 +126,27 @@ def config(tmp_path: Path, **overrides) -> MLFactorTrainingConfig:
     }
     values.update(overrides)
     return MLFactorTrainingConfig(**values)
+
+
+def scaleup_eval_config(tmp_path: Path, **overrides) -> MLRankingScaleupEvaluationConfig:
+    values = {
+        "symbols": FIXTURE_SYMBOLS,
+        "start_date": "2026-01-01",
+        "end_date": "2026-05-31",
+        "provider": "fixture",
+        "initial_cash": 1_000_000.0,
+        "min_symbols_required": 2,
+        "train_window_days": 20,
+        "test_window_days": 10,
+        "max_windows": 2,
+        "target_position_count": 2,
+        "max_position_weight": 0.20,
+        "reserve_cash_weight": 0.02,
+        "dataset_artifact_path": tmp_path / "ml_scaleup" / "latest_dataset.json",
+        "report_artifact_path": tmp_path / "ml_scaleup" / "latest_report.json",
+    }
+    values.update(overrides)
+    return MLRankingScaleupEvaluationConfig(**values)
 
 
 def test_dataset_rows_labels_sorting_and_qlib_export_schema(tmp_path: Path) -> None:
@@ -275,3 +311,175 @@ def test_registry_exposes_manual_safe_ml_factor_training_tool() -> None:
     registry = build_default_tool_registry()
 
     assert "run_ml_factor_training_v1" in registry.list_names()
+
+
+def test_prediction_records_preserve_test_date_symbol_alignment_and_schema(tmp_path: Path) -> None:
+    dataset = build_ml_factor_dataset_v1(
+        ml_fixture_frame(days=130),
+        config(tmp_path, dataset_artifact_path=None),
+    )
+    test_rows = tuple(row for row in dataset.rows if dataset.train_validation_test_split["test"]["start"] <= row["date"] <= dataset.train_validation_test_split["test"]["end"])
+    predictions = {
+        (str(row["date"]), str(row["symbol"])): index / 100.0
+        for index, row in enumerate(test_rows)
+    }
+
+    records = build_ml_prediction_records(dataset, predictions)
+
+    assert records
+    assert all(isinstance(record, MLFactorPredictionRecord) for record in records)
+    assert records == tuple(sorted(records, key=lambda record: (record.date, record.symbol)))
+    assert {(record.date, record.symbol) for record in records} == set(predictions)
+    assert all(record.date >= dataset.train_validation_test_split["test"]["start"] for record in records)
+
+
+def test_ml_prediction_score_selector_ranks_per_date_with_tie_break_and_invalid_last() -> None:
+    train_prices = pd.DataFrame(
+        [
+            {"date": "2026-01-20", "symbol": "000001.SZ", "close": 10.0},
+            {"date": "2026-01-20", "symbol": "000002.SZ", "close": 10.0},
+            {"date": "2026-01-20", "symbol": "000003.SZ", "close": 10.0},
+            {"date": "2026-01-20", "symbol": "600000.SH", "close": 10.0},
+        ]
+    )
+    selected = scaleup_module._select_scaleup_candidates(
+        train_prices,
+        {"000001.SZ": 10.0, "000002.SZ": 10.0, "000003.SZ": 10.0, "600000.SH": 10.0},
+        scaleup_module.RealDataWalkForwardScaleupConfig(
+            symbols=FIXTURE_SYMBOLS,
+            target_position_count=3,
+            ranking_mode="ml_prediction_score",
+            metadata={
+                "ml_prediction_map": {
+                    "2026-01-20|000001.SZ": 0.5,
+                    "2026-01-20|000002.SZ": 0.7,
+                    "2026-01-20|000003.SZ": 0.7,
+                    "2026-01-20|600000.SH": float("nan"),
+                }
+            },
+            artifact_path=None,
+        ),
+    )
+
+    assert selected == ("000002.SZ", "000003.SZ", "000001.SZ")
+
+
+def test_ml_ranking_scaleup_reuses_existing_evaluator_and_matches_rule_window(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls = []
+    original = scaleup_module._run_scaleup_with_loaded_price_frame
+
+    def wrapped(*args, **kwargs):
+        calls.append(args[0].ranking_mode)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr("quantpilot_core.evaluation.ml_factor_training._run_scaleup_with_loaded_price_frame", wrapped)
+
+    report = run_ml_ranking_scaleup_evaluation_v1(
+        scaleup_eval_config(tmp_path),
+        price_frame=ml_fixture_frame(days=150),
+        model_backend_factory=TinyRegressor,
+    )
+
+    assert calls == ["ml_prediction_score", "low_volatility_v1"]
+    assert report.model_trained is True
+    assert isinstance(report.ml_total_return, float)
+    assert report.ml_benchmark_total_return is not None
+    assert report.ml_strategy_excess_return == round(report.ml_total_return - report.ml_benchmark_total_return, 6)
+    assert report.ml_trade_count is not None
+    assert report.ml_cost_total is not None
+    assert report.ml_turnover is not None
+    assert report.ml_evaluation_start == report.comparison_vs_same_window_rule_baseline["same_window_rule_baseline"]["evaluation_start"]
+    assert report.ml_evaluation_end == report.comparison_vs_same_window_rule_baseline["same_window_rule_baseline"]["evaluation_end"]
+    assert report.comparison_vs_same_window_rule_baseline["identical_window"] is True
+    assert report.comparison_vs_same_window_rule_baseline["identical_symbols"] is True
+    assert report.historical_pr98_baseline_reference == ML_FACTOR_BASELINE_REFERENCE
+    assert report.no_profitability_claim is True
+    assert "no_profitability_claim" in report.notes
+
+    payload = json.loads((tmp_path / "ml_scaleup" / "latest_report.json").read_text(encoding="utf-8"))
+    for key in (
+        "ml_total_return",
+        "ml_benchmark_total_return",
+        "ml_strategy_excess_return",
+        "ml_max_drawdown",
+        "ml_rejected_trade_ratio",
+        "ml_cost_total",
+        "ml_turnover",
+        "ml_trade_count",
+        "ml_evaluation_start",
+        "ml_evaluation_end",
+        "ml_evaluated_symbols",
+        "prediction_count",
+        "invalid_prediction_count",
+        "comparison_vs_same_window_rule_baseline",
+        "historical_pr98_baseline_reference",
+        "no_profitability_claim",
+    ):
+        assert key in payload
+
+
+def test_ml_ranking_scaleup_counts_invalid_predictions_and_still_evaluates(tmp_path: Path) -> None:
+    report = run_ml_ranking_scaleup_evaluation_v1(
+        scaleup_eval_config(tmp_path),
+        price_frame=ml_fixture_frame(days=150),
+        model_backend_factory=InvalidScoreRegressor,
+    )
+
+    assert report.prediction_count > 0
+    assert report.invalid_prediction_count == 3
+    assert isinstance(report.ml_total_return, float)
+
+
+def test_ml_ranking_scaleup_returns_none_metrics_with_explicit_reason_when_skipped(tmp_path: Path) -> None:
+    def missing_import(_name: str):
+        raise ImportError("missing")
+
+    report = run_ml_ranking_scaleup_evaluation_v1(
+        scaleup_eval_config(tmp_path),
+        price_frame=ml_fixture_frame(days=150),
+        lightgbm_importer=missing_import,
+    )
+
+    assert report.model_trained is False
+    assert report.ml_total_return is None
+    assert report.ml_trade_count is None
+    assert report.skipped_metric_reasons["ml_total_return"] == "model_training_skipped:lightgbm_not_installed"
+    assert report.comparison_vs_same_window_rule_baseline["same_window_rule_baseline"] is None
+    assert report.no_profitability_claim is True
+
+
+def test_ml_ranking_scaleup_uses_no_live_provider_deepseek_or_broker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def fail_provider_constructor(*args, **kwargs):
+        raise AssertionError("real provider constructor must not be used with injected fixture frame")
+
+    def fail_deepseek(*args, **kwargs):
+        raise AssertionError("DeepSeek advisory must not run in ML ranking scale-up tests")
+
+    monkeypatch.setattr(
+        "quantpilot_core.evaluation.real_data_walk_forward_smoke.BaoStockDailyBarProvider",
+        fail_provider_constructor,
+    )
+    monkeypatch.setattr("quantpilot_core.walk_forward.engine.run_deepseek_advisory_fallback", fail_deepseek)
+
+    report = run_ml_ranking_scaleup_evaluation_v1(
+        scaleup_eval_config(tmp_path),
+        price_frame=ml_fixture_frame(days=150),
+        model_backend_factory=TinyRegressor,
+    )
+
+    assert report.model_trained is True
+    assert "no_broker_live_execution" in report.notes
+    assert "deepseek_live_disabled" in report.notes
+    assert "no_external_network_in_tests" in report.notes
+
+
+def test_registry_exposes_manual_safe_ml_ranking_scaleup_tool() -> None:
+    registry = build_default_tool_registry()
+
+    assert "run_ml_ranking_scaleup_evaluation_v1" in registry.list_names()
