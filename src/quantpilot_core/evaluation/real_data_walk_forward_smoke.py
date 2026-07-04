@@ -24,6 +24,14 @@ from quantpilot_core.paper_trading import (
     account_symbol_pnl_breakdown,
     run_paper_trading_loop,
 )
+from quantpilot_core.a_share_market_reality_execution import (
+    AShareExecutionAccountState,
+    AShareExecutionConfig,
+    execute_a_share_reality_proposal,
+    summarize_metadata_availability,
+    summarize_execution_outcomes,
+    summarize_rule_coverage,
+)
 from quantpilot_core.real_data_provider import (
     Adjustment,
     AkShareDailyBarProvider,
@@ -902,15 +910,23 @@ def _run_scaleup_rebalance_windows(
     windows: Sequence[Any],
     config: RealDataWalkForwardScaleupConfig,
 ) -> tuple[tuple[Mapping[str, Any], ...], PaperAccount]:
-    account = PaperAccount(cash=float(config.initial_cash))
+    account = _initial_paper_account(config)
+    execution_state = AShareExecutionAccountState(
+        account=account,
+        settlement_lots=tuple(config.metadata.get("initial_settlement_lots", ())),
+        frozen_cash=float(config.metadata.get("initial_frozen_cash", 0.0)),
+    )
     per_window: list[Mapping[str, Any]] = []
     cost_assumptions = _scale_cost_assumptions(
         PaperFillCostAssumptions(lot_size=int(config.min_order_lot)),
         float(config.cost_multiplier),
     )
+    use_a_share_reality = str(config.metadata.get("execution_reality", "")).lower() == "a_share_market_reality_v1"
+    a_share_config = _a_share_execution_config(config.metadata)
     for window in windows:
         train_prices = _slice_price_frame(price_frame, window.train_start, window.train_end)
         start_prices = _first_prices_for_window(price_frame, window.test_start, window.test_end)
+        start_market_rows = _first_market_rows_for_window(price_frame, window.test_start, window.test_end)
         end_prices = _latest_prices_for_window(price_frame, window.test_start, window.test_end)
         starting_equity = _account_equity(account, start_prices)
         selected = _select_scaleup_candidates(train_prices, start_prices, config)
@@ -925,18 +941,36 @@ def _run_scaleup_rebalance_windows(
             cost_assumptions=cost_assumptions,
             run_label=window.run_label,
         )
-        loop_result = run_paper_trading_loop(
-            proposal,
-            start_prices,
-            account,
-            cost_assumptions=cost_assumptions,
-        )
-        account = _mark_account_to_prices(loop_result.account, end_prices)
+        execution_outcomes = ()
+        cash_before_execution = float(account.cash)
+        if use_a_share_reality:
+            reality_result = execute_a_share_reality_proposal(
+                proposal,
+                start_market_rows,
+                execution_state,
+                trade_date=str(pd.Timestamp(window.test_start).date()),
+                cost_assumptions=cost_assumptions,
+                config=a_share_config,
+            )
+            execution_state = replace(reality_result.state, account=_mark_account_to_prices(reality_result.state.account, end_prices))
+            account = execution_state.account
+            fill_result = reality_result.fill_result
+            execution_outcomes = reality_result.outcomes
+        else:
+            loop_result = run_paper_trading_loop(
+                proposal,
+                start_prices,
+                account,
+                cost_assumptions=cost_assumptions,
+            )
+            account = _mark_account_to_prices(loop_result.account, end_prices)
+            execution_state = replace(execution_state, account=account)
+            fill_result = loop_result.fill_result
         ending_equity = _account_equity(account, end_prices)
         metrics = _scaleup_window_metrics(
             window=window,
             account=account,
-            fill_result=loop_result.fill_result,
+            fill_result=fill_result,
             starting_equity=starting_equity,
             ending_equity=ending_equity,
             start_prices=start_prices,
@@ -945,9 +979,28 @@ def _run_scaleup_rebalance_windows(
             target_weights=target_weights,
             proposal=proposal,
             build_notes=build_notes,
+            execution_outcomes=execution_outcomes,
+            execution_reality="a_share_market_reality_v1" if use_a_share_reality else "base_paper_fill",
+            cash_before_execution=cash_before_execution,
         )
         per_window.append(metrics)
     return tuple(per_window), account
+
+
+def _initial_paper_account(config: RealDataWalkForwardScaleupConfig) -> PaperAccount:
+    injected = config.metadata.get("initial_paper_account")
+    if isinstance(injected, PaperAccount):
+        return injected
+    if isinstance(injected, Mapping):
+        return PaperAccount(
+            cash=float(injected.get("cash", config.initial_cash)),
+            positions=dict(injected.get("positions", {})),
+            average_costs=dict(injected.get("average_costs", {})),
+            realized_pnl_by_symbol=dict(injected.get("realized_pnl_by_symbol", {})),
+            realized_pnl=float(injected.get("realized_pnl", 0.0)),
+            unrealized_pnl=float(injected.get("unrealized_pnl", 0.0)),
+        )
+    return PaperAccount(cash=float(config.initial_cash))
 
 
 def _slice_price_frame(frame: pd.DataFrame, start: Any, end: Any) -> pd.DataFrame:
@@ -968,6 +1021,31 @@ def _first_prices_for_window(frame: pd.DataFrame, start: Any, end: Any) -> Mappi
         str(symbol): round(float(group["close"].iloc[0]), 6)
         for symbol, group in ordered.groupby("symbol", sort=True)
     }
+
+
+def _first_market_rows_for_window(frame: pd.DataFrame, start: Any, end: Any) -> Mapping[str, Mapping[str, Any]]:
+    window = _slice_price_frame(frame, start, end)
+    if window.empty:
+        return {}
+    start_ts = pd.Timestamp(start)
+    full_ordered = frame.sort_values(["date", "symbol"], kind="stable").copy()
+    full_ordered["_date_ts"] = pd.to_datetime(full_ordered["date"]).dt.tz_localize(None)
+    ordered = window.sort_values(["date", "symbol"], kind="stable")
+    rows: dict[str, Mapping[str, Any]] = {}
+    for symbol, group in ordered.groupby("symbol", sort=True):
+        first = group.iloc[0].to_dict()
+        if first.get("previous_close") is None or pd.isna(first.get("previous_close")):
+            symbol_history = full_ordered.loc[
+                (full_ordered["symbol"] == symbol) & (full_ordered["_date_ts"] < start_ts)
+            ]
+            if not symbol_history.empty:
+                first["previous_close"] = float(symbol_history["close"].iloc[-1])
+                first["previous_close_source"] = "derived_from_prior_loaded_bar"
+            else:
+                first["previous_close_source"] = "unavailable"
+        first.setdefault("price_basis", "unadjusted_adjustment_none")
+        rows[str(symbol)] = first
+    return rows
 
 
 def _select_scaleup_candidates(
@@ -1248,6 +1326,9 @@ def _scaleup_window_metrics(
     target_weights: Mapping[str, float],
     proposal: OrderIntentProposal,
     build_notes: Mapping[str, Any],
+    execution_outcomes: Sequence[Any] = (),
+    execution_reality: str = "base_paper_fill",
+    cash_before_execution: float | None = None,
 ) -> Mapping[str, Any]:
     gross_exposure = _position_market_value(account.positions, end_prices)
     turnover = round(sum(float(trade.gross_notional) for trade in fill_result.filled_trades), 6)
@@ -1262,6 +1343,21 @@ def _scaleup_window_metrics(
     )
     largest_weight = _largest_position_weight(account.positions, end_prices, ending_equity)
     equity_return = _ratio(ending_equity - starting_equity, starting_equity)
+    serialized_outcomes = (
+        tuple(_serialize_execution_outcome(outcome) for outcome in execution_outcomes)
+        if execution_outcomes
+        else _base_execution_outcomes(proposal, fill_result, cash_before_execution=float(cash_before_execution or 0.0))
+    )
+    execution_summary = summarize_execution_outcomes(execution_outcomes) if execution_outcomes else {
+        "attempted_order_count": len(proposal.intents),
+        "fill_ratio": round(len(fill_result.filled_trades) / len(proposal.intents), 6) if proposal.intents else 0.0,
+        "partial_fill_count": 0,
+        "rejected_order_count": len(fill_result.rejected_fills),
+        "deferred_order_count": 0,
+        "rejection_reasons": rejected_details["rejection_reasons"],
+        "rule_coverage": {},
+        "metadata_availability": {},
+    }
     return {
         "run_label": window.run_label,
         "train_start": str(window.train_start),
@@ -1282,6 +1378,24 @@ def _scaleup_window_metrics(
         "trade_count": len(fill_result.filled_trades),
         "rejected_count": len(fill_result.rejected_fills),
         "fill_rate": round(len(fill_result.filled_trades) / len(proposal.intents), 6) if proposal.intents else 0.0,
+        "attempted_order_count": int(execution_summary["attempted_order_count"]),
+        "execution_fill_ratio": float(execution_summary["fill_ratio"]),
+        "partial_fill_count": int(execution_summary["partial_fill_count"]),
+        "rejected_order_count": int(execution_summary["rejected_order_count"]),
+        "deferred_order_count": int(execution_summary["deferred_order_count"]),
+        "execution_rejection_reasons": execution_summary["rejection_reasons"],
+        "rule_coverage": (
+            summarize_rule_coverage(execution_outcomes)
+            if execution_outcomes
+            else execution_summary["rule_coverage"]
+        ),
+        "metadata_availability": (
+            summarize_metadata_availability(execution_outcomes)
+            if execution_outcomes
+            else execution_summary["metadata_availability"]
+        ),
+        "execution_reality": execution_reality,
+        "execution_outcomes": serialized_outcomes,
         "turnover": turnover,
         "cost_total": cost_total,
         "cost_to_turnover_ratio": _ratio(cost_total, turnover),
@@ -1306,6 +1420,100 @@ def _scaleup_window_metrics(
         "start_prices": dict(start_prices),
         "end_prices": dict(end_prices),
     }
+
+
+def _serialize_execution_outcome(outcome: Any) -> Mapping[str, Any]:
+    return {
+        "order_id": outcome.order_id,
+        "date": outcome.date,
+        "symbol": outcome.symbol,
+        "side": outcome.side,
+        "requested_quantity": outcome.requested_quantity,
+        "normalized_quantity": outcome.normalized_quantity,
+        "filled_quantity": outcome.filled_quantity,
+        "unfilled_quantity": outcome.unfilled_quantity,
+        "execution_price": outcome.execution_price,
+        "gross_value": outcome.gross_value,
+        "fee_breakdown": dict(outcome.fee_breakdown),
+        "total_cost": outcome.total_cost,
+        "status": outcome.status,
+        "rejection_or_deferral_reason": outcome.rejection_or_deferral_reason,
+        "sellable_quantity_before": outcome.sellable_quantity_before,
+        "cash_available_before": outcome.cash_available_before,
+        "cash_available_after": outcome.cash_available_after,
+        "rule_diagnostics": dict(outcome.rule_diagnostics),
+        "metadata_availability": dict(outcome.metadata_availability),
+    }
+
+
+def _base_execution_outcomes(
+    proposal: OrderIntentProposal,
+    fill_result: Any,
+    *,
+    cash_before_execution: float,
+) -> tuple[Mapping[str, Any], ...]:
+    filled_by_key: dict[tuple[str, str, int], list[Any]] = {}
+    for trade in fill_result.filled_trades:
+        filled_by_key.setdefault((str(trade.symbol), str(trade.side), int(trade.quantity)), []).append(trade)
+    rejected_by_key: dict[tuple[str, str, int | None], list[Any]] = {}
+    for rejected in fill_result.rejected_fills:
+        rejected_by_key.setdefault((str(rejected.symbol), str(rejected.side), rejected.requested_quantity), []).append(rejected)
+
+    outcomes: list[Mapping[str, Any]] = []
+    cash_after = round(float(cash_before_execution), 6)
+    for index, intent in enumerate(proposal.intents, start=1):
+        side = str(intent.side.value if isinstance(intent.side, OrderIntentSide) else intent.side)
+        quantity = int(intent.target_shares or 0)
+        key = (str(intent.symbol), side, quantity)
+        trade = filled_by_key.get(key, []).pop(0) if filled_by_key.get(key) else None
+        rejected = rejected_by_key.get((str(intent.symbol), side, intent.target_shares), []).pop(0) if rejected_by_key.get((str(intent.symbol), side, intent.target_shares)) else None
+        if trade is not None:
+            cash_after = round(float(cash_after) + float(trade.cash_impact), 6)
+            outcomes.append(
+                {
+                    "order_id": f"{proposal.run_label or 'proposal'}:{index}:{intent.symbol}:{side}:{quantity}",
+                    "date": None,
+                    "symbol": intent.symbol,
+                    "side": side,
+                    "requested_quantity": quantity,
+                    "normalized_quantity": quantity,
+                    "filled_quantity": int(trade.quantity),
+                    "unfilled_quantity": 0,
+                    "execution_price": float(trade.fill_price),
+                    "gross_value": float(trade.gross_notional),
+                    "fee_breakdown": {
+                        "commission": float(trade.fee),
+                        "transaction_tax": round(float(trade.total_cost) - float(trade.fee) - float(trade.slippage_cost), 6),
+                        "transfer_or_exchange_fee": 0.0,
+                        "slippage_cost": float(trade.slippage_cost),
+                    },
+                    "total_cost": float(trade.total_cost),
+                    "status": "filled",
+                    "rejection_or_deferral_reason": None,
+                    "cash_available_after": cash_after,
+                }
+            )
+        elif rejected is not None:
+            outcomes.append(
+                {
+                    "order_id": f"{proposal.run_label or 'proposal'}:{index}:{intent.symbol}:{side}:{quantity}",
+                    "date": None,
+                    "symbol": intent.symbol,
+                    "side": side,
+                    "requested_quantity": quantity,
+                    "normalized_quantity": quantity,
+                    "filled_quantity": 0,
+                    "unfilled_quantity": quantity,
+                    "execution_price": None,
+                    "gross_value": 0.0,
+                    "fee_breakdown": {},
+                    "total_cost": 0.0,
+                    "status": "rejected",
+                    "rejection_or_deferral_reason": ",".join(rejected.reasons),
+                    "cash_available_after": cash_after,
+                }
+            )
+    return tuple(outcomes)
 
 
 def _mark_account_to_prices(account: PaperAccount, prices: Mapping[str, float]) -> PaperAccount:
@@ -2119,6 +2327,24 @@ def _scale_cost_assumptions(
         stamp_tax_rate=round(float(assumptions.stamp_tax_rate) * multiplier, 12),
         slippage_bps=round(float(assumptions.slippage_bps) * multiplier, 6),
         lot_size=int(assumptions.lot_size),
+    )
+
+
+def _a_share_execution_config(metadata: Mapping[str, Any]) -> AShareExecutionConfig:
+    overrides = metadata.get("a_share_execution_config", {})
+    if not isinstance(overrides, Mapping):
+        overrides = {}
+    return AShareExecutionConfig(
+        buy_lot_size=int(overrides.get("buy_lot_size", 100)),
+        buy_lot_increment=int(overrides.get("buy_lot_increment", 100)),
+        odd_lot_sell_policy=str(overrides.get("odd_lot_sell_policy", "allow_position_residual")),
+        enforce_t_plus_one=bool(overrides.get("enforce_t_plus_one", True)),
+        max_participation_rate=float(overrides.get("max_participation_rate", 0.10)),
+        block_suspended=bool(overrides.get("block_suspended", True)),
+        block_unavailable_price=bool(overrides.get("block_unavailable_price", True)),
+        block_one_price_limit=bool(overrides.get("block_one_price_limit", True)),
+        default_price_limit_pct=float(overrides.get("default_price_limit_pct", 0.10)),
+        price_limit_tolerance=float(overrides.get("price_limit_tolerance", 1e-6)),
     )
 
 
