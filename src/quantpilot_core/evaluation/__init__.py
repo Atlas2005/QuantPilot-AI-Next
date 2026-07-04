@@ -46,6 +46,12 @@ from quantpilot_core.evaluation.a_share_market_reality_execution import (
     AShareMarketRealityExecutionReport,
     run_a_share_market_reality_execution_v1,
 )
+from quantpilot_core.evaluation.a_share_tradability_metadata_enrichment import (
+    DEFAULT_A_SHARE_TRADABILITY_METADATA_ENRICHMENT_REPORT_ARTIFACT_PATH,
+    AShareTradabilityMetadataEnrichmentConfig,
+    AShareTradabilityMetadataEnrichmentReport,
+    run_a_share_tradability_metadata_enrichment_v1,
+)
 from quantpilot_core.evaluation.real_data_walk_forward_smoke import (
     DEFAULT_FACTOR_RANKING_SWEEP_INTEGRATION_ARTIFACT_PATH,
     DEFAULT_REAL_DATA_SCALEUP_SYMBOLS,
@@ -70,6 +76,7 @@ from quantpilot_core.evaluation.real_data_walk_forward_smoke import (
 __all__ = [
     "DEFAULT_FACTOR_RANKING_BASELINE_ARTIFACT_PATH",
     "DEFAULT_A_SHARE_MARKET_REALITY_EXECUTION_REPORT_ARTIFACT_PATH",
+    "DEFAULT_A_SHARE_TRADABILITY_METADATA_ENRICHMENT_REPORT_ARTIFACT_PATH",
     "DEFAULT_FACTOR_RANKING_SWEEP_INTEGRATION_ARTIFACT_PATH",
     "DEFAULT_ML_FACTOR_TRAINING_DATASET_ARTIFACT_PATH",
     "DEFAULT_ML_FACTOR_TRAINING_REPORT_ARTIFACT_PATH",
@@ -86,6 +93,8 @@ __all__ = [
     "FactorScore",
     "AShareMarketRealityExecutionConfig",
     "AShareMarketRealityExecutionReport",
+    "AShareTradabilityMetadataEnrichmentConfig",
+    "AShareTradabilityMetadataEnrichmentReport",
     "ML_FACTOR_BASELINE_REFERENCE",
     "ML_FACTOR_FEATURES",
     "ML_FACTOR_LABELS",
@@ -114,6 +123,7 @@ __all__ = [
     "detect_target_horizon_trading_days",
     "run_ml_ranking_robustness_walkforward_v1",
     "run_a_share_market_reality_execution_v1",
+    "run_a_share_tradability_metadata_enrichment_v1",
     "run_ml_ranking_scaleup_evaluation_v1",
     "run_factor_ranking_sweep_integration_v1",
     "run_real_data_walk_forward_scaleup_sweep",

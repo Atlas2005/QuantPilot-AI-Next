@@ -32,6 +32,10 @@ from quantpilot_core.a_share_market_reality_execution import (
     summarize_execution_outcomes,
     summarize_rule_coverage,
 )
+from quantpilot_core.a_share_tradability_metadata import (
+    AShareTradabilityMetadataConfig,
+    enrich_market_rows,
+)
 from quantpilot_core.real_data_provider import (
     Adjustment,
     AkShareDailyBarProvider,
@@ -926,7 +930,7 @@ def _run_scaleup_rebalance_windows(
     for window in windows:
         train_prices = _slice_price_frame(price_frame, window.train_start, window.train_end)
         start_prices = _first_prices_for_window(price_frame, window.test_start, window.test_end)
-        start_market_rows = _first_market_rows_for_window(price_frame, window.test_start, window.test_end)
+        start_market_rows = _first_market_rows_for_window(price_frame, window.test_start, window.test_end, config.metadata)
         end_prices = _latest_prices_for_window(price_frame, window.test_start, window.test_end)
         starting_equity = _account_equity(account, start_prices)
         selected = _select_scaleup_candidates(train_prices, start_prices, config)
@@ -1023,7 +1027,12 @@ def _first_prices_for_window(frame: pd.DataFrame, start: Any, end: Any) -> Mappi
     }
 
 
-def _first_market_rows_for_window(frame: pd.DataFrame, start: Any, end: Any) -> Mapping[str, Mapping[str, Any]]:
+def _first_market_rows_for_window(
+    frame: pd.DataFrame,
+    start: Any,
+    end: Any,
+    metadata: Mapping[str, Any] | None = None,
+) -> Mapping[str, Mapping[str, Any]]:
     window = _slice_price_frame(frame, start, end)
     if window.empty:
         return {}
@@ -1045,7 +1054,7 @@ def _first_market_rows_for_window(frame: pd.DataFrame, start: Any, end: Any) -> 
                 first["previous_close_source"] = "unavailable"
         first.setdefault("price_basis", "unadjusted_adjustment_none")
         rows[str(symbol)] = first
-    return rows
+    return enrich_market_rows(rows, config=AShareTradabilityMetadataConfig.from_metadata(metadata or {}))
 
 
 def _select_scaleup_candidates(
@@ -2240,6 +2249,10 @@ def _bars_to_price_frame(bars: Sequence[NormalizedDailyBar]) -> pd.DataFrame:
             "close": float(bar.close),
             "volume": float(bar.volume),
             "amount": bar.amount,
+            "previous_close": bar.previous_close,
+            "adjustment_flag": bar.adjustment_flag,
+            "trade_status": bar.trade_status,
+            "is_st": bar.is_st,
             "provider": bar.provider.value if hasattr(bar.provider, "value") else str(bar.provider),
         }
         for bar in bars
@@ -2264,6 +2277,10 @@ def _normalized_frame_to_bars(frame: Any, *, provider: str) -> list[NormalizedDa
                 close=float(row["close"]),
                 volume=float(row["volume"]),
                 amount=None if pd.isna(row.get("amount")) else float(row.get("amount")),
+                previous_close=None if pd.isna(row.get("previous_close")) else float(row.get("previous_close")),
+                adjustment_flag=None if pd.isna(row.get("adjustment_flag")) else str(row.get("adjustment_flag")),
+                trade_status=None if pd.isna(row.get("trade_status")) else str(row.get("trade_status")),
+                is_st=None if pd.isna(row.get("is_st")) else bool(row.get("is_st")),
                 provider=ProviderName(provider) if provider in ProviderName._value2member_map_ else ProviderName(BAO_PROVIDER),
             )
         )

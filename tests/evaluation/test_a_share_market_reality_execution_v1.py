@@ -16,6 +16,7 @@ from quantpilot_core.a_share_market_reality_execution import (
 from quantpilot_core.evaluation.real_data_walk_forward_smoke import RealDataWalkForwardScaleupConfig
 from quantpilot_core.evaluation.a_share_market_reality_execution import (
     AShareMarketRealityExecutionConfig,
+    _metadata_coverage_section,
     run_a_share_market_reality_execution_v1,
 )
 from quantpilot_core.evaluation.ml_ranking_robustness_walkforward import MLRankingRobustnessWalkForwardConfig
@@ -188,7 +189,7 @@ def test_suspension_unavailable_price_and_one_price_limit_are_rejected() -> None
     limit_up = run_one(
         state,
         intent("600000.SH", "buy", 100),
-        market_row(close=11.0, open=11.0, high=11.0, low=11.0, previous_close=10.0),
+        market_row(close=11.0, open=11.0, high=11.0, low=11.0, previous_close=10.0, upper_limit=11.0, lower_limit=9.0),
     )
 
     assert suspended.outcomes[0].rejection_or_deferral_reason == "symbol_suspended"
@@ -323,6 +324,33 @@ def test_production_scaleup_path_reports_rule_coverage_for_controlled_execution_
                 SettlementLot("000002.SZ", 75, "2025-01-01"),
             ),
             "a_share_execution_config": {"max_participation_rate": 0.20},
+            "a_share_tradability_metadata_enrichment_v1": True,
+            "a_share_tradability_metadata": {
+                "fetched_at": "controlled-fixture",
+                "primary_price_provider": "controlled_fixture",
+                "security_master_records": tuple(
+                    {
+                        "symbol": row["symbol"],
+                        "exchange": row["symbol"].split(".")[-1],
+                        "board": "main",
+                        "is_st": False,
+                        "source": "controlled_point_in_time_security_master",
+                        "effective_start": "2025-01-02",
+                        "data_quality": "fixture",
+                    }
+                    for row in rows
+                ),
+                "tradability_overrides": (
+                    {
+                        "trade_date": "2025-01-02",
+                        "symbol": "000004.SZ",
+                        "upper_limit": 11.0,
+                        "lower_limit": 9.0,
+                        "source": "controlled_point_in_time_price_limit",
+                        "data_quality": "fixture",
+                    },
+                ),
+            },
         },
     )
 
@@ -355,6 +383,30 @@ def test_production_scaleup_path_reports_rule_coverage_for_controlled_execution_
     assert coverage["partial_fill"]["triggered_order_count"] >= 1
     assert coverage["available_cash_frozen_cash"]["triggered_order_count"] >= 1
     assert coverage["fee_breakdown"]["triggered_order_count"] >= 1
+
+
+def test_missing_price_limit_metadata_is_explicit_without_broad_order_rejection() -> None:
+    state = AShareExecutionAccountState(PaperAccount(cash=20_000.0))
+
+    result = run_one(
+        state,
+        intent("600000.SH", "buy", 100),
+        market_row(close=11.0, open=11.0, high=11.0, low=11.0, previous_close=10.0),
+        cfg=AShareExecutionConfig(max_participation_rate=1.0),
+    )
+
+    outcome = result.outcomes[0]
+    assert outcome.rejection_or_deferral_reason is None
+    assert outcome.status == "filled"
+    assert outcome.metadata_availability["price_limit_fields"]["available"] is False
+    assert outcome.rule_diagnostics["one_price_limit_state"]["metadata_unavailable"] is True
+
+    summary = scaleup_module.summarize_execution_outcomes(result.outcomes)
+    assert summary["rule_coverage"]["one_price_limit_state"]["unavailable_metadata_count"] == 1
+    assert summary["metadata_availability"]["price_limit_fields"]["unavailable_count"] == 1
+    coverage = _metadata_coverage_section(summary["metadata_availability"], {"rules": summary["rule_coverage"]})
+    assert coverage["reality_coverage_sufficient"] is False
+    assert "price_limit_fields" in coverage["unsupported_fields"]
 
 
 def _bar(date: pd.Timestamp, symbol: str, **overrides):

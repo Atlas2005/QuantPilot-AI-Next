@@ -44,6 +44,7 @@ class AShareMarketRealityExecutionReport:
     aggregate_results: Mapping[str, Any]
     reality_coverage_audit: Mapping[str, Any]
     metadata_availability_audit: Mapping[str, Any]
+    metadata_coverage_section: Mapping[str, Any]
     base_vs_reality_order_deltas: Mapping[str, Any]
     reality_coverage_sufficient: bool
     unsupported_reality_fields: tuple[str, ...]
@@ -123,6 +124,7 @@ def _build_report(
         aggregate_results=aggregate,
         reality_coverage_audit=coverage,
         metadata_availability_audit=metadata_audit,
+        metadata_coverage_section=_metadata_coverage_section(metadata_audit, coverage),
         base_vs_reality_order_deltas=deltas,
         reality_coverage_sufficient=coverage_sufficient,
         unsupported_reality_fields=unsupported,
@@ -246,11 +248,30 @@ def _metadata_availability_audit(report: MLRankingRobustnessWalkForwardReport) -
         for field_name, row in dict(window.get("metadata_availability", {})).items():
             target = fields.setdefault(
                 str(field_name),
-                {"available_count": 0, "unavailable_count": 0, "approximation_used_count": 0},
+                {
+                    "available_count": 0,
+                    "unavailable_count": 0,
+                    "observed_count": 0,
+                    "derived_count": 0,
+                    "derived_from_approximate_input_count": 0,
+                    "approximation_used_count": 0,
+                    "providers": {},
+                    "approximation_reasons": {},
+                    "unavailable_reasons": {},
+                },
             )
             target["available_count"] += int(row.get("available_count", 0))
             target["unavailable_count"] += int(row.get("unavailable_count", 0))
+            target["observed_count"] += int(row.get("observed_count", 0))
+            target["derived_count"] += int(row.get("derived_count", 0))
+            target["derived_from_approximate_input_count"] += int(row.get("derived_from_approximate_input_count", 0))
             target["approximation_used_count"] += int(row.get("approximation_used_count", 0))
+            for provider, count in dict(row.get("providers", {}) or {}).items():
+                target["providers"][str(provider)] = int(target["providers"].get(str(provider), 0)) + int(count)
+            for reason, count in dict(row.get("approximation_reasons", {}) or {}).items():
+                target["approximation_reasons"][str(reason)] = int(target["approximation_reasons"].get(str(reason), 0)) + int(count)
+            for reason, count in dict(row.get("unavailable_reasons", {}) or {}).items():
+                target["unavailable_reasons"][str(reason)] = int(target["unavailable_reasons"].get(str(reason), 0)) + int(count)
     return {
         field_name: {
             **row,
@@ -259,6 +280,98 @@ def _metadata_availability_audit(report: MLRankingRobustnessWalkForwardReport) -
         }
         for field_name, row in sorted(fields.items())
     }
+
+
+def _metadata_coverage_section(
+    metadata_audit: Mapping[str, Any],
+    coverage: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    field_rows = {}
+    for field_name, row in metadata_audit.items():
+        requested = int(row.get("available_count", 0)) + int(row.get("unavailable_count", 0))
+        observed = int(row.get("observed_count", 0))
+        derived = int(row.get("derived_count", 0))
+        derived_from_approximate_input = int(row.get("derived_from_approximate_input_count", 0))
+        approximation = int(row.get("approximation_used_count", 0))
+        unavailable = int(row.get("unavailable_count", 0))
+        usable = observed + derived
+        field_rows[field_name] = {
+            "requested_record_count": requested,
+            "observed_record_count": observed,
+            "derived_record_count": derived,
+            "derived_from_approximate_input_count": derived_from_approximate_input,
+            "approximation_count": approximation,
+            "unavailable_record_count": unavailable,
+            "available_record_count": int(row.get("available_count", 0)),
+            "observed_coverage_ratio": round(observed / requested, 6) if requested else None,
+            "usable_coverage_ratio": round(usable / requested, 6) if requested else None,
+            "coverage_ratio": round(usable / requested, 6) if requested else None,
+            "provider_source_breakdown": dict(row.get("providers", {}) or {}),
+            "provider_breakdown": dict(row.get("providers", {}) or {}),
+            "approximation_reasons": dict(row.get("approximation_reasons", {}) or {}),
+            "unavailable_reasons": dict(row.get("unavailable_reasons", {}) or {}),
+            "quality_lineage_note": _quality_lineage_note(field_name, derived_from_approximate_input),
+        }
+    return {
+        "metadata_field_coverage": field_rows,
+        "provider_used_by_field": {
+            field_name: tuple(sorted(dict(row.get("providers", {}) or {}).keys()))
+            for field_name, row in metadata_audit.items()
+        },
+        "point_in_time_alignment_passed": _point_in_time_alignment_passed(metadata_audit),
+        "suspension_coverage": _coverage_ratio(metadata_audit, "suspension_status"),
+        "board_coverage": _coverage_ratio(metadata_audit, "board_classification"),
+        "historical_st_status_coverage": _coverage_ratio(metadata_audit, "st_classification"),
+        "price_limit_coverage": _coverage_ratio(metadata_audit, "price_limit_fields"),
+        "one_price_limit_coverage": _rule_coverage_ratio(coverage, "one_price_limit_state"),
+        "corporate_action_coverage": _coverage_ratio(metadata_audit, "corporate_action_fields"),
+        "acquisition_lot_coverage": _coverage_ratio(metadata_audit, "acquisition_date_or_sellable_inventory"),
+        "approximation_counts_and_reasons": _approximation_counts(metadata_audit),
+        "unsupported_fields": _unsupported_reality_fields(metadata_audit, coverage),
+        "reality_coverage_sufficient": not _unsupported_reality_fields(metadata_audit, coverage),
+        "no_profitability_claim": True,
+    }
+
+
+def _coverage_ratio(metadata_audit: Mapping[str, Any], field_name: str) -> float | None:
+    row = dict(metadata_audit.get(field_name, {}) or {})
+    requested = int(row.get("available_count", 0)) + int(row.get("unavailable_count", 0))
+    if not requested:
+        return None
+    usable = int(row.get("observed_count", 0)) + int(row.get("derived_count", 0))
+    return round(usable / requested, 6)
+
+
+def _quality_lineage_note(field_name: str, derived_from_approximate_input: int) -> str | None:
+    if field_name == "price_limit_fields" and derived_from_approximate_input:
+        return "price limits derived from previous close, historical ST status, trade-date regime, and approximated symbol-prefix board classification"
+    return None
+
+
+def _rule_coverage_ratio(coverage: Mapping[str, Any], rule_name: str) -> float | None:
+    row = dict(dict(coverage.get("rules", {}) or {}).get(rule_name, {}) or {})
+    requested = int(row.get("evaluated_order_count", 0)) + int(row.get("unavailable_metadata_count", 0))
+    if not requested:
+        return None
+    return round(int(row.get("evaluated_order_count", 0)) / requested, 6)
+
+
+def _approximation_counts(metadata_audit: Mapping[str, Any]) -> Mapping[str, Any]:
+    return {
+        field_name: {
+            "approximation_count": int(row.get("approximation_used_count", 0)),
+            "reasons": tuple(sorted(dict(row.get("approximation_reasons", {}) or row.get("unavailable_reasons", {}) or {}).keys())),
+        }
+        for field_name, row in metadata_audit.items()
+        if int(row.get("approximation_used_count", 0)) > 0
+    }
+
+
+def _point_in_time_alignment_passed(metadata_audit: Mapping[str, Any]) -> bool:
+    board = dict(metadata_audit.get("board_classification", {}) or {})
+    st = dict(metadata_audit.get("st_classification", {}) or {})
+    providers = set(dict(board.get("providers", {}) or {})) | set(dict(st.get("providers", {}) or {}))
+    return "current_status_snapshot" not in providers
 
 
 def _base_vs_reality_order_deltas(
@@ -385,11 +498,26 @@ def _unsupported_reality_fields(
         "order_side_volume_participation_input",
         "corporate_action_fields",
         "adjusted_unadjusted_price_basis",
+        "board_classification",
+        "st_classification",
     )
     for field_name in required_fields:
         row = dict(metadata_audit.get(field_name, {}))
-        if int(row.get("unavailable_count", 0)) > 0:
+        requested = int(row.get("available_count", 0)) + int(row.get("unavailable_count", 0))
+        observed = int(row.get("observed_count", 0))
+        derived = int(row.get("derived_count", 0))
+        approximation = int(row.get("approximation_used_count", 0))
+        derived_from_approximate_input = int(row.get("derived_from_approximate_input_count", 0))
+        unavailable = int(row.get("unavailable_count", 0))
+        usable = observed + derived
+        if unavailable > 0 or usable == 0 or approximation >= requested > 0 or derived_from_approximate_input > 0:
             unsupported.append(field_name)
+        if field_name == "order_side_volume_participation_input" and observed == 0:
+            unsupported.append("true_order_side_volume_participation_input")
+        if field_name == "st_classification" and observed == 0:
+            unsupported.append("historical_st_status")
+        if field_name == "acquisition_date_or_sellable_inventory" and approximation > 0:
+            unsupported.append("acquisition_lot_history")
     for rule_name, row in dict(coverage.get("rules", {})).items():
         if int(row.get("unavailable_metadata_count", 0)) > 0:
             unsupported.append(f"rule:{rule_name}")

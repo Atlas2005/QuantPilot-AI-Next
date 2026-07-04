@@ -25,7 +25,7 @@ def available_importer(name):
 
 
 class FakeQueryResult:
-    fields = ["date", "code", "open", "high", "low", "close", "volume", "amount"]
+    fields = ["date", "code", "open", "high", "low", "close", "preclose", "volume", "amount", "adjustflag", "tradestatus", "isST"]
 
     def __init__(self, rows, *, error_code: str = "0", error_msg: str = "success", fail_after_rows: int | None = None):
         self.rows = rows
@@ -80,8 +80,12 @@ def valid_rows():
             "high": "10.5",
             "low": "9.8",
             "close": "10.2",
+            "preclose": "10.0",
             "volume": "1000",
             "amount": "10200",
+            "adjustflag": "3",
+            "tradestatus": "1",
+            "isST": "0",
         },
         {
             "date": "2026-01-02",
@@ -90,7 +94,11 @@ def valid_rows():
             "high": 10.6,
             "low": 10.0,
             "close": 10.4,
+            "preclose": 10.2,
             "volume": 1200,
+            "adjustflag": "3",
+            "tradestatus": "0",
+            "isST": "1",
         },
     ]
 
@@ -127,8 +135,12 @@ def test_baostock_result_to_frame_collects_rows_preserving_field_order() -> None
         "high": "10.5",
         "low": "9.8",
         "close": "10.2",
+        "preclose": "10.0",
         "volume": "1000",
         "amount": "10200",
+        "adjustflag": "3",
+        "tradestatus": "1",
+        "isST": "0",
     }
     assert result.get_data_called is False
 
@@ -180,15 +192,21 @@ def test_normalize_valid_dict_rows_into_daily_bars() -> None:
     assert bars[0].trade_date == date(2026, 1, 1)
     assert bars[0].open == 10.0
     assert bars[0].amount == 10200
+    assert bars[0].previous_close == 10.0
+    assert bars[0].adjustment_flag == "3"
+    assert bars[0].trade_status == "1"
+    assert bars[0].is_st is False
     assert bars[0].provider is ProviderName.BAOSTOCK
     assert bars[1].amount is None
+    assert bars[1].trade_status == "0"
+    assert bars[1].is_st is True
 
 
 def test_normalize_valid_tuple_rows_preserves_order() -> None:
     bars = normalize_baostock_daily_bars(
         [
-            ("2026-01-02", "sh.600000", "10.2", "10.6", "10.0", "10.4", "1200"),
-            ("2026-01-01", "sh.600000", "10.0", "10.5", "9.8", "10.2", "1000"),
+            ("2026-01-02", "sh.600000", "10.2", "10.6", "10.0", "10.4", "10.2", "1200"),
+            ("2026-01-01", "sh.600000", "10.0", "10.5", "9.8", "10.2", "10.0", "1000"),
         ],
         symbol="sh.600000",
     )
@@ -240,7 +258,7 @@ def test_provider_can_use_fake_client_without_dependency() -> None:
     assert client.calls == [
         {
             "code": "sh.600000",
-            "fields": "date,code,open,high,low,close,volume,amount",
+            "fields": "date,code,open,high,low,close,preclose,volume,amount,adjustflag,tradestatus,isST",
             "start_date": "2026-01-01",
             "end_date": "2026-01-03",
             "frequency": "d",
