@@ -56,8 +56,12 @@ class NormalizedDailyBar:
     low: float
     volume: float
     amount: float | None = None
+    previous_close: float | None = None
     pct_change: float | None = None
     turnover: float | None = None
+    adjustment_flag: str | None = None
+    trade_status: str | None = None
+    is_st: bool | None = None
     provider: ProviderName = ProviderName.AKSHARE
 
     def __post_init__(self) -> None:

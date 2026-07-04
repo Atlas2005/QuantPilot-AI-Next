@@ -27,7 +27,7 @@ class BaoStockDependencyStatus(str, Enum):
 
 
 CORE_COLUMNS = {"date", "open", "high", "low", "close", "volume"}
-DEFAULT_FIELDS = "date,code,open,high,low,close,volume,amount"
+DEFAULT_FIELDS = "date,code,open,high,low,close,preclose,volume,amount,adjustflag,tradestatus,isST"
 ADJUSTMENT_FLAGS = {
     Adjustment.NONE: "3",
     Adjustment.QFQ: "2",
@@ -188,7 +188,20 @@ def _row_to_mapping(row: Any) -> Mapping[str, Any]:
     if isinstance(row, Mapping):
         return row
     if isinstance(row, Sequence) and not isinstance(row, (str, bytes)):
-        fields = ("date", "code", "open", "high", "low", "close", "volume", "amount")
+        fields = (
+            "date",
+            "code",
+            "open",
+            "high",
+            "low",
+            "close",
+            "preclose",
+            "volume",
+            "amount",
+            "adjustflag",
+            "tradestatus",
+            "isST",
+        )
         if len(row) < 7:
             raise ProviderDataError("BaoStock tuple rows must include OHLCV fields")
         return {field: row[index] for index, field in enumerate(fields[: len(row)])}
@@ -208,6 +221,10 @@ def _normalize_row(row: Mapping[str, Any], fallback_symbol: str) -> NormalizedDa
             low=to_float(row["low"], "low"),
             volume=_volume_float(row, "volume"),
             amount=_optional_float(row, "amount"),
+            previous_close=_optional_float(row, "preclose"),
+            adjustment_flag=_optional_str(row, "adjustflag"),
+            trade_status=_optional_str(row, "tradestatus"),
+            is_st=_optional_bool_flag(row, "isST"),
             provider=ProviderName.BAOSTOCK,
         )
     except ProviderDataError:
@@ -230,3 +247,21 @@ def _volume_float(row: Mapping[str, Any], field_name: str) -> float:
     if isinstance(row[field_name], str) and not row[field_name].strip():
         return 0.0
     return to_float(row[field_name], field_name)
+
+
+def _optional_str(row: Mapping[str, Any], field_name: str) -> str | None:
+    if field_name not in row or row[field_name] is None:
+        return None
+    value = str(row[field_name]).strip()
+    return value or None
+
+
+def _optional_bool_flag(row: Mapping[str, Any], field_name: str) -> bool | None:
+    value = _optional_str(row, field_name)
+    if value is None:
+        return None
+    if value in {"1", "true", "True", "TRUE"}:
+        return True
+    if value in {"0", "false", "False", "FALSE"}:
+        return False
+    raise ProviderDataError(f"{field_name} must be a boolean flag")

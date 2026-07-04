@@ -377,18 +377,53 @@ def summarize_metadata_availability(outcomes: Sequence[AShareExecutionOutcome]) 
         "adjusted_unadjusted_price_basis",
     )
     summary: dict[str, dict[str, Any]] = {
-        field_name: {"available_count": 0, "unavailable_count": 0, "approximation_used_count": 0}
+        field_name: {
+            "available_count": 0,
+            "unavailable_count": 0,
+            "observed_count": 0,
+            "derived_count": 0,
+            "derived_from_approximate_input_count": 0,
+            "approximation_used_count": 0,
+            "providers": {},
+            "approximation_reasons": {},
+            "unavailable_reasons": {},
+        }
         for field_name in fields
     }
     for outcome in outcomes:
         for field_name in fields:
             value = dict(outcome.metadata_availability).get(field_name, {})
-            if value.get("available"):
+            available = bool(value.get("available"))
+            approximation_used = bool(value.get("approximation_used"))
+            quality = str(value.get("quality") or "")
+            if available:
                 summary[field_name]["available_count"] += 1
+                if value.get("derived_from_approximate_input"):
+                    summary[field_name]["derived_from_approximate_input_count"] += 1
+                if quality in {"derived", "derived_with_approximate_input"}:
+                    summary[field_name]["derived_count"] += 1
+                if approximation_used:
+                    summary[field_name]["approximation_used_count"] += 1
+                if not approximation_used and quality not in {"derived", "derived_with_approximate_input"}:
+                    summary[field_name]["observed_count"] += 1
             else:
                 summary[field_name]["unavailable_count"] += 1
-            if value.get("approximation_used"):
-                summary[field_name]["approximation_used_count"] += 1
+                if approximation_used:
+                    summary[field_name]["approximation_used_count"] += 1
+            provider = value.get("provider") or value.get("source")
+            if provider:
+                providers = summary[field_name]["providers"]
+                providers[str(provider)] = int(providers.get(str(provider), 0)) + 1
+            approximation_reason = value.get("fallback_reason") or (
+                "derived_from_approximate_input" if value.get("derived_from_approximate_input") else "approximation_used" if approximation_used else None
+            )
+            if approximation_reason and approximation_used:
+                reasons = summary[field_name]["approximation_reasons"]
+                reasons[str(approximation_reason)] = int(reasons.get(str(approximation_reason), 0)) + 1
+            reason = value.get("unavailable_reason")
+            if reason:
+                reasons = summary[field_name]["unavailable_reasons"]
+                reasons[str(reason)] = int(reasons.get(str(reason), 0)) + 1
     return dict(sorted(summary.items()))
 
 
@@ -442,29 +477,33 @@ def _tradability_reason(
 
 
 def _is_one_price_limit(side: OrderIntentSide, row: Mapping[str, Any], config: AShareExecutionConfig) -> bool:
+    if side is OrderIntentSide.BUY and "one_price_upper_limit" in row:
+        return bool(row.get("one_price_upper_limit"))
+    if side is OrderIntentSide.SELL and "one_price_lower_limit" in row:
+        return bool(row.get("one_price_lower_limit"))
     price = _execution_price(row)
-    previous_close = _float(row.get("previous_close"))
+    upper = _float(row.get("upper_limit"))
+    lower = _float(row.get("lower_limit"))
     high = _float(row.get("high"))
     low = _float(row.get("low"))
-    if price <= 0 or previous_close <= 0 or high <= 0 or low <= 0:
+    if price <= 0 or high <= 0 or low <= 0:
         return False
-    upper = previous_close * (1 + config.default_price_limit_pct)
-    lower = previous_close * (1 - config.default_price_limit_pct)
     one_price = abs(high - low) <= config.price_limit_tolerance
     if side is OrderIntentSide.BUY:
-        return one_price and price >= upper - config.price_limit_tolerance
+        return upper > 0 and one_price and price >= upper - config.price_limit_tolerance
     if side is OrderIntentSide.SELL:
-        return one_price and price <= lower + config.price_limit_tolerance
+        return lower > 0 and one_price and price <= lower + config.price_limit_tolerance
     return False
 
 
 def _is_price_limit_state(row: Mapping[str, Any], config: AShareExecutionConfig) -> bool:
     price = _execution_price(row)
-    previous_close = _float(row.get("previous_close"))
-    if price <= 0 or previous_close <= 0:
+    if price <= 0:
         return False
-    upper = _float(row.get("upper_limit")) or previous_close * (1 + config.default_price_limit_pct)
-    lower = _float(row.get("lower_limit")) or previous_close * (1 - config.default_price_limit_pct)
+    upper = _float(row.get("upper_limit"))
+    lower = _float(row.get("lower_limit"))
+    if upper <= 0 or lower <= 0:
+        return False
     return price >= upper - config.price_limit_tolerance or price <= lower + config.price_limit_tolerance
 
 
@@ -571,6 +610,7 @@ def _metadata_availability(
     has_sellable_lots: bool,
     frozen_cash: float,
 ) -> Mapping[str, Any]:
+    field_meta = dict(row.get("tradability_metadata_fields", {}) or {})
     has_previous_close = _float(row.get("previous_close")) > 0
     has_hilo = _float(row.get("high")) > 0 and _float(row.get("low")) > 0
     return {
@@ -580,33 +620,53 @@ def _metadata_availability(
             "source": "settlement_lots" if has_sellable_lots else "initial_positions_treated_as_settled",
         },
         "suspension_status": {
-            "available": "is_suspended" in row,
-            "approximation_used": "is_suspended" not in row,
-            "source": "is_suspended" if "is_suspended" in row else "missing_assumed_not_suspended",
+            **_field_metadata(field_meta, "suspension_status"),
+            "available": "is_suspended" in row and row.get("is_suspended") is not None,
+            "approximation_used": _field_approx(field_meta, "suspension_status"),
+            "source": _field_source(field_meta, "suspension_status", "is_suspended" if "is_suspended" in row else "missing"),
         },
         "previous_close": {"available": has_previous_close, "approximation_used": False, "source": "previous_close"},
-        "board_classification": {"available": "board" in row, "approximation_used": False, "source": "board"},
-        "st_classification": {"available": "risk_flag" in row or "is_st" in row, "approximation_used": False, "source": "risk_flag_or_is_st"},
-        "price_limit_fields": {
-            "available": bool(row.get("upper_limit") is not None and row.get("lower_limit") is not None) or (has_previous_close and has_hilo),
-            "approximation_used": not (row.get("upper_limit") is not None and row.get("lower_limit") is not None) and has_previous_close and has_hilo,
-            "source": "explicit_limits" if row.get("upper_limit") is not None and row.get("lower_limit") is not None else "derived_from_previous_close_high_low",
+        "board_classification": {
+            **_field_metadata(field_meta, "board_classification"),
+            "available": row.get("board") is not None,
+            "approximation_used": _field_approx(field_meta, "board_classification"),
+            "source": _field_source(field_meta, "board_classification", "board"),
         },
-        "daily_volume": {"available": row.get("volume") is not None, "approximation_used": False, "source": "volume"},
+        "st_classification": {
+            **_field_metadata(field_meta, "historical_st_status"),
+            "available": row.get("risk_flag") is not None or row.get("is_st") is not None,
+            "approximation_used": _field_approx(field_meta, "historical_st_status"),
+            "source": _field_source(field_meta, "historical_st_status", "risk_flag_or_is_st"),
+        },
+        "price_limit_fields": {
+            **_field_metadata(field_meta, "price_limit_fields"),
+            "available": bool(row.get("upper_limit") is not None and row.get("lower_limit") is not None),
+            "approximation_used": _field_approx(field_meta, "price_limit_fields"),
+            "source": _field_source(field_meta, "price_limit_fields", "explicit_limits" if row.get("upper_limit") is not None and row.get("lower_limit") is not None else "missing"),
+        },
+        "daily_volume": {
+            **_field_metadata(field_meta, "daily_volume"),
+            "available": row.get("volume") is not None,
+            "approximation_used": _field_approx(field_meta, "daily_volume"),
+            "source": _field_source(field_meta, "daily_volume", "volume"),
+        },
         "order_side_volume_participation_input": {
+            **_field_metadata(field_meta, "order_side_volume_participation_input"),
             "available": row.get("available_volume") is not None,
-            "approximation_used": row.get("available_volume") is None and row.get("volume") is not None,
-            "source": "available_volume" if row.get("available_volume") is not None else "daily_volume",
+            "approximation_used": _field_approx(field_meta, "order_side_volume_participation_input") or (row.get("available_volume") is None and row.get("volume") is not None),
+            "source": _field_source(field_meta, "order_side_volume_participation_input", "available_volume" if row.get("available_volume") is not None else "daily_volume"),
         },
         "corporate_action_fields": {
+            **_field_metadata(field_meta, "corporate_action_fields"),
             "available": any(key in row for key in ("adjust_factor", "dividend", "split_ratio")),
             "approximation_used": False,
-            "source": "not_supplied" if not any(key in row for key in ("adjust_factor", "dividend", "split_ratio")) else "provider_fields",
+            "source": _field_source(field_meta, "corporate_action_fields", "not_supplied" if not any(key in row for key in ("adjust_factor", "dividend", "split_ratio")) else "provider_fields"),
         },
         "adjusted_unadjusted_price_basis": {
+            **_field_metadata(field_meta, "adjusted_unadjusted_price_basis"),
             "available": row.get("price_basis") is not None,
             "approximation_used": row.get("price_basis") is None,
-            "source": str(row.get("price_basis", "existing_loader_adjustment_none")),
+            "source": _field_source(field_meta, "adjusted_unadjusted_price_basis", str(row.get("price_basis", "existing_loader_adjustment_none"))),
         },
         "frozen_cash": {
             "available": True,
@@ -615,6 +675,29 @@ def _metadata_availability(
             "value": frozen_cash,
         },
     }
+
+
+def _field_metadata(field_meta: Mapping[str, Any], field_name: str) -> Mapping[str, Any]:
+    meta = dict(field_meta.get(field_name, {}) or {})
+    return {
+        "provider": meta.get("provider"),
+        "fetched_at": meta.get("fetched_at"),
+        "quality": meta.get("quality"),
+        "fallback_reason": meta.get("fallback_reason"),
+        "unavailable_reason": meta.get("unavailable_reason"),
+        "derived_from_approximate_input": meta.get("derived_from_approximate_input", False),
+        "lineage": tuple(meta.get("lineage", ()) or ()),
+    }
+
+
+def _field_source(field_meta: Mapping[str, Any], field_name: str, default: str) -> str:
+    meta = dict(field_meta.get(field_name, {}) or {})
+    return str(meta.get("provider") or default)
+
+
+def _field_approx(field_meta: Mapping[str, Any], field_name: str) -> bool:
+    meta = dict(field_meta.get(field_name, {}) or {})
+    return bool(meta.get("approximation_used", False))
 
 
 def _rule_diagnostics_before_fill(
