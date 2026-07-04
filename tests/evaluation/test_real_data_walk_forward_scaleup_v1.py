@@ -320,6 +320,127 @@ def test_scaleup_records_resized_buy_orders_before_cash_rejection() -> None:
     assert proposal.intents[0].metadata["resized_order"] is True
 
 
+def test_turnover_aware_defaults_preserve_rebalance_builder_behavior() -> None:
+    account = scaleup_module.PaperAccount(cash=50_000.0)
+    prices = {"000001.SZ": 100.0}
+    common = {
+        "account": account,
+        "prices": prices,
+        "selected_symbols": ("000001.SZ",),
+        "target_weights": {"000001.SZ": 0.90},
+        "equity": 100_000.0,
+        "cost_assumptions": scaleup_module.PaperFillCostAssumptions(lot_size=100),
+        "run_label": "turnover-default-test",
+    }
+
+    baseline, baseline_notes = scaleup_module._build_rebalance_proposal(
+        config=RealDataWalkForwardScaleupConfig(
+            symbols=FIXTURE_SYMBOLS,
+            reserve_cash_weight=0.02,
+            max_position_weight=0.90,
+            target_position_count=1,
+            artifact_path=None,
+        ),
+        **common,
+    )
+    disabled, disabled_notes = scaleup_module._build_rebalance_proposal(
+        config=RealDataWalkForwardScaleupConfig(
+            symbols=FIXTURE_SYMBOLS,
+            reserve_cash_weight=0.02,
+            max_position_weight=0.90,
+            target_position_count=1,
+            artifact_path=None,
+            turnover_aware_rebalance=scaleup_module.TurnoverAwareRebalanceConfig(enabled=False),
+        ),
+        **common,
+    )
+
+    assert tuple(intent.target_shares for intent in disabled.intents) == tuple(intent.target_shares for intent in baseline.intents)
+    assert disabled_notes["orders_proposed_before_turnover_controls"] == baseline_notes["orders_proposed_before_turnover_controls"]
+    assert disabled_notes["orders_retained"] == baseline_notes["orders_retained"]
+
+
+def test_turnover_aware_minimum_order_value_skips_small_non_liquidation_orders() -> None:
+    proposal, notes = scaleup_module._build_rebalance_proposal(
+        account=scaleup_module.PaperAccount(
+            cash=100_000.0,
+            positions={"000001.SZ": 1000},
+            average_costs={"000001.SZ": 10.0},
+        ),
+        prices={"000001.SZ": 10.0, "000002.SZ": 10.0},
+        selected_symbols=("000001.SZ", "000002.SZ"),
+        target_weights={"000001.SZ": 0.10, "000002.SZ": 0.10},
+        equity=200_000.0,
+        config=RealDataWalkForwardScaleupConfig(
+            symbols=FIXTURE_SYMBOLS,
+            reserve_cash_weight=0.02,
+            max_position_weight=0.20,
+            target_position_count=2,
+            artifact_path=None,
+            turnover_aware_rebalance=scaleup_module.TurnoverAwareRebalanceConfig(
+                enabled=True,
+                minimum_order_value=50_000.0,
+            ),
+        ),
+        cost_assumptions=scaleup_module.PaperFillCostAssumptions(lot_size=100),
+        run_label="minimum-order-test",
+    )
+
+    assert len(proposal.intents) == 0
+    assert notes["raw_orders_before_controls"] == 2
+    assert notes["orders_proposed_before_turnover_controls"] == 2
+    assert notes["orders_after_minimum_order_value"] == 0
+    assert notes["final_orders_retained"] == 0
+    assert notes["orders_retained"] == 0
+    assert notes["orders_skipped_by_minimum_order_value"] == 2
+    assert notes["direct_filter_estimated_cost_avoided"] > 0
+    assert notes["direct_filter_estimated_turnover_avoided"] > 0
+
+
+def test_turnover_aware_order_construction_reports_zero_delta_domain() -> None:
+    proposal, notes = scaleup_module._build_rebalance_proposal(
+        account=scaleup_module.PaperAccount(
+            cash=90_000.0,
+            positions={"000001.SZ": 1000},
+            average_costs={"000001.SZ": 10.0},
+        ),
+        prices={"000001.SZ": 10.0},
+        selected_symbols=("000001.SZ",),
+        target_weights={"000001.SZ": 0.10},
+        equity=100_000.0,
+        config=RealDataWalkForwardScaleupConfig(
+            symbols=FIXTURE_SYMBOLS,
+            reserve_cash_weight=0.02,
+            max_position_weight=0.20,
+            target_position_count=1,
+            artifact_path=None,
+            turnover_aware_rebalance=scaleup_module.TurnoverAwareRebalanceConfig(enabled=True),
+        ),
+        cost_assumptions=scaleup_module.PaperFillCostAssumptions(lot_size=100),
+        run_label="zero-delta-test",
+    )
+
+    attribution = scaleup_module._turnover_attribution_from_notes(notes)
+
+    assert proposal.intents == ()
+    assert attribution["order_construction_attribution"]["raw_target_weight_deltas"] == 1
+    assert attribution["order_construction_attribution"]["orders_removed_as_zero_delta"] == 1
+    assert attribution["order_construction_attribution"]["final_order_intents"] == 0
+
+
+def test_turnover_aware_invalid_rank_hysteresis_fails_locally() -> None:
+    with pytest.raises(ValueError, match="exit_rank_threshold"):
+        scaleup_module._validate_scaleup_config(
+            RealDataWalkForwardScaleupConfig(
+                turnover_aware_rebalance=scaleup_module.TurnoverAwareRebalanceConfig(
+                    enabled=True,
+                    entry_rank_threshold=10,
+                    exit_rank_threshold=5,
+                )
+            )
+        )
+
+
 def test_scaleup_skips_empty_symbols_when_partial_universe_allowed() -> None:
     provider = ScaleupFixtureProvider(empty_symbols={"000538.SZ", "600000.SH"})
 

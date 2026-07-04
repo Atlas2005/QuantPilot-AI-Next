@@ -122,6 +122,21 @@ TU_PROVIDER = "tu" + "share"
 
 
 @dataclass(frozen=True)
+class TurnoverAwareRebalanceConfig:
+    """Focused turnover controls for the existing scale-up rebalance path."""
+
+    enabled: bool = False
+    entry_rank_threshold: int | None = None
+    exit_rank_threshold: int | None = None
+    minimum_score_improvement: float = 0.0
+    target_weight_no_trade_band: float = 0.0
+    minimum_order_value: float = 0.0
+    minimum_holding_days: int = 0
+    normalized_turnover_penalty: float = 0.0
+    estimated_cost_multiplier: float = 1.0
+
+
+@dataclass(frozen=True)
 class RealDataWalkForwardSmokeConfig:
     """Configuration for a small A-share/ETF real-data smoke run."""
 
@@ -165,6 +180,7 @@ class RealDataWalkForwardScaleupConfig:
     ranking_mode: str = "momentum_60d"
     min_order_lot: int = 100
     cost_multiplier: float = 1.0
+    turnover_aware_rebalance: TurnoverAwareRebalanceConfig = field(default_factory=TurnoverAwareRebalanceConfig)
     max_rejected_trade_ratio_warning: float = 0.20
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -306,6 +322,7 @@ class RealDataWalkForwardScaleupReport:
     mature_framework_hooks: Mapping[str, Any]
     notes: tuple[str, ...]
     artifact_path: str | None = None
+    turnover_aware_attribution: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -927,13 +944,45 @@ def _run_scaleup_rebalance_windows(
     )
     use_a_share_reality = str(config.metadata.get("execution_reality", "")).lower() == "a_share_market_reality_v1"
     a_share_config = _a_share_execution_config(config.metadata)
+    holding_start_dates: dict[str, str] = {
+        str(symbol): str(config.metadata.get("initial_holding_start_date", config.start_date))
+        for symbol, quantity in account.positions.items()
+        if int(quantity) > 0
+    }
     for window in windows:
         train_prices = _slice_price_frame(price_frame, window.train_start, window.train_end)
         start_prices = _first_prices_for_window(price_frame, window.test_start, window.test_end)
         start_market_rows = _first_market_rows_for_window(price_frame, window.test_start, window.test_end, config.metadata)
         end_prices = _latest_prices_for_window(price_frame, window.test_start, window.test_end)
         starting_equity = _account_equity(account, start_prices)
-        selected = _select_scaleup_candidates(train_prices, start_prices, config)
+        ranked_candidates = _rank_scaleup_candidates(train_prices, start_prices, config)
+        selected = tuple(symbol for _, symbol, _ in ranked_candidates[: int(config.target_position_count)])
+        policy_notes = _turnover_aware_selection_notes()
+        if config.turnover_aware_rebalance.enabled:
+            raw_target_weights = _target_weights(selected, config)
+            raw_proposal, _ = _build_rebalance_proposal(
+                account=account,
+                prices=start_prices,
+                selected_symbols=selected,
+                target_weights=raw_target_weights,
+                equity=starting_equity,
+                config=replace(config, turnover_aware_rebalance=TurnoverAwareRebalanceConfig(enabled=False)),
+                cost_assumptions=cost_assumptions,
+                run_label=window.run_label,
+            )
+            policy_notes["raw_orders_before_controls"] = len(raw_proposal.intents)
+        if config.turnover_aware_rebalance.enabled:
+            selected, policy_notes = _apply_turnover_aware_candidate_controls(
+                ranked_candidates=ranked_candidates,
+                account=account,
+                prices=start_prices,
+                equity=starting_equity,
+                config=config,
+                cost_assumptions=cost_assumptions,
+                trade_date=str(pd.Timestamp(window.test_start).date()),
+                holding_start_dates=holding_start_dates,
+                raw_orders_before_controls=int(policy_notes.get("raw_orders_before_controls", 0)),
+            )
         target_weights = _target_weights(selected, config)
         proposal, build_notes = _build_rebalance_proposal(
             account=account,
@@ -944,6 +993,7 @@ def _run_scaleup_rebalance_windows(
             config=config,
             cost_assumptions=cost_assumptions,
             run_label=window.run_label,
+            policy_notes=policy_notes,
         )
         execution_outcomes = ()
         cash_before_execution = float(account.cash)
@@ -988,6 +1038,11 @@ def _run_scaleup_rebalance_windows(
             cash_before_execution=cash_before_execution,
         )
         per_window.append(metrics)
+        _update_holding_start_dates(
+            holding_start_dates,
+            account.positions,
+            trade_date=str(pd.Timestamp(window.test_start).date()),
+        )
     return tuple(per_window), account
 
 
@@ -1062,12 +1117,20 @@ def _select_scaleup_candidates(
     start_prices: Mapping[str, float],
     config: RealDataWalkForwardScaleupConfig,
 ) -> tuple[str, ...]:
+    return tuple(symbol for _, symbol, _ in _rank_scaleup_candidates(train_prices, start_prices, config)[: int(config.target_position_count)])
+
+
+def _rank_scaleup_candidates(
+    train_prices: pd.DataFrame,
+    start_prices: Mapping[str, float],
+    config: RealDataWalkForwardScaleupConfig,
+) -> tuple[tuple[int, str, float | None], ...]:
     if train_prices.empty or config.ranking_mode == "equal_weight_baseline":
-        return tuple(sorted(start_prices))[: int(config.target_position_count)]
+        return tuple((rank, symbol, 0.0) for rank, symbol in enumerate(sorted(start_prices), start=1))
     if config.ranking_mode == "ml_prediction_score":
         prediction_map = config.metadata.get("ml_prediction_map", {})
         as_of_date = str(pd.Timestamp(train_prices["date"].max()).date())
-        scores: list[tuple[float, str]] = []
+        scores: list[tuple[float, str, float | None]] = []
         for symbol in sorted(start_prices):
             score = prediction_map.get((as_of_date, symbol))
             if score is None:
@@ -1075,22 +1138,24 @@ def _select_scaleup_candidates(
             try:
                 numeric_score = float(score)
             except (TypeError, ValueError):
-                numeric_score = -1_000_000_000.0
+                scores.append((-1_000_000_000.0, symbol, None))
+                continue
             if pd.isna(numeric_score) or numeric_score in (float("inf"), float("-inf")):
-                numeric_score = -1_000_000_000.0
-            scores.append((numeric_score, symbol))
+                scores.append((-1_000_000_000.0, symbol, None))
+                continue
+            scores.append((numeric_score, symbol, numeric_score))
         ranked = sorted(scores, key=lambda item: (-item[0], item[1]))
-        return tuple(symbol for _, symbol in ranked[: int(config.target_position_count)])
+        return tuple((rank, symbol, score) for rank, (_, symbol, score) in enumerate(ranked, start=1))
     if config.ranking_mode in FACTOR_RANKING_BASELINE_MODES:
         report = run_factor_ranking_baseline_v1(
             train_prices.loc[train_prices["symbol"].isin(set(start_prices))],
             FactorRankingBaselineConfig(
                 ranking_mode=config.ranking_mode,
-                target_symbol_count=int(config.target_position_count),
+                target_symbol_count=len(start_prices),
                 artifact_path=None,
             ),
         )
-        return report.selected_symbols
+        return tuple((rank, symbol, float(len(start_prices) - rank + 1)) for rank, symbol in enumerate(report.selected_symbols, start=1))
     scores: list[tuple[float, str]] = []
     ordered = train_prices.sort_values(["date", "symbol"], kind="stable")
     for symbol, group in ordered.groupby("symbol", sort=True):
@@ -1099,7 +1164,7 @@ def _select_scaleup_candidates(
         score = _ranking_score(group, config.ranking_mode)
         scores.append((round(score, 12), str(symbol)))
     ranked = sorted(scores, key=lambda item: (-item[0], item[1]))
-    return tuple(symbol for _, symbol in ranked[: int(config.target_position_count)])
+    return tuple((rank, symbol, score) for rank, (score, symbol) in enumerate(ranked, start=1))
 
 
 def _ranking_score(group: pd.DataFrame, ranking_mode: str) -> float:
@@ -1139,6 +1204,173 @@ def _target_weights(
     return {symbol: round(target_weight, 6) for symbol in selected_symbols}
 
 
+def _turnover_aware_selection_notes() -> dict[str, Any]:
+    return {
+        "raw_ranked_candidates": 0,
+        "existing_positions_considered": 0,
+        "candidates_after_rank_hysteresis": 0,
+        "replacements_evaluated": 0,
+        "replacements_blocked_by_score_threshold": 0,
+        "target_positions_retained": 0,
+        "selection_removed_by_rank_hysteresis": 0,
+        "selection_removed_by_score_threshold": 0,
+        "selection_removed_by_minimum_holding_period": 0,
+        "raw_target_weight_deltas": 0,
+        "orders_removed_as_zero_delta": 0,
+        "orders_removed_below_lot": 0,
+        "orders_removed_by_cash_resize": 0,
+        "orders_removed_missing_price": 0,
+        "orders_merged_or_net_adjusted": 0,
+        "raw_orders_before_controls": 0,
+        "orders_after_rank_hysteresis": 0,
+        "orders_after_score_improvement": 0,
+        "orders_after_weight_no_trade_band": 0,
+        "orders_after_minimum_order_value": 0,
+        "orders_after_minimum_holding_period": 0,
+        "final_orders_retained": 0,
+        "orders_proposed_before_turnover_controls": 0,
+        "orders_retained": 0,
+        "orders_skipped_by_rank_hysteresis": 0,
+        "orders_skipped_by_score_improvement": 0,
+        "orders_skipped_by_weight_no_trade_band": 0,
+        "orders_skipped_by_minimum_order_value": 0,
+        "orders_skipped_by_minimum_holding_period": 0,
+        "direct_filter_estimated_cost_avoided": 0.0,
+        "direct_filter_estimated_turnover_avoided": 0.0,
+        "positions_retained_due_to_hysteresis": 0,
+        "replacements_prevented": 0,
+        "forced_required_exits_bypassed_turnover_controls": 0,
+        "score_improvement_evaluated_replacement_count": 0,
+        "score_improvement_triggered_count": 0,
+        "turnover_control_skipped_orders": (),
+        "turnover_controls_enabled": False,
+    }
+
+
+def _apply_turnover_aware_candidate_controls(
+    *,
+    ranked_candidates: tuple[tuple[int, str, float | None], ...],
+    account: PaperAccount,
+    prices: Mapping[str, float],
+    equity: float,
+    config: RealDataWalkForwardScaleupConfig,
+    cost_assumptions: PaperFillCostAssumptions,
+    trade_date: str,
+    holding_start_dates: Mapping[str, str],
+    raw_orders_before_controls: int = 0,
+) -> tuple[tuple[str, ...], dict[str, Any]]:
+    policy = config.turnover_aware_rebalance
+    notes = _turnover_aware_selection_notes()
+    notes["turnover_controls_enabled"] = True
+    notes["raw_ranked_candidates"] = len(ranked_candidates)
+    notes["raw_orders_before_controls"] = int(raw_orders_before_controls)
+    entry = int(policy.entry_rank_threshold or config.target_position_count)
+    exit_rank = int(policy.exit_rank_threshold or entry)
+    target_count = int(config.target_position_count)
+    rank_by_symbol = {symbol: rank for rank, symbol, _ in ranked_candidates}
+    score_by_symbol = {symbol: score for _, symbol, score in ranked_candidates}
+    current = tuple(symbol for symbol, quantity in sorted(account.positions.items()) if int(quantity) > 0)
+    notes["existing_positions_considered"] = len(current)
+    retained: list[str] = []
+    for symbol in current:
+        rank = rank_by_symbol.get(symbol)
+        if rank is not None and rank <= exit_rank:
+            retained.append(symbol)
+            if rank > entry:
+                notes["positions_retained_due_to_hysteresis"] += 1
+                notes["orders_skipped_by_rank_hysteresis"] += 1
+            continue
+        if _holding_days(holding_start_dates.get(symbol), trade_date) < int(policy.minimum_holding_days):
+            retained.append(symbol)
+            notes["orders_skipped_by_minimum_holding_period"] += 1
+            continue
+
+    selected = list(retained)
+    outgoing = [symbol for symbol in current if symbol not in set(retained)]
+    notes["selection_removed_by_rank_hysteresis"] = len(outgoing)
+    outgoing_scores = [score_by_symbol.get(symbol) for symbol in outgoing if _valid_score(score_by_symbol.get(symbol))]
+    hurdle = float(policy.minimum_score_improvement)
+    for rank, symbol, score in ranked_candidates:
+        if len(selected) >= target_count:
+            break
+        if rank > entry or symbol in selected:
+            continue
+        if outgoing_scores:
+            notes["score_improvement_evaluated_replacement_count"] += 1
+            notes["replacements_evaluated"] += 1
+            weakest_outgoing_score = min(float(value) for value in outgoing_scores)
+            if not _valid_score(score) or float(score) - weakest_outgoing_score < hurdle:
+                notes["orders_skipped_by_score_improvement"] += 1
+                notes["replacements_prevented"] += 1
+                notes["score_improvement_triggered_count"] += 1
+                notes["replacements_blocked_by_score_threshold"] += 1
+                continue
+            cost_penalty = _replacement_cost_penalty(
+                symbol=symbol,
+                outgoing_symbols=tuple(outgoing),
+                prices=prices,
+                equity=equity,
+                config=config,
+                cost_assumptions=cost_assumptions,
+            )
+            if float(policy.normalized_turnover_penalty) > 0 and float(score) - weakest_outgoing_score < cost_penalty:
+                notes["orders_skipped_by_score_improvement"] += 1
+                notes["replacements_prevented"] += 1
+                notes["score_improvement_triggered_count"] += 1
+                notes["replacements_blocked_by_score_threshold"] += 1
+                continue
+        selected.append(symbol)
+    final_selected = tuple(selected[:target_count])
+    notes["candidates_after_rank_hysteresis"] = len(retained) + sum(1 for rank, symbol, _ in ranked_candidates if rank <= entry and symbol not in set(retained))
+    notes["target_positions_retained"] = len(final_selected)
+    notes["selection_removed_by_score_threshold"] = int(notes["replacements_blocked_by_score_threshold"])
+    notes["selection_removed_by_minimum_holding_period"] = int(notes["orders_skipped_by_minimum_holding_period"])
+    return final_selected, notes
+
+
+def _valid_score(value: Any) -> bool:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return False
+    return not pd.isna(numeric) and numeric not in (float("inf"), float("-inf"))
+
+
+def _replacement_cost_penalty(
+    *,
+    symbol: str,
+    outgoing_symbols: tuple[str, ...],
+    prices: Mapping[str, float],
+    equity: float,
+    config: RealDataWalkForwardScaleupConfig,
+    cost_assumptions: PaperFillCostAssumptions,
+) -> float:
+    if equity <= 0:
+        return 0.0
+    target_value = equity * min(float(config.max_position_weight), max(0.0, 1.0 - float(config.reserve_cash_weight)) / max(1, int(config.target_position_count)))
+    buy_cost = _estimated_buy_cost(target_value, cost_assumptions)
+    sell_cost = 0.0
+    if outgoing_symbols:
+        sell_cost = _estimated_sell_cost(target_value, cost_assumptions)
+    normalized_cost = ((buy_cost + sell_cost) / equity) * float(config.turnover_aware_rebalance.estimated_cost_multiplier)
+    return round(normalized_cost * float(config.turnover_aware_rebalance.normalized_turnover_penalty), 12)
+
+
+def _holding_days(start_date: str | None, trade_date: str) -> int:
+    if not start_date:
+        return 1_000_000
+    return max(0, (pd.Timestamp(trade_date) - pd.Timestamp(start_date)).days)
+
+
+def _update_holding_start_dates(holding_start_dates: dict[str, str], positions: Mapping[str, int], trade_date: str) -> None:
+    for symbol in list(holding_start_dates):
+        if int(positions.get(symbol, 0)) <= 0:
+            holding_start_dates.pop(symbol, None)
+    for symbol, quantity in positions.items():
+        if int(quantity) > 0 and symbol not in holding_start_dates:
+            holding_start_dates[str(symbol)] = trade_date
+
+
 def _build_rebalance_proposal(
     *,
     account: PaperAccount,
@@ -1149,9 +1381,11 @@ def _build_rebalance_proposal(
     config: RealDataWalkForwardScaleupConfig,
     cost_assumptions: PaperFillCostAssumptions,
     run_label: str,
+    policy_notes: Mapping[str, Any] | None = None,
 ) -> tuple[OrderIntentProposal, Mapping[str, Any]]:
     if not config.rebalance_each_window and account.positions:
         return _rebalance_proposal((), run_label), {
+            **_turnover_aware_selection_notes(),
             "resized_order_count": 0,
             "skipped_below_lot_count": 0,
             "rebalance_sell_count": 0,
@@ -1161,13 +1395,23 @@ def _build_rebalance_proposal(
         }
 
     lot = int(config.min_order_lot)
+    notes = dict(policy_notes or _turnover_aware_selection_notes())
     intents: list[OrderIntent] = []
     skipped: list[Mapping[str, Any]] = []
     resized_count = 0
     selected_set = set(selected_symbols)
     target_values = {symbol: float(weight) * equity for symbol, weight in target_weights.items()}
+    target_universe = sorted(set(account.positions) | selected_set)
+    order_counts = _order_construction_counts(
+        account=account,
+        prices=prices,
+        target_values=target_values,
+        target_universe=tuple(target_universe),
+        lot=lot,
+    )
+    notes.update(order_counts)
 
-    for symbol in sorted(set(account.positions) | selected_set):
+    for symbol in target_universe:
         price = float(prices.get(symbol, 0.0))
         if price <= 0:
             continue
@@ -1216,6 +1460,7 @@ def _build_rebalance_proposal(
         quantity = min(desired_quantity, affordable_quantity)
         if quantity < lot:
             skipped.append({"symbol": symbol, "reason": "below_min_lot_after_resize"})
+            notes["orders_removed_by_cash_resize"] = int(notes.get("orders_removed_by_cash_resize", 0)) + 1
             continue
         if quantity < desired_quantity:
             resized_count += 1
@@ -1232,9 +1477,46 @@ def _build_rebalance_proposal(
             )
         )
 
+    orders_after_candidate_controls = len(intents)
+    candidate_skip_count = (
+        int(notes.get("orders_skipped_by_rank_hysteresis", 0))
+        + int(notes.get("orders_skipped_by_score_improvement", 0))
+        + int(notes.get("orders_skipped_by_minimum_holding_period", 0))
+    )
+    raw_orders = int(notes.get("raw_orders_before_controls", 0)) or orders_after_candidate_controls + candidate_skip_count
+    notes["raw_orders_before_controls"] = raw_orders
+    notes["orders_proposed_before_turnover_controls"] = raw_orders
+    notes["orders_proposed_after_candidate_controls"] = orders_after_candidate_controls
+    if config.turnover_aware_rebalance.enabled:
+        intents = list(
+            _apply_turnover_aware_order_controls(
+                intents=tuple(intents),
+                account=account,
+                prices=prices,
+                equity=equity,
+                target_weights=target_weights,
+                config=config,
+                cost_assumptions=cost_assumptions,
+                notes=notes,
+            )
+        )
+    after_rank = max(0, raw_orders - int(notes.get("orders_skipped_by_rank_hysteresis", 0)))
+    after_score = max(0, after_rank - int(notes.get("orders_skipped_by_score_improvement", 0)))
+    after_weight = max(0, after_score - int(notes.get("orders_skipped_by_weight_no_trade_band", 0)))
+    after_min_order = max(0, after_weight - int(notes.get("orders_skipped_by_minimum_order_value", 0)))
+    after_min_holding = max(0, after_min_order - int(notes.get("orders_skipped_by_minimum_holding_period", 0)))
+    notes["orders_after_rank_hysteresis"] = after_rank
+    notes["orders_after_score_improvement"] = after_score
+    notes["orders_after_weight_no_trade_band"] = after_weight
+    notes["orders_after_minimum_order_value"] = after_min_order
+    notes["orders_after_minimum_holding_period"] = after_min_holding
+    notes["final_orders_retained"] = len(intents)
+    notes["orders_retained"] = len(intents)
+    notes["order_final_order_intents"] = len(intents)
     proposal = _rebalance_proposal(tuple(intents), run_label)
     sides = tuple(str(intent.side.value if isinstance(intent.side, OrderIntentSide) else intent.side) for intent in intents)
     return proposal, {
+        **notes,
         "resized_order_count": resized_count,
         "skipped_below_lot_count": len(skipped),
         "rebalance_sell_count": sum(1 for side in sides if side == "sell"),
@@ -1243,6 +1525,119 @@ def _build_rebalance_proposal(
         "skipped_rebalance_orders": tuple(skipped),
         "target_weights": dict(target_weights),
     }
+
+
+def _order_construction_counts(
+    *,
+    account: PaperAccount,
+    prices: Mapping[str, float],
+    target_values: Mapping[str, float],
+    target_universe: tuple[str, ...],
+    lot: int,
+) -> Mapping[str, int]:
+    counts = {
+        "raw_target_weight_deltas": 0,
+        "orders_removed_as_zero_delta": 0,
+        "orders_removed_below_lot": 0,
+        "orders_removed_missing_price": 0,
+        "orders_merged_or_net_adjusted": 0,
+    }
+    for symbol in target_universe:
+        target_value = float(target_values.get(symbol, 0.0))
+        current_shares = int(account.positions.get(symbol, 0))
+        price = float(prices.get(symbol, 0.0))
+        if price <= 0:
+            if current_shares > 0 or target_value > 0:
+                counts["raw_target_weight_deltas"] += 1
+                counts["orders_removed_missing_price"] += 1
+            continue
+        current_value = current_shares * price
+        delta_value = target_value - current_value
+        if current_shares > 0 or target_value > 0:
+            counts["raw_target_weight_deltas"] += 1
+        if round(delta_value, 8) == 0.0:
+            if current_shares > 0 or target_value > 0:
+                counts["orders_removed_as_zero_delta"] += 1
+            continue
+        if abs(delta_value) < price * lot:
+            counts["orders_removed_below_lot"] += 1
+    return counts
+
+
+def _apply_turnover_aware_order_controls(
+    *,
+    intents: tuple[OrderIntent, ...],
+    account: PaperAccount,
+    prices: Mapping[str, float],
+    equity: float,
+    target_weights: Mapping[str, float],
+    config: RealDataWalkForwardScaleupConfig,
+    cost_assumptions: PaperFillCostAssumptions,
+    notes: dict[str, Any],
+) -> tuple[OrderIntent, ...]:
+    policy = config.turnover_aware_rebalance
+    retained: list[OrderIntent] = []
+    skipped: list[Mapping[str, Any]] = list(notes.get("turnover_control_skipped_orders", ()))
+    for intent in intents:
+        symbol = str(intent.symbol)
+        side = str(intent.side.value if isinstance(intent.side, OrderIntentSide) else intent.side)
+        quantity = int(intent.target_shares or 0)
+        price = float(prices.get(symbol, 0.0))
+        target_weight = float(target_weights.get(symbol, 0.0))
+        current_weight = _ratio(int(account.positions.get(symbol, 0)) * price, equity) or 0.0
+        order_value = abs(quantity * price)
+        is_liquidation = side == "sell" and target_weight <= 0.0
+        reason: str | None = None
+        if not is_liquidation and float(policy.target_weight_no_trade_band) > 0:
+            if abs(target_weight - current_weight) < float(policy.target_weight_no_trade_band):
+                reason = "target_weight_no_trade_band"
+                notes["orders_skipped_by_weight_no_trade_band"] += 1
+        if reason is None and not is_liquidation and float(policy.minimum_order_value) > 0:
+            if order_value < float(policy.minimum_order_value):
+                reason = "minimum_order_value"
+                notes["orders_skipped_by_minimum_order_value"] += 1
+        if reason is None:
+            retained.append(intent)
+            continue
+        avoided_cost = _estimated_order_cost(quantity, price, side, cost_assumptions)
+        notes["direct_filter_estimated_cost_avoided"] = round(float(notes.get("direct_filter_estimated_cost_avoided", 0.0)) + avoided_cost, 6)
+        notes["direct_filter_estimated_turnover_avoided"] = round(float(notes.get("direct_filter_estimated_turnover_avoided", 0.0)) + order_value, 6)
+        skipped.append({"symbol": symbol, "side": side, "quantity": quantity, "reason": reason, "estimated_cost_avoided": avoided_cost})
+    notes["turnover_control_skipped_orders"] = tuple(skipped)
+    return tuple(retained)
+
+
+def _estimated_order_cost(
+    quantity: int,
+    price: float,
+    side: str,
+    cost_assumptions: PaperFillCostAssumptions,
+) -> float:
+    if quantity <= 0 or price <= 0:
+        return 0.0
+    if side == "sell":
+        fill_price = price * (1 - cost_assumptions.slippage_bps / 10_000)
+        gross = quantity * fill_price
+        return round(max(gross * cost_assumptions.fee_rate, cost_assumptions.min_fee) + gross * cost_assumptions.stamp_tax_rate + abs(quantity * price - gross), 6)
+    fill_price = price * (1 + cost_assumptions.slippage_bps / 10_000)
+    gross = quantity * fill_price
+    return round(max(gross * cost_assumptions.fee_rate, cost_assumptions.min_fee) + abs(gross - quantity * price), 6)
+
+
+def _estimated_buy_cost(notional: float, cost_assumptions: PaperFillCostAssumptions) -> float:
+    if notional <= 0:
+        return 0.0
+    slippage = notional * cost_assumptions.slippage_bps / 10_000
+    gross = notional + slippage
+    return round(max(gross * cost_assumptions.fee_rate, cost_assumptions.min_fee) + slippage, 6)
+
+
+def _estimated_sell_cost(notional: float, cost_assumptions: PaperFillCostAssumptions) -> float:
+    if notional <= 0:
+        return 0.0
+    slippage = notional * cost_assumptions.slippage_bps / 10_000
+    gross = max(0.0, notional - slippage)
+    return round(max(gross * cost_assumptions.fee_rate, cost_assumptions.min_fee) + gross * cost_assumptions.stamp_tax_rate + slippage, 6)
 
 
 def _rebalance_intent(
@@ -1426,8 +1821,97 @@ def _scaleup_window_metrics(
         "rebalance_sell_count": int(build_notes.get("rebalance_sell_count", 0)),
         "rebalance_buy_count": int(build_notes.get("rebalance_buy_count", 0)),
         "skipped_rebalance_orders": build_notes.get("skipped_rebalance_orders", ()),
+        "turnover_aware_attribution": _turnover_attribution_from_notes(build_notes),
+        "raw_orders_before_controls": int(build_notes.get("raw_orders_before_controls", build_notes.get("orders_proposed_before_turnover_controls", len(proposal.intents)))),
+        "orders_after_rank_hysteresis": int(build_notes.get("orders_after_rank_hysteresis", len(proposal.intents))),
+        "orders_after_score_improvement": int(build_notes.get("orders_after_score_improvement", len(proposal.intents))),
+        "orders_after_weight_no_trade_band": int(build_notes.get("orders_after_weight_no_trade_band", len(proposal.intents))),
+        "orders_after_minimum_order_value": int(build_notes.get("orders_after_minimum_order_value", len(proposal.intents))),
+        "orders_after_minimum_holding_period": int(build_notes.get("orders_after_minimum_holding_period", len(proposal.intents))),
+        "final_orders_retained": int(build_notes.get("final_orders_retained", len(proposal.intents))),
+        "orders_proposed_before_turnover_controls": int(build_notes.get("orders_proposed_before_turnover_controls", len(proposal.intents))),
+        "orders_proposed_after_candidate_controls": int(build_notes.get("orders_proposed_after_candidate_controls", len(proposal.intents))),
+        "orders_retained": int(build_notes.get("orders_retained", len(proposal.intents))),
+        "orders_skipped_by_rank_hysteresis": int(build_notes.get("orders_skipped_by_rank_hysteresis", 0)),
+        "orders_skipped_by_score_improvement": int(build_notes.get("orders_skipped_by_score_improvement", 0)),
+        "orders_skipped_by_weight_no_trade_band": int(build_notes.get("orders_skipped_by_weight_no_trade_band", 0)),
+        "orders_skipped_by_minimum_order_value": int(build_notes.get("orders_skipped_by_minimum_order_value", 0)),
+        "orders_skipped_by_minimum_holding_period": int(build_notes.get("orders_skipped_by_minimum_holding_period", 0)),
+        "direct_filter_estimated_cost_avoided": round(float(build_notes.get("direct_filter_estimated_cost_avoided", 0.0)), 6),
+        "direct_filter_estimated_turnover_avoided": round(float(build_notes.get("direct_filter_estimated_turnover_avoided", 0.0)), 6),
+        "positions_retained_due_to_hysteresis": int(build_notes.get("positions_retained_due_to_hysteresis", 0)),
+        "replacements_prevented": int(build_notes.get("replacements_prevented", 0)),
+        "forced_required_exits_bypassed_turnover_controls": int(build_notes.get("forced_required_exits_bypassed_turnover_controls", 0)),
+        "score_improvement_evaluated_replacement_count": int(build_notes.get("score_improvement_evaluated_replacement_count", 0)),
+        "score_improvement_triggered_count": int(build_notes.get("score_improvement_triggered_count", 0)),
         "start_prices": dict(start_prices),
         "end_prices": dict(end_prices),
+    }
+
+
+def _turnover_attribution_from_notes(notes: Mapping[str, Any]) -> Mapping[str, Any]:
+    selection_attribution = {
+        "raw_ranked_candidates": int(notes.get("raw_ranked_candidates", 0)),
+        "existing_positions_considered": int(notes.get("existing_positions_considered", 0)),
+        "candidates_after_rank_hysteresis": int(notes.get("candidates_after_rank_hysteresis", 0)),
+        "replacements_evaluated": int(notes.get("replacements_evaluated", notes.get("score_improvement_evaluated_replacement_count", 0))),
+        "replacements_blocked_by_score_threshold": int(notes.get("replacements_blocked_by_score_threshold", notes.get("score_improvement_triggered_count", 0))),
+        "target_positions_retained": int(notes.get("target_positions_retained", 0)),
+        "positions_retained_due_to_hysteresis": int(notes.get("positions_retained_due_to_hysteresis", 0)),
+        "minimum_holding_period_retentions": int(notes.get("orders_skipped_by_minimum_holding_period", 0)),
+    }
+    order_construction_attribution = {
+        "raw_target_weight_deltas": int(notes.get("raw_target_weight_deltas", 0)),
+        "orders_after_weight_no_trade_band": int(notes.get("orders_after_weight_no_trade_band", 0)),
+        "orders_after_minimum_order_value": int(notes.get("orders_after_minimum_order_value", 0)),
+        "orders_removed_as_zero_delta": int(notes.get("orders_removed_as_zero_delta", 0)),
+        "orders_removed_below_lot": int(notes.get("orders_removed_below_lot", 0)),
+        "orders_removed_by_cash_resize": int(notes.get("orders_removed_by_cash_resize", 0)),
+        "orders_removed_missing_price": int(notes.get("orders_removed_missing_price", 0)),
+        "orders_merged_or_net_adjusted": int(notes.get("orders_merged_or_net_adjusted", 0)),
+        "orders_removed_by_weight_no_trade_band": int(notes.get("orders_skipped_by_weight_no_trade_band", 0)),
+        "orders_removed_by_minimum_order_value": int(notes.get("orders_skipped_by_minimum_order_value", 0)),
+        "final_order_intents": int(notes.get("order_final_order_intents", notes.get("final_orders_retained", 0))),
+    }
+    return {
+        "selection_attribution": selection_attribution,
+        "order_construction_attribution": order_construction_attribution,
+        "raw_orders_before_controls": int(notes.get("raw_orders_before_controls", 0)),
+        "raw_ranked_candidates": selection_attribution["raw_ranked_candidates"],
+        "existing_positions_considered": selection_attribution["existing_positions_considered"],
+        "candidates_after_rank_hysteresis": selection_attribution["candidates_after_rank_hysteresis"],
+        "replacements_evaluated": selection_attribution["replacements_evaluated"],
+        "replacements_blocked_by_score_threshold": selection_attribution["replacements_blocked_by_score_threshold"],
+        "target_positions_retained": selection_attribution["target_positions_retained"],
+        "raw_target_weight_deltas": order_construction_attribution["raw_target_weight_deltas"],
+        "orders_removed_as_zero_delta": order_construction_attribution["orders_removed_as_zero_delta"],
+        "orders_removed_below_lot": order_construction_attribution["orders_removed_below_lot"],
+        "orders_removed_by_cash_resize": order_construction_attribution["orders_removed_by_cash_resize"],
+        "orders_removed_missing_price": order_construction_attribution["orders_removed_missing_price"],
+        "orders_merged_or_net_adjusted": order_construction_attribution["orders_merged_or_net_adjusted"],
+        "order_final_order_intents": order_construction_attribution["final_order_intents"],
+        "orders_after_rank_hysteresis": int(notes.get("orders_after_rank_hysteresis", 0)),
+        "orders_after_score_improvement": int(notes.get("orders_after_score_improvement", 0)),
+        "orders_after_weight_no_trade_band": int(notes.get("orders_after_weight_no_trade_band", 0)),
+        "orders_after_minimum_order_value": int(notes.get("orders_after_minimum_order_value", 0)),
+        "orders_after_minimum_holding_period": int(notes.get("orders_after_minimum_holding_period", 0)),
+        "final_orders_retained": int(notes.get("final_orders_retained", notes.get("orders_retained", 0))),
+        "orders_proposed_before_turnover_controls": int(notes.get("orders_proposed_before_turnover_controls", 0)),
+        "orders_proposed_after_candidate_controls": int(notes.get("orders_proposed_after_candidate_controls", 0)),
+        "orders_retained": int(notes.get("orders_retained", 0)),
+        "orders_skipped_by_rank_hysteresis": int(notes.get("orders_skipped_by_rank_hysteresis", 0)),
+        "orders_skipped_by_score_improvement": int(notes.get("orders_skipped_by_score_improvement", 0)),
+        "orders_skipped_by_weight_no_trade_band": int(notes.get("orders_skipped_by_weight_no_trade_band", 0)),
+        "orders_skipped_by_minimum_order_value": int(notes.get("orders_skipped_by_minimum_order_value", 0)),
+        "orders_skipped_by_minimum_holding_period": int(notes.get("orders_skipped_by_minimum_holding_period", 0)),
+        "direct_filter_estimated_cost_avoided": round(float(notes.get("direct_filter_estimated_cost_avoided", 0.0)), 6),
+        "direct_filter_estimated_turnover_avoided": round(float(notes.get("direct_filter_estimated_turnover_avoided", 0.0)), 6),
+        "positions_retained_due_to_hysteresis": int(notes.get("positions_retained_due_to_hysteresis", 0)),
+        "replacements_prevented": int(notes.get("replacements_prevented", 0)),
+        "forced_required_exits_bypassed_turnover_controls": int(notes.get("forced_required_exits_bypassed_turnover_controls", 0)),
+        "score_improvement_evaluated_replacement_count": int(notes.get("score_improvement_evaluated_replacement_count", 0)),
+        "score_improvement_triggered_count": int(notes.get("score_improvement_triggered_count", 0)),
+        "skipped_orders": notes.get("turnover_control_skipped_orders", ()),
     }
 
 
@@ -1797,7 +2281,83 @@ def _scaleup_report_from_smoke(
         data_quality_warnings=smoke_report.data_quality_warnings,
         mature_framework_hooks=_mature_framework_hooks(config.metadata),
         notes=notes + tuple(note for note in smoke_report.notes if note not in {"real_data_smoke_completed"}),
+        turnover_aware_attribution=_aggregate_turnover_attribution(smoke_report.per_window_metrics),
     )
+
+
+def _aggregate_turnover_attribution(per_window: tuple[Mapping[str, Any], ...]) -> Mapping[str, Any]:
+    fields = (
+        "raw_ranked_candidates",
+        "existing_positions_considered",
+        "candidates_after_rank_hysteresis",
+        "replacements_evaluated",
+        "replacements_blocked_by_score_threshold",
+        "target_positions_retained",
+        "raw_target_weight_deltas",
+        "orders_removed_as_zero_delta",
+        "orders_removed_below_lot",
+        "orders_removed_by_cash_resize",
+        "orders_removed_missing_price",
+        "orders_merged_or_net_adjusted",
+        "order_final_order_intents",
+        "raw_orders_before_controls",
+        "orders_after_rank_hysteresis",
+        "orders_after_score_improvement",
+        "orders_after_weight_no_trade_band",
+        "orders_after_minimum_order_value",
+        "orders_after_minimum_holding_period",
+        "final_orders_retained",
+        "orders_proposed_before_turnover_controls",
+        "orders_proposed_after_candidate_controls",
+        "orders_retained",
+        "orders_skipped_by_rank_hysteresis",
+        "orders_skipped_by_score_improvement",
+        "orders_skipped_by_weight_no_trade_band",
+        "orders_skipped_by_minimum_order_value",
+        "orders_skipped_by_minimum_holding_period",
+        "positions_retained_due_to_hysteresis",
+        "replacements_prevented",
+        "forced_required_exits_bypassed_turnover_controls",
+        "score_improvement_evaluated_replacement_count",
+        "score_improvement_triggered_count",
+    )
+    float_fields = ("direct_filter_estimated_cost_avoided", "direct_filter_estimated_turnover_avoided")
+    result: dict[str, Any] = {field: 0 for field in fields}
+    for field in float_fields:
+        result[field] = 0.0
+    skipped: list[Mapping[str, Any]] = []
+    for metrics in per_window:
+        attribution = metrics.get("turnover_aware_attribution", metrics)
+        for field in fields:
+            result[field] += int(attribution.get(field, 0))
+        for field in float_fields:
+            result[field] = round(float(result[field]) + float(attribution.get(field, 0.0)), 6)
+        skipped.extend(tuple(attribution.get("skipped_orders", ())))
+    result["skipped_orders"] = tuple(skipped)
+    result["selection_attribution"] = {
+        "raw_ranked_candidates": result["raw_ranked_candidates"],
+        "existing_positions_considered": result["existing_positions_considered"],
+        "candidates_after_rank_hysteresis": result["candidates_after_rank_hysteresis"],
+        "replacements_evaluated": result["replacements_evaluated"],
+        "replacements_blocked_by_score_threshold": result["replacements_blocked_by_score_threshold"],
+        "target_positions_retained": result["target_positions_retained"],
+        "positions_retained_due_to_hysteresis": result["positions_retained_due_to_hysteresis"],
+        "minimum_holding_period_retentions": result["orders_skipped_by_minimum_holding_period"],
+    }
+    result["order_construction_attribution"] = {
+        "raw_target_weight_deltas": result["raw_target_weight_deltas"],
+        "orders_after_weight_no_trade_band": result["orders_after_weight_no_trade_band"],
+        "orders_after_minimum_order_value": result["orders_after_minimum_order_value"],
+        "orders_removed_as_zero_delta": result["orders_removed_as_zero_delta"],
+        "orders_removed_below_lot": result["orders_removed_below_lot"],
+        "orders_removed_by_cash_resize": result["orders_removed_by_cash_resize"],
+        "orders_removed_missing_price": result["orders_removed_missing_price"],
+        "orders_merged_or_net_adjusted": result["orders_merged_or_net_adjusted"],
+        "orders_removed_by_weight_no_trade_band": result["orders_skipped_by_weight_no_trade_band"],
+        "orders_removed_by_minimum_order_value": result["orders_skipped_by_minimum_order_value"],
+        "final_order_intents": result["order_final_order_intents"],
+    }
+    return result
 
 
 def _valid_symbols_from_report(report: RealDataWalkForwardSmokeReport) -> tuple[str, ...]:
@@ -2063,6 +2623,7 @@ def _scaleup_parameter_set_row(report: RealDataWalkForwardScaleupReport) -> Mapp
         "rejected_trades": report.rejected_trades,
         "valid_symbols": report.valid_symbols,
         "data_quality_warnings": report.data_quality_warnings,
+        "turnover_aware_attribution": report.turnover_aware_attribution,
         "notes": report.notes,
     }
 
@@ -2330,6 +2891,33 @@ def _validate_scaleup_config(config: RealDataWalkForwardScaleupConfig) -> None:
         raise ValueError("max_rejected_trade_ratio_warning must be in [0, 1]")
     if config.ranking_mode not in SUPPORTED_REAL_DATA_SCALEUP_RANKING_MODES:
         raise ValueError(f"unsupported ranking_mode: {config.ranking_mode}")
+    _validate_turnover_aware_config(config.turnover_aware_rebalance)
+
+
+def _validate_turnover_aware_config(config: TurnoverAwareRebalanceConfig) -> None:
+    if config.entry_rank_threshold is not None and int(config.entry_rank_threshold) <= 0:
+        raise ValueError("entry_rank_threshold must be positive when provided")
+    if config.exit_rank_threshold is not None and int(config.exit_rank_threshold) <= 0:
+        raise ValueError("exit_rank_threshold must be positive when provided")
+    if (
+        config.enabled
+        and config.entry_rank_threshold is not None
+        and config.exit_rank_threshold is not None
+        and int(config.exit_rank_threshold) < int(config.entry_rank_threshold)
+    ):
+        raise ValueError("exit_rank_threshold must not be tighter than entry_rank_threshold")
+    if config.minimum_score_improvement < 0:
+        raise ValueError("minimum_score_improvement must be non-negative")
+    if config.target_weight_no_trade_band < 0:
+        raise ValueError("target_weight_no_trade_band must be non-negative")
+    if config.minimum_order_value < 0:
+        raise ValueError("minimum_order_value must be non-negative")
+    if config.minimum_holding_days < 0:
+        raise ValueError("minimum_holding_days must be non-negative")
+    if config.normalized_turnover_penalty < 0:
+        raise ValueError("normalized_turnover_penalty must be non-negative")
+    if config.estimated_cost_multiplier <= 0:
+        raise ValueError("estimated_cost_multiplier must be positive")
 
 
 def _scale_cost_assumptions(

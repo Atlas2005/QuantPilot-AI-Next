@@ -15,6 +15,15 @@ from quantpilot_core.evaluation.ml_ranking_robustness_walkforward import (
     detect_target_horizon_trading_days,
     run_ml_ranking_robustness_walkforward_v1,
 )
+from quantpilot_core.evaluation.turnover_aware_rebalance_optimization import (
+    DEFAULT_TURNOVER_AWARE_REBALANCE_OPTIMIZATION_ARTIFACT_PATH,
+    TurnoverAwareRebalanceOptimizationConfig,
+    _attribution_reconciliation_status,
+    _pareto_candidates,
+    _report_integrity_status,
+    _sum_attribution,
+    _turnover_policy_grid,
+)
 from quantpilot_core.evaluation.ml_factor_training import (
     MLFactorTrainingConfig,
     build_ml_factor_dataset_v1,
@@ -341,3 +350,252 @@ def test_registry_exposes_manual_safe_robustness_tool() -> None:
     registry = build_default_tool_registry()
 
     assert "run_ml_ranking_robustness_walkforward_v1" in registry.list_names()
+
+
+def test_turnover_aware_optimization_grid_is_controlled_and_manual_safe() -> None:
+    grid = _turnover_policy_grid()
+
+    assert [candidate_id for candidate_id, _ in grid] == [
+        "baseline_disabled",
+        "rank_hysteresis_only",
+        "weight_no_trade_band_only",
+        "minimum_score_improvement_only",
+        "minimum_order_value_only",
+        "combined_conservative",
+        "combined_moderate",
+    ]
+    assert grid[0][1].enabled is False
+    assert all(policy.exit_rank_threshold is None or policy.entry_rank_threshold is None or policy.exit_rank_threshold >= policy.entry_rank_threshold for _, policy in grid)
+    assert TurnoverAwareRebalanceOptimizationConfig().start_date == "2019-01-01"
+    assert TurnoverAwareRebalanceOptimizationConfig().end_date == "2024-12-31"
+    assert DEFAULT_TURNOVER_AWARE_REBALANCE_OPTIMIZATION_ARTIFACT_PATH.as_posix() == "artifacts/turnover_aware_rebalance_optimization/latest_report.json"
+
+
+def test_registry_exposes_manual_safe_turnover_optimization_tool() -> None:
+    registry = build_default_tool_registry()
+
+    assert "run_turnover_aware_rebalance_optimization_v1" in registry.list_names()
+
+
+def test_turnover_aware_pareto_selection_excludes_dominated_reference_and_no_effect() -> None:
+    base = {
+        "candidate_id": "baseline_disabled",
+        "mean_total_return": 0.07,
+        "mean_strategy_excess_return": -0.01,
+        "aggregate_realized_turnover_reduction_vs_baseline": 0.0,
+        "aggregate_realized_cost_reduction_vs_baseline": 0.0,
+        "mean_max_drawdown": -0.13,
+        "worst_max_drawdown": -0.19,
+        "positive_return_fold_ratio": 0.6,
+        "positive_excess_fold_ratio": 0.6,
+        "ml_beats_rule_fold_ratio": 0.8,
+        "turnover_reduction_vs_baseline": 0.0,
+        "cost_reduction_vs_baseline": 0.0,
+        "no_effect": False,
+        "trade_count_collapse": False,
+        "over_suppressed_trading": False,
+        "return_degradation": False,
+        "excess_return_degradation": False,
+        "drawdown_degradation": False,
+    }
+    winner = {
+        **base,
+        "candidate_id": "rank_hysteresis_only",
+        "mean_total_return": 0.08,
+        "mean_strategy_excess_return": 0.01,
+        "aggregate_realized_turnover_reduction_vs_baseline": 10.0,
+        "aggregate_realized_cost_reduction_vs_baseline": 1.0,
+        "turnover_reduction_vs_baseline": 0.2,
+        "cost_reduction_vs_baseline": 0.2,
+    }
+    dominated = {
+        **winner,
+        "candidate_id": "minimum_order_value_only",
+        "mean_total_return": 0.075,
+        "mean_strategy_excess_return": 0.005,
+        "aggregate_realized_turnover_reduction_vs_baseline": 5.0,
+        "aggregate_realized_cost_reduction_vs_baseline": 0.5,
+        "turnover_reduction_vs_baseline": 0.1,
+        "cost_reduction_vs_baseline": 0.1,
+    }
+    no_effect = {
+        **base,
+        "candidate_id": "minimum_score_improvement_only",
+        "no_effect": True,
+    }
+
+    pareto = _pareto_candidates((base, winner, dominated, no_effect))
+
+    assert tuple(row["candidate_id"] for row in pareto) == ("rank_hysteresis_only",)
+
+
+def test_turnover_aware_reconciliation_uses_separate_count_domains() -> None:
+    row = {
+        "candidate_id": "rank_hysteresis_only",
+        "turnover_aware_attribution": {
+            "selection_attribution": {
+                "raw_ranked_candidates": 200,
+                "existing_positions_considered": 80,
+                "candidates_after_rank_hysteresis": 125,
+                "replacements_evaluated": 0,
+                "replacements_blocked_by_score_threshold": 0,
+                "target_positions_retained": 50,
+            },
+            "order_construction_attribution": {
+                "raw_target_weight_deltas": 766,
+                "orders_removed_as_zero_delta": 0,
+                "orders_removed_below_lot": 16,
+                "orders_removed_by_cash_resize": 0,
+                "orders_removed_missing_price": 0,
+                "orders_merged_or_net_adjusted": 0,
+                "orders_removed_by_weight_no_trade_band": 0,
+                "orders_removed_by_minimum_order_value": 0,
+                "final_order_intents": 750,
+            },
+        },
+        "execution_attribution": {
+            "attempted_orders": 750,
+            "filled_orders": 740,
+            "partially_filled_orders": 0,
+            "rejected_orders": 10,
+            "deferred_orders": 0,
+        },
+    }
+
+    status = _attribution_reconciliation_status((row,))
+
+    assert status["status"] == "passed"
+    assert status["checked_candidate_count"] == 1
+    assert status["failures"] == ()
+    assert status["domain_results"][0]["order_construction_attribution"] == "passed"
+
+
+def test_turnover_aware_candidate_level_structures_reuse_aggregate_values() -> None:
+    attribution = _sum_attribution(
+        (
+            {
+                "turnover_aware_attribution": {
+                    "raw_ranked_candidates": 40,
+                    "existing_positions_considered": 10,
+                    "candidates_after_rank_hysteresis": 12,
+                    "positions_retained_due_to_hysteresis": 2,
+                    "replacements_evaluated": 3,
+                    "replacements_blocked_by_score_threshold": 1,
+                    "target_positions_retained": 10,
+                    "raw_target_weight_deltas": 15,
+                    "orders_removed_as_zero_delta": 1,
+                    "orders_removed_below_lot": 2,
+                    "orders_removed_by_cash_resize": 1,
+                    "orders_removed_missing_price": 0,
+                    "orders_merged_or_net_adjusted": 0,
+                    "orders_skipped_by_weight_no_trade_band": 3,
+                    "orders_skipped_by_minimum_order_value": 2,
+                    "order_final_order_intents": 6,
+                }
+            },
+        )
+    )
+
+    assert attribution["selection_attribution"] == {
+        "raw_ranked_candidates": 40,
+        "existing_positions_considered": 10,
+        "candidates_after_rank_hysteresis": 12,
+        "positions_retained_due_to_hysteresis": 2,
+        "replacements_evaluated": 3,
+        "replacements_blocked_by_score_threshold": 1,
+        "target_positions_retained": 10,
+    }
+    assert attribution["order_construction_attribution"] == {
+        "raw_target_weight_deltas": 15,
+        "orders_removed_as_zero_delta": 1,
+        "orders_removed_below_lot": 2,
+        "orders_removed_by_cash_resize": 1,
+        "orders_removed_missing_price": 0,
+        "orders_merged_or_net_adjusted": 0,
+        "orders_removed_by_weight_no_trade_band": 3,
+        "orders_removed_by_minimum_order_value": 2,
+        "final_order_intents": 6,
+    }
+
+
+def test_turnover_aware_execution_reconciliation_handles_nonzero_partial_fills() -> None:
+    row = {
+        "candidate_id": "partial-fill-fixture",
+        "turnover_aware_attribution": {
+            "selection_attribution": {
+                "replacements_evaluated": 0,
+                "replacements_blocked_by_score_threshold": 0,
+            },
+            "order_construction_attribution": {
+                "raw_target_weight_deltas": 10,
+                "orders_removed_as_zero_delta": 0,
+                "orders_removed_below_lot": 0,
+                "orders_removed_by_cash_resize": 0,
+                "orders_removed_missing_price": 0,
+                "orders_merged_or_net_adjusted": 0,
+                "orders_removed_by_weight_no_trade_band": 0,
+                "orders_removed_by_minimum_order_value": 0,
+                "final_order_intents": 10,
+            },
+        },
+        "execution_attribution": {
+            "attempted_orders": 10,
+            "fully_filled_orders": 7,
+            "partially_filled_orders": 2,
+            "filled_orders": 9,
+            "filled_orders_semantics": "orders_with_any_fill_including_partial",
+            "rejected_orders": 1,
+            "deferred_orders": 0,
+        },
+    }
+
+    status = _attribution_reconciliation_status((row,))
+
+    assert status["status"] == "passed"
+    assert status["domain_results"][0]["execution_formula"] == (
+        "attempted_orders == fully_filled_orders + partially_filled_orders + rejected_orders + deferred_orders"
+    )
+    assert status["domain_results"][0]["filled_orders_semantics"] == (
+        "orders_with_any_fill_including_partial; not used together with partially_filled_orders in reconciliation"
+    )
+
+
+def test_turnover_aware_reconciliation_fails_without_named_downstream_removal_reason() -> None:
+    row = {
+        "candidate_id": "rank_hysteresis_only",
+        "turnover_aware_attribution": {
+            "selection_attribution": {
+                "replacements_evaluated": 0,
+                "replacements_blocked_by_score_threshold": 0,
+            },
+            "order_construction_attribution": {
+                "raw_target_weight_deltas": 766,
+                "orders_removed_as_zero_delta": 0,
+                "orders_removed_below_lot": 0,
+                "orders_removed_by_cash_resize": 0,
+                "orders_removed_missing_price": 0,
+                "orders_merged_or_net_adjusted": 0,
+                "orders_removed_by_weight_no_trade_band": 0,
+                "orders_removed_by_minimum_order_value": 0,
+                "final_order_intents": 750,
+            },
+        },
+        "execution_attribution": {
+            "attempted_orders": 750,
+            "filled_orders": 750,
+            "partially_filled_orders": 0,
+            "rejected_orders": 0,
+            "deferred_orders": 0,
+        },
+    }
+
+    status = _attribution_reconciliation_status((row,))
+
+    assert status["status"] == "failed"
+    assert _report_integrity_status(status) == "failed"
+    assert status["failures"][0]["domain"] == "order_construction_attribution"
+    assert status["failures"][0]["difference"] == 16
+
+
+def test_turnover_aware_passed_reconciliation_sets_report_integrity_passed() -> None:
+    assert _report_integrity_status({"status": "passed"}) == "passed"

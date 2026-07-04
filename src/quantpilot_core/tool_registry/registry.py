@@ -177,6 +177,16 @@ def run_ml_ranking_robustness_walkforward_v1(*args, **kwargs):
     return robustness_runner(*args, **kwargs)
 
 
+def run_turnover_aware_rebalance_optimization_v1(*args, **kwargs):
+    """Resolve the turnover-aware rebalance optimization sweep only when executed."""
+
+    from quantpilot_core.evaluation.turnover_aware_rebalance_optimization import (
+        run_turnover_aware_rebalance_optimization_v1 as optimization_runner,
+    )
+
+    return optimization_runner(*args, **kwargs)
+
+
 def run_walk_forward_paper_evaluation(*args, **kwargs):
     """Resolve the walk-forward runner only when the registry tool is executed."""
 
@@ -411,6 +421,11 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="run_ml_ranking_robustness_walkforward_v1",
                 description="Run chronological ML ranking robustness folds through the existing scale-up evaluator.",
                 callable=run_ml_ranking_robustness_walkforward_v1,
+            ),
+            QuantPilotTool(
+                name="run_turnover_aware_rebalance_optimization_v1",
+                description="Run the manual turnover-aware rebalance optimization sweep through the ML walk-forward evaluator.",
+                callable=run_turnover_aware_rebalance_optimization_v1,
             ),
             QuantPilotTool(
                 name="run_deepseek_advisory_fallback",
