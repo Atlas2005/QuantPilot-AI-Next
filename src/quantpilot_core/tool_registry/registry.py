@@ -167,6 +167,16 @@ def run_ml_ranking_scaleup_evaluation_v1(*args, **kwargs):
     return ml_scaleup_runner(*args, **kwargs)
 
 
+def run_ml_ranking_robustness_walkforward_v1(*args, **kwargs):
+    """Resolve the ML ranking robustness walk-forward run only when executed."""
+
+    from quantpilot_core.evaluation.ml_ranking_robustness_walkforward import (
+        run_ml_ranking_robustness_walkforward_v1 as robustness_runner,
+    )
+
+    return robustness_runner(*args, **kwargs)
+
+
 def run_walk_forward_paper_evaluation(*args, **kwargs):
     """Resolve the walk-forward runner only when the registry tool is executed."""
 
@@ -396,6 +406,11 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="run_ml_ranking_scaleup_evaluation_v1",
                 description="Run ML prediction-score rankings through the existing scale-up evaluator.",
                 callable=run_ml_ranking_scaleup_evaluation_v1,
+            ),
+            QuantPilotTool(
+                name="run_ml_ranking_robustness_walkforward_v1",
+                description="Run chronological ML ranking robustness folds through the existing scale-up evaluator.",
+                callable=run_ml_ranking_robustness_walkforward_v1,
             ),
             QuantPilotTool(
                 name="run_deepseek_advisory_fallback",

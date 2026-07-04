@@ -6,6 +6,7 @@ from quantpilot_core.real_data_provider.akshare_adapter import (
 from quantpilot_core.real_data_provider.baostock_adapter import (
     BaoStockDailyBarProvider,
     BaoStockDependencyStatus,
+    baostock_result_to_frame,
     detect_baostock_dependency,
     normalize_baostock_daily_bars,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "ProviderDependencyError",
     "ProviderError",
     "ProviderName",
+    "baostock_result_to_frame",
     "detect_baostock_dependency",
     "normalize_baostock_daily_bars",
     "parse_yyyymmdd",

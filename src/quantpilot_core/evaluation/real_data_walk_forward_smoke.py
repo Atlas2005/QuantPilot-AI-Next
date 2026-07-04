@@ -152,6 +152,7 @@ class RealDataWalkForwardScaleupConfig:
     rebalance_each_window: bool = True
     ranking_mode: str = "momentum_60d"
     min_order_lot: int = 100
+    cost_multiplier: float = 1.0
     max_rejected_trade_ratio_warning: float = 0.20
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -871,6 +872,7 @@ def build_real_data_walk_forward_scaleup_sweep_grid(
                             rebalance_each_window=payload.rebalance_each_window,
                             ranking_mode=ranking_mode,
                             min_order_lot=payload.min_order_lot,
+                            cost_multiplier=float(payload.metadata.get("cost_multiplier", 1.0)),
                             max_rejected_trade_ratio_warning=payload.max_rejected_trade_ratio_warning,
                             metadata={
                                 **dict(payload.metadata),
@@ -902,7 +904,10 @@ def _run_scaleup_rebalance_windows(
 ) -> tuple[tuple[Mapping[str, Any], ...], PaperAccount]:
     account = PaperAccount(cash=float(config.initial_cash))
     per_window: list[Mapping[str, Any]] = []
-    cost_assumptions = PaperFillCostAssumptions(lot_size=int(config.min_order_lot))
+    cost_assumptions = _scale_cost_assumptions(
+        PaperFillCostAssumptions(lot_size=int(config.min_order_lot)),
+        float(config.cost_multiplier),
+    )
     for window in windows:
         train_prices = _slice_price_frame(price_frame, window.train_start, window.train_end)
         start_prices = _first_prices_for_window(price_frame, window.test_start, window.test_end)
@@ -2094,10 +2099,27 @@ def _validate_scaleup_config(config: RealDataWalkForwardScaleupConfig) -> None:
         raise ValueError("reserve_cash_weight must be in [0, 1)")
     if config.min_order_lot <= 0:
         raise ValueError("min_order_lot must be positive")
+    if config.cost_multiplier <= 0:
+        raise ValueError("cost_multiplier must be positive")
     if config.max_rejected_trade_ratio_warning < 0 or config.max_rejected_trade_ratio_warning > 1:
         raise ValueError("max_rejected_trade_ratio_warning must be in [0, 1]")
     if config.ranking_mode not in SUPPORTED_REAL_DATA_SCALEUP_RANKING_MODES:
         raise ValueError(f"unsupported ranking_mode: {config.ranking_mode}")
+
+
+def _scale_cost_assumptions(
+    assumptions: PaperFillCostAssumptions,
+    multiplier: float,
+) -> PaperFillCostAssumptions:
+    if multiplier <= 0:
+        raise ValueError("cost_multiplier must be positive")
+    return PaperFillCostAssumptions(
+        fee_rate=round(float(assumptions.fee_rate) * multiplier, 12),
+        min_fee=round(float(assumptions.min_fee) * multiplier, 6),
+        stamp_tax_rate=round(float(assumptions.stamp_tax_rate) * multiplier, 12),
+        slippage_bps=round(float(assumptions.slippage_bps) * multiplier, 6),
+        lot_size=int(assumptions.lot_size),
+    )
 
 
 def _validate_config(config: RealDataWalkForwardSmokeConfig) -> tuple[str, ...]:
