@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import math
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -22,6 +23,7 @@ from quantpilot_core.evaluation.real_data_walk_forward_smoke import (
     _max_drawdown,
     _provider_name,
     _run_scaleup_rebalance_windows,
+    _run_scaleup_with_loaded_price_frame,
     _total_return,
     _validate_config,
     _validate_scaleup_config,
@@ -32,6 +34,9 @@ from quantpilot_core.real_data_provider import DailyBarProvider, ProviderError
 
 DEFAULT_ML_FACTOR_TRAINING_DATASET_ARTIFACT_PATH = Path("artifacts/ml_factor_training/latest_dataset.json")
 DEFAULT_ML_FACTOR_TRAINING_REPORT_ARTIFACT_PATH = Path("artifacts/ml_factor_training/latest_report.json")
+DEFAULT_ML_RANKING_SCALEUP_EVALUATION_REPORT_ARTIFACT_PATH = Path(
+    "artifacts/ml_ranking_scaleup_evaluation/latest_report.json"
+)
 ML_FACTOR_FEATURES = (
     "volatility_20d",
     "volatility_60d",
@@ -129,6 +134,81 @@ class MLFactorTrainingReport:
     ml_strategy_excess_return: float | None
     ml_max_drawdown: float | None
     rejected_trade_ratio: float | None
+    notes: tuple[str, ...]
+    no_profitability_claim: bool
+    dataset_artifact_path: str | None = None
+    artifact_path: str | None = None
+
+
+@dataclass(frozen=True)
+class MLFactorPredictionRecord:
+    """Structured LightGBM prediction score for one symbol at one date."""
+
+    date: str
+    symbol: str
+    prediction_score: float | None
+
+
+@dataclass(frozen=True)
+class MLRankingScaleupEvaluationConfig:
+    """Configuration for ML prediction-score ranking through the scale-up evaluator."""
+
+    symbols: tuple[str, ...] = DEFAULT_REAL_DATA_SCALEUP_SYMBOLS
+    start_date: str = "2023-01-01"
+    end_date: str = "2024-12-31"
+    provider: str | DailyBarProvider = "baostock"
+    initial_cash: float = 1_000_000.0
+    train_ratio: float = 0.60
+    validation_ratio: float = 0.20
+    test_ratio: float = 0.20
+    train_window_days: int = 60
+    test_window_days: int = 20
+    max_windows: int = 12
+    min_symbols_required: int = 20
+    allow_partial_universe: bool = True
+    target_label: str = "forward_20d_excess_return"
+    top_quantile: float = 0.20
+    target_position_count: int = 10
+    max_position_weight: float = 0.10
+    reserve_cash_weight: float = 0.02
+    min_order_lot: int = 100
+    same_window_rule_ranking_mode: str = "low_volatility_v1"
+    dataset_artifact_path: str | Path | None = None
+    report_artifact_path: str | Path | None = DEFAULT_ML_RANKING_SCALEUP_EVALUATION_REPORT_ARTIFACT_PATH
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class MLRankingScaleupEvaluationReport:
+    """Apples-to-apples ML ranking versus rule baseline through the scale-up evaluator."""
+
+    provider: str
+    date_range: tuple[str, str]
+    symbols_requested: tuple[str, ...]
+    valid_symbols: tuple[str, ...]
+    features: tuple[str, ...]
+    labels: tuple[str, ...]
+    model_backend: str
+    lightgbm_available: bool
+    model_trained: bool
+    fallback_reason: str | None
+    train_validation_test_split: Mapping[str, Any]
+    ml_total_return: float | None
+    ml_benchmark_total_return: float | None
+    ml_strategy_excess_return: float | None
+    ml_max_drawdown: float | None
+    ml_rejected_trade_ratio: float | None
+    ml_cost_total: float | None
+    ml_turnover: float | None
+    ml_trade_count: int | None
+    ml_evaluation_start: str | None
+    ml_evaluation_end: str | None
+    ml_evaluated_symbols: tuple[str, ...]
+    prediction_count: int
+    invalid_prediction_count: int
+    comparison_vs_same_window_rule_baseline: Mapping[str, Any]
+    historical_pr98_baseline_reference: Mapping[str, Any]
+    skipped_metric_reasons: Mapping[str, str]
     notes: tuple[str, ...]
     no_profitability_claim: bool
     dataset_artifact_path: str | None = None
@@ -264,6 +344,503 @@ def run_ml_factor_training_v1(
         dataset_artifact_path=dataset.artifact_path,
     )
     return _write_and_attach_report(report, payload.report_artifact_path)
+
+
+def run_ml_ranking_scaleup_evaluation_v1(
+    config: MLRankingScaleupEvaluationConfig | None = None,
+    *,
+    price_frame: pd.DataFrame | None = None,
+    model_backend_factory: Callable[[], Any] | None = None,
+    lightgbm_importer: Callable[[str], Any] | None = None,
+    **kwargs: Any,
+) -> MLRankingScaleupEvaluationReport:
+    """Evaluate LightGBM prediction_score rankings through the existing scale-up path."""
+
+    payload = config or MLRankingScaleupEvaluationConfig(**kwargs)
+    training_config = _training_config_from_ranking_config(payload)
+    _validate_ml_config(training_config)
+    provider_name = _provider_name(payload.provider)
+    symbols_requested = tuple(canonicalize_a_share_symbol(symbol) for symbol in payload.symbols)
+    data_warnings: tuple[str, ...] = ()
+    if price_frame is None:
+        smoke_config = RealDataWalkForwardSmokeConfig(
+            symbols=payload.symbols,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            initial_cash=payload.initial_cash,
+            train_window_days=payload.train_window_days,
+            test_window_days=payload.test_window_days,
+            max_windows=payload.max_windows,
+            provider=payload.provider,
+            advisory_mode="disabled",
+            allow_partial_universe=payload.allow_partial_universe,
+            min_symbols_required=payload.min_symbols_required,
+            artifact_path=None,
+            metadata=dict(payload.metadata),
+        )
+        data_warnings = _validate_config(smoke_config)
+        try:
+            loaded = _load_bars(smoke_config)
+            price_frame = _bars_to_price_frame(loaded.bars)
+            data_warnings = data_warnings + loaded.warnings + _data_quality_warnings(price_frame, smoke_config)
+        except Exception as exc:
+            if not isinstance(exc, (RuntimeError, ProviderError, ValueError)):
+                raise
+            dataset = build_ml_factor_dataset_v1(pd.DataFrame(), training_config)
+            report = _ml_ranking_unavailable_report(
+                payload,
+                dataset,
+                provider_name,
+                reason=f"price_data_unavailable:{exc}",
+                warnings=data_warnings,
+                status={"model_backend": "lightgbm_unavailable", "lightgbm_available": False, "model_trained": False, "fallback_reason": str(exc)},
+            )
+            return _write_and_attach_ml_ranking_report(report, payload.report_artifact_path)
+
+    normalized_frame = _normalize_price_frame(price_frame)
+    dataset = build_ml_factor_dataset_v1(normalized_frame, training_config)
+    status, predictions, feature_importance = _train_and_predict(
+        dataset,
+        training_config,
+        model_backend_factory=model_backend_factory,
+        lightgbm_importer=lightgbm_importer,
+    )
+    del feature_importance
+    prediction_records = build_ml_prediction_records(dataset, predictions)
+    valid_records = tuple(record for record in prediction_records if _is_finite_number(record.prediction_score))
+    invalid_prediction_count = len(prediction_records) - len(valid_records)
+    if not status.get("model_trained"):
+        report = _ml_ranking_unavailable_report(
+            payload,
+            dataset,
+            provider_name,
+            reason=f"model_training_skipped:{status.get('fallback_reason')}",
+            warnings=data_warnings,
+            status=status,
+            prediction_count=len(valid_records),
+            invalid_prediction_count=invalid_prediction_count,
+        )
+        return _write_and_attach_ml_ranking_report(report, payload.report_artifact_path)
+    if not valid_records:
+        report = _ml_ranking_unavailable_report(
+            payload,
+            dataset,
+            provider_name,
+            reason="no_finite_prediction_score_records",
+            warnings=data_warnings,
+            status=status,
+            prediction_count=0,
+            invalid_prediction_count=invalid_prediction_count,
+        )
+        return _write_and_attach_ml_ranking_report(report, payload.report_artifact_path)
+
+    window_bounds = _ml_prediction_evaluation_bounds(normalized_frame, valid_records, payload)
+    if window_bounds.get("skip_reason"):
+        report = _ml_ranking_unavailable_report(
+            payload,
+            dataset,
+            provider_name,
+            reason=str(window_bounds["skip_reason"]),
+            warnings=data_warnings,
+            status=status,
+            prediction_count=len(valid_records),
+            invalid_prediction_count=invalid_prediction_count,
+        )
+        return _write_and_attach_ml_ranking_report(report, payload.report_artifact_path)
+
+    eval_frame = _slice_evaluation_frame(
+        normalized_frame,
+        str(window_bounds["evaluation_frame_start"]),
+        str(window_bounds["evaluation_frame_end"]),
+    )
+    prediction_map = {
+        f"{record.date}|{record.symbol}": float(record.prediction_score)
+        for record in valid_records
+    }
+    base_scaleup_config = _scaleup_config_for_ml_evaluation(
+        payload,
+        provider_name=provider_name,
+        start_date=str(window_bounds["evaluation_frame_start"]),
+        end_date=str(window_bounds["evaluation_frame_end"]),
+    )
+    ml_config = replace(
+        base_scaleup_config,
+        ranking_mode="ml_prediction_score",
+        metadata={
+            **dict(base_scaleup_config.metadata),
+            "ml_prediction_map": prediction_map,
+            "ml_prediction_record_count": len(valid_records),
+        },
+    )
+    rule_config = replace(base_scaleup_config, ranking_mode=payload.same_window_rule_ranking_mode)
+    smoke_config = RealDataWalkForwardSmokeConfig(
+        symbols=payload.symbols,
+        start_date=str(window_bounds["evaluation_frame_start"]),
+        end_date=str(window_bounds["evaluation_frame_end"]),
+        initial_cash=payload.initial_cash,
+        train_window_days=payload.train_window_days,
+        test_window_days=payload.test_window_days,
+        max_windows=payload.max_windows,
+        provider=provider_name,
+        advisory_mode="disabled",
+        allow_partial_universe=payload.allow_partial_universe,
+        min_symbols_required=payload.min_symbols_required,
+        artifact_path=None,
+        benchmark_mode="equal_weight_close_to_close",
+    )
+    ml_scaleup = _run_scaleup_with_loaded_price_frame(
+        ml_config,
+        smoke_config=smoke_config,
+        provider_name=provider_name,
+        price_frame=eval_frame,
+        data_warnings=data_warnings,
+    )
+    rule_scaleup = _run_scaleup_with_loaded_price_frame(
+        rule_config,
+        smoke_config=smoke_config,
+        provider_name=provider_name,
+        price_frame=eval_frame,
+        data_warnings=data_warnings,
+    )
+    skipped_reasons = _ml_metric_skip_reasons(ml_scaleup)
+    comparison = _same_window_rule_comparison(rule_scaleup, ml_scaleup)
+    report = MLRankingScaleupEvaluationReport(
+        provider=dataset.provider,
+        date_range=(str(payload.start_date), str(payload.end_date)),
+        symbols_requested=symbols_requested,
+        valid_symbols=dataset.valid_symbols,
+        features=dataset.features,
+        labels=dataset.labels,
+        model_backend=str(status["model_backend"]),
+        lightgbm_available=bool(status["lightgbm_available"]),
+        model_trained=bool(status["model_trained"]),
+        fallback_reason=status["fallback_reason"],
+        train_validation_test_split=dataset.train_validation_test_split,
+        ml_total_return=ml_scaleup.total_return,
+        ml_benchmark_total_return=ml_scaleup.benchmark_total_return,
+        ml_strategy_excess_return=ml_scaleup.strategy_excess_return,
+        ml_max_drawdown=ml_scaleup.max_drawdown,
+        ml_rejected_trade_ratio=ml_scaleup.rejected_trade_ratio,
+        ml_cost_total=ml_scaleup.cost_total if ml_scaleup.windows_run else None,
+        ml_turnover=ml_scaleup.turnover if ml_scaleup.windows_run else None,
+        ml_trade_count=ml_scaleup.filled_trades if ml_scaleup.windows_run else None,
+        ml_evaluation_start=_first_window_test_start(ml_scaleup.per_window_metrics),
+        ml_evaluation_end=_last_window_test_end(ml_scaleup.per_window_metrics),
+        ml_evaluated_symbols=ml_scaleup.valid_symbols,
+        prediction_count=len(valid_records),
+        invalid_prediction_count=invalid_prediction_count,
+        comparison_vs_same_window_rule_baseline=comparison,
+        historical_pr98_baseline_reference=dict(ML_FACTOR_BASELINE_REFERENCE),
+        skipped_metric_reasons=skipped_reasons,
+        notes=_ml_ranking_notes(data_warnings, ml_scaleup.notes),
+        no_profitability_claim=True,
+        dataset_artifact_path=dataset.artifact_path,
+    )
+    return _write_and_attach_ml_ranking_report(report, payload.report_artifact_path)
+
+
+def build_ml_prediction_records(
+    dataset: MLFactorDataset,
+    predictions: Mapping[tuple[str, str], Any],
+) -> tuple[MLFactorPredictionRecord, ...]:
+    """Expose test predictions as date/symbol/prediction_score records."""
+
+    records: list[MLFactorPredictionRecord] = []
+    for row in dataset.rows:
+        key = (str(row["date"]), str(row["symbol"]))
+        if key not in predictions:
+            continue
+        score = _finite_or_none(predictions[key])
+        records.append(
+            MLFactorPredictionRecord(
+                date=key[0],
+                symbol=key[1],
+                prediction_score=score,
+            )
+        )
+    return tuple(sorted(records, key=lambda record: (record.date, record.symbol)))
+
+
+def _training_config_from_ranking_config(config: MLRankingScaleupEvaluationConfig) -> MLFactorTrainingConfig:
+    return MLFactorTrainingConfig(
+        symbols=config.symbols,
+        start_date=config.start_date,
+        end_date=config.end_date,
+        provider=config.provider,
+        initial_cash=config.initial_cash,
+        train_ratio=config.train_ratio,
+        validation_ratio=config.validation_ratio,
+        test_ratio=config.test_ratio,
+        train_window_days=config.train_window_days,
+        test_window_days=config.test_window_days,
+        max_windows=config.max_windows,
+        min_symbols_required=config.min_symbols_required,
+        allow_partial_universe=config.allow_partial_universe,
+        target_label=config.target_label,
+        top_quantile=config.top_quantile,
+        target_position_count=config.target_position_count,
+        max_position_weight=config.max_position_weight,
+        reserve_cash_weight=config.reserve_cash_weight,
+        min_order_lot=config.min_order_lot,
+        dataset_artifact_path=config.dataset_artifact_path,
+        report_artifact_path=None,
+        metadata=config.metadata,
+    )
+
+
+def _scaleup_config_for_ml_evaluation(
+    config: MLRankingScaleupEvaluationConfig,
+    *,
+    provider_name: str,
+    start_date: str,
+    end_date: str,
+) -> RealDataWalkForwardScaleupConfig:
+    scaleup_config = RealDataWalkForwardScaleupConfig(
+        symbols=config.symbols,
+        start_date=start_date,
+        end_date=end_date,
+        initial_cash=config.initial_cash,
+        train_window_days=config.train_window_days,
+        test_window_days=config.test_window_days,
+        max_windows=config.max_windows,
+        min_symbols_required=config.min_symbols_required,
+        allow_partial_universe=config.allow_partial_universe,
+        artifact_path=None,
+        benchmark_mode="equal_weight_close_to_close",
+        provider=provider_name,
+        advisory_mode="disabled",
+        max_position_weight=config.max_position_weight,
+        target_position_count=config.target_position_count,
+        reserve_cash_weight=config.reserve_cash_weight,
+        rebalance_each_window=True,
+        ranking_mode=config.same_window_rule_ranking_mode,
+        min_order_lot=config.min_order_lot,
+        metadata={
+            **dict(config.metadata),
+            "ml_ranking_scaleup_evaluation_v1": True,
+            "same_window_rule_ranking_mode": config.same_window_rule_ranking_mode,
+        },
+    )
+    _validate_scaleup_config(scaleup_config)
+    return scaleup_config
+
+
+def _ml_prediction_evaluation_bounds(
+    price_frame: pd.DataFrame,
+    records: tuple[MLFactorPredictionRecord, ...],
+    config: MLRankingScaleupEvaluationConfig,
+) -> Mapping[str, Any]:
+    dates = tuple(sorted(str(value) for value in pd.to_datetime(price_frame["date"]).dt.date.dropna().unique()))
+    if not dates:
+        return {"skip_reason": "no_price_dates_for_scaleup_evaluation"}
+    prediction_dates = tuple(sorted({record.date for record in records}))
+    if not prediction_dates:
+        return {"skip_reason": "no_prediction_dates_for_scaleup_evaluation"}
+    first_prediction_date = prediction_dates[0]
+    last_prediction_date = prediction_dates[-1]
+    if first_prediction_date not in dates:
+        return {"skip_reason": f"first_prediction_date_not_in_price_frame:{first_prediction_date}"}
+    first_prediction_index = dates.index(first_prediction_date)
+    start_index = first_prediction_index - int(config.train_window_days) + 1
+    if start_index < 0:
+        return {"skip_reason": "insufficient_prior_price_history_before_first_prediction_date"}
+    last_prediction_index = dates.index(last_prediction_date) if last_prediction_date in dates else first_prediction_index
+    end_index = min(len(dates) - 1, last_prediction_index + int(config.test_window_days))
+    if start_index + int(config.train_window_days) + int(config.test_window_days) > end_index + 1:
+        return {"skip_reason": "not_enough_test_prices_after_prediction_date"}
+    return {
+        "evaluation_frame_start": dates[start_index],
+        "evaluation_frame_end": dates[end_index],
+        "first_prediction_date": first_prediction_date,
+        "last_prediction_date": last_prediction_date,
+    }
+
+
+def _slice_evaluation_frame(price_frame: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
+    frame = _normalize_price_frame(price_frame)
+    dates = pd.to_datetime(frame["date"]).dt.tz_localize(None)
+    sliced = frame.loc[(dates >= pd.Timestamp(start)) & (dates <= pd.Timestamp(end))].copy()
+    sliced["date"] = pd.to_datetime(sliced["date"]).dt.date.astype(str)
+    return sliced
+
+
+def _same_window_rule_comparison(rule_report: Any, ml_report: Any) -> Mapping[str, Any]:
+    rule = {
+        "ranking_mode": rule_report.ranking_mode,
+        "total_return": rule_report.total_return,
+        "benchmark_total_return": rule_report.benchmark_total_return,
+        "strategy_excess_return": rule_report.strategy_excess_return,
+        "max_drawdown": rule_report.max_drawdown,
+        "rejected_trade_ratio": rule_report.rejected_trade_ratio,
+        "cost_total": rule_report.cost_total if rule_report.windows_run else None,
+        "turnover": rule_report.turnover if rule_report.windows_run else None,
+        "trade_count": rule_report.filled_trades if rule_report.windows_run else None,
+        "evaluation_start": _first_window_test_start(rule_report.per_window_metrics),
+        "evaluation_end": _last_window_test_end(rule_report.per_window_metrics),
+        "evaluated_symbols": rule_report.valid_symbols,
+    }
+    return {
+        "same_window_rule_baseline": rule,
+        "delta_ml_minus_rule": {
+            "total_return": _difference(ml_report.total_return, rule_report.total_return),
+            "strategy_excess_return": _difference(ml_report.strategy_excess_return, rule_report.strategy_excess_return),
+            "max_drawdown": _difference(ml_report.max_drawdown, rule_report.max_drawdown),
+            "cost_total": _difference(ml_report.cost_total, rule_report.cost_total),
+            "turnover": _difference(ml_report.turnover, rule_report.turnover),
+            "rejected_trade_ratio": _difference(ml_report.rejected_trade_ratio, rule_report.rejected_trade_ratio),
+        },
+        "identical_window": (
+            _first_window_test_start(rule_report.per_window_metrics) == _first_window_test_start(ml_report.per_window_metrics)
+            and _last_window_test_end(rule_report.per_window_metrics) == _last_window_test_end(ml_report.per_window_metrics)
+        ),
+        "identical_symbols": tuple(rule_report.valid_symbols) == tuple(ml_report.valid_symbols),
+        "identical_cost_position_rebalance_settings": True,
+    }
+
+
+def _ml_ranking_unavailable_report(
+    config: MLRankingScaleupEvaluationConfig,
+    dataset: MLFactorDataset,
+    provider_name: str,
+    *,
+    reason: str,
+    warnings: tuple[str, ...],
+    status: Mapping[str, Any],
+    prediction_count: int = 0,
+    invalid_prediction_count: int = 0,
+) -> MLRankingScaleupEvaluationReport:
+    skipped = {
+        "ml_total_return": reason,
+        "ml_benchmark_total_return": reason,
+        "ml_strategy_excess_return": reason,
+        "ml_max_drawdown": reason,
+        "ml_rejected_trade_ratio": reason,
+        "ml_cost_total": reason,
+        "ml_turnover": reason,
+        "ml_trade_count": reason,
+    }
+    return MLRankingScaleupEvaluationReport(
+        provider=provider_name,
+        date_range=(str(config.start_date), str(config.end_date)),
+        symbols_requested=tuple(canonicalize_a_share_symbol(symbol) for symbol in config.symbols),
+        valid_symbols=dataset.valid_symbols,
+        features=dataset.features,
+        labels=dataset.labels,
+        model_backend=str(status.get("model_backend", "lightgbm_unavailable")),
+        lightgbm_available=bool(status.get("lightgbm_available", False)),
+        model_trained=bool(status.get("model_trained", False)),
+        fallback_reason=status.get("fallback_reason") if status.get("fallback_reason") is not None else reason,
+        train_validation_test_split=dataset.train_validation_test_split,
+        ml_total_return=None,
+        ml_benchmark_total_return=None,
+        ml_strategy_excess_return=None,
+        ml_max_drawdown=None,
+        ml_rejected_trade_ratio=None,
+        ml_cost_total=None,
+        ml_turnover=None,
+        ml_trade_count=None,
+        ml_evaluation_start=None,
+        ml_evaluation_end=None,
+        ml_evaluated_symbols=(),
+        prediction_count=prediction_count,
+        invalid_prediction_count=invalid_prediction_count,
+        comparison_vs_same_window_rule_baseline={
+            "same_window_rule_baseline": None,
+            "delta_ml_minus_rule": None,
+            "identical_window": False,
+            "identical_symbols": False,
+            "identical_cost_position_rebalance_settings": True,
+            "skipped_reason": reason,
+        },
+        historical_pr98_baseline_reference=dict(ML_FACTOR_BASELINE_REFERENCE),
+        skipped_metric_reasons=skipped,
+        notes=_ml_ranking_notes(warnings, (f"ml_ranking_scaleup_evaluation_v1_skipped:{reason}",)),
+        no_profitability_claim=True,
+        dataset_artifact_path=dataset.artifact_path,
+    )
+
+
+def _ml_metric_skip_reasons(report: Any) -> Mapping[str, str]:
+    if report.windows_run:
+        return {}
+    reason = "existing_scaleup_evaluator_returned_no_windows"
+    for note in report.notes:
+        if "unavailable" in str(note):
+            reason = str(note)
+            break
+    return {
+        "ml_total_return": reason,
+        "ml_benchmark_total_return": reason,
+        "ml_strategy_excess_return": reason,
+        "ml_max_drawdown": reason,
+        "ml_rejected_trade_ratio": reason,
+        "ml_cost_total": reason,
+        "ml_turnover": reason,
+        "ml_trade_count": reason,
+    }
+
+
+def _ml_ranking_notes(warnings: tuple[str, ...], extra: tuple[Any, ...]) -> tuple[str, ...]:
+    notes = [
+        "ml_ranking_scaleup_evaluation_v1",
+        "manual_only_real_provider_run",
+        "reuses_real_data_walk_forward_scaleup_v1",
+        "reuses_lightgbm_ml_factor_training_v1",
+        "prediction_score_ranking",
+        "cash_cost_fill_rejection_accounting_from_existing_evaluator",
+        "same_window_rule_baseline",
+        "no_broker_live_execution",
+        "deepseek_live_disabled",
+        "no_external_network_in_tests",
+        "no_profitability_claim",
+    ]
+    notes.extend(str(note) for note in warnings)
+    notes.extend(str(note) for note in extra)
+    return tuple(dict.fromkeys(note for note in notes if note))
+
+
+def _write_and_attach_ml_ranking_report(
+    report: MLRankingScaleupEvaluationReport,
+    artifact_path: str | Path | None,
+) -> MLRankingScaleupEvaluationReport:
+    if artifact_path is None:
+        return report
+    path = Path(artifact_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _json_ready(asdict(replace(report, artifact_path=str(path))))
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return replace(report, artifact_path=str(path))
+
+
+def _first_window_test_start(per_window: tuple[Mapping[str, Any], ...]) -> str | None:
+    return str(per_window[0]["test_start"]) if per_window else None
+
+
+def _last_window_test_end(per_window: tuple[Mapping[str, Any], ...]) -> str | None:
+    return str(per_window[-1]["test_end"]) if per_window else None
+
+
+def _difference(left: Any, right: Any) -> float | None:
+    if left is None or right is None:
+        return None
+    return round(float(left) - float(right), 6)
+
+
+def _finite_or_none(value: Any) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric):
+        return None
+    return round(numeric, 12)
+
+
+def _is_finite_number(value: Any) -> bool:
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
 
 
 def _normalize_price_frame(price_frame: pd.DataFrame) -> pd.DataFrame:
@@ -446,7 +1023,7 @@ def _train_and_predict(
     x_predict = _feature_frame(test_rows, dataset.features)
     predicted = model.predict(x_predict)
     predictions = {
-        (str(row["date"]), str(row["symbol"])): round(float(score), 12)
+        (str(row["date"]), str(row["symbol"])): _finite_or_none(score)
         for row, score in zip(test_rows, predicted)
     }
     importance_values = getattr(model, "feature_importances_", None)

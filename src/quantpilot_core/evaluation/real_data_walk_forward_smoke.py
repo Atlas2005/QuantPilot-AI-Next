@@ -93,7 +93,7 @@ REAL_DATA_SCALEUP_RANKING_MODES = (
     "low_volatility",
     "equal_weight_baseline",
 )
-SUPPORTED_REAL_DATA_SCALEUP_RANKING_MODES = REAL_DATA_SCALEUP_RANKING_MODES + FACTOR_RANKING_BASELINE_MODES
+SUPPORTED_REAL_DATA_SCALEUP_RANKING_MODES = REAL_DATA_SCALEUP_RANKING_MODES + FACTOR_RANKING_BASELINE_MODES + ("ml_prediction_score",)
 FACTOR_RANKING_SWEEP_INTEGRATION_MODES = FACTOR_RANKING_BASELINE_MODES
 FACTOR_RANKING_SWEEP_BASELINE_REFERENCE = {
     "source": "PR #96 best real-data scale-up baseline",
@@ -972,6 +972,23 @@ def _select_scaleup_candidates(
 ) -> tuple[str, ...]:
     if train_prices.empty or config.ranking_mode == "equal_weight_baseline":
         return tuple(sorted(start_prices))[: int(config.target_position_count)]
+    if config.ranking_mode == "ml_prediction_score":
+        prediction_map = config.metadata.get("ml_prediction_map", {})
+        as_of_date = str(pd.Timestamp(train_prices["date"].max()).date())
+        scores: list[tuple[float, str]] = []
+        for symbol in sorted(start_prices):
+            score = prediction_map.get((as_of_date, symbol))
+            if score is None:
+                score = prediction_map.get(f"{as_of_date}|{symbol}")
+            try:
+                numeric_score = float(score)
+            except (TypeError, ValueError):
+                numeric_score = -1_000_000_000.0
+            if pd.isna(numeric_score) or numeric_score in (float("inf"), float("-inf")):
+                numeric_score = -1_000_000_000.0
+            scores.append((numeric_score, symbol))
+        ranked = sorted(scores, key=lambda item: (-item[0], item[1]))
+        return tuple(symbol for _, symbol in ranked[: int(config.target_position_count)])
     if config.ranking_mode in FACTOR_RANKING_BASELINE_MODES:
         report = run_factor_ranking_baseline_v1(
             train_prices.loc[train_prices["symbol"].isin(set(start_prices))],

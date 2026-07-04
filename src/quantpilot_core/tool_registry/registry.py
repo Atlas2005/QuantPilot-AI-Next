@@ -157,6 +157,16 @@ def run_ml_factor_training_v1(*args, **kwargs):
     return ml_runner(*args, **kwargs)
 
 
+def run_ml_ranking_scaleup_evaluation_v1(*args, **kwargs):
+    """Resolve the ML prediction-score scale-up evaluation only when executed."""
+
+    from quantpilot_core.evaluation.ml_factor_training import (
+        run_ml_ranking_scaleup_evaluation_v1 as ml_scaleup_runner,
+    )
+
+    return ml_scaleup_runner(*args, **kwargs)
+
+
 def run_walk_forward_paper_evaluation(*args, **kwargs):
     """Resolve the walk-forward runner only when the registry tool is executed."""
 
@@ -381,6 +391,11 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="run_ml_factor_training_v1",
                 description="Run the optional-LightGBM ML factor training pipeline from local OHLCV data.",
                 callable=run_ml_factor_training_v1,
+            ),
+            QuantPilotTool(
+                name="run_ml_ranking_scaleup_evaluation_v1",
+                description="Run ML prediction-score rankings through the existing scale-up evaluator.",
+                callable=run_ml_ranking_scaleup_evaluation_v1,
             ),
             QuantPilotTool(
                 name="run_deepseek_advisory_fallback",
