@@ -6,6 +6,8 @@ import importlib
 from enum import Enum
 from typing import Any, Callable, Mapping, Sequence
 
+import pandas as pd
+
 from quantpilot_core.real_data_provider.contracts import (
     Adjustment,
     DailyBarProvider,
@@ -146,14 +148,40 @@ def normalize_baostock_daily_bars(
     return [_normalize_row(row, symbol) for row in records]
 
 
+def baostock_result_to_frame(result_set: Any) -> pd.DataFrame:
+    """Collect a BaoStock result set without using its pandas-1.x get_data helper."""
+
+    fields = tuple(str(field) for field in getattr(result_set, "fields", ()))
+    _raise_for_result_error(result_set)
+    rows: list[Sequence[Any]] = []
+    while str(getattr(result_set, "error_code", "")) == "0" and result_set.next():
+        rows.append(tuple(result_set.get_row_data()))
+        _raise_for_result_error(result_set)
+    _raise_for_result_error(result_set)
+    return pd.DataFrame(rows, columns=list(fields))
+
+
 def _rows_from_result(value: Any) -> list[Mapping[str, Any]]:
-    if hasattr(value, "get_data"):
-        value = value.get_data()
+    if _is_baostock_result_set(value):
+        value = baostock_result_to_frame(value)
     if hasattr(value, "to_dict"):
         value = value.to_dict("records")
     if not isinstance(value, list):
         raise ProviderDataError("BaoStock output must be row records")
     return [_row_to_mapping(row) for row in value]
+
+
+def _is_baostock_result_set(value: Any) -> bool:
+    return all(hasattr(value, name) for name in ("fields", "next", "get_row_data", "error_code"))
+
+
+def _raise_for_result_error(result_set: Any) -> None:
+    error_code = str(getattr(result_set, "error_code", ""))
+    if error_code == "0":
+        return
+    error_msg = str(getattr(result_set, "error_msg", "")).strip()
+    detail = f"{error_code}: {error_msg}" if error_msg else error_code
+    raise ProviderDataError(f"BaoStock result error: {detail}")
 
 
 def _row_to_mapping(row: Any) -> Mapping[str, Any]:
@@ -178,7 +206,7 @@ def _normalize_row(row: Mapping[str, Any], fallback_symbol: str) -> NormalizedDa
             close=to_float(row["close"], "close"),
             high=to_float(row["high"], "high"),
             low=to_float(row["low"], "low"),
-            volume=to_float(row["volume"], "volume"),
+            volume=_volume_float(row, "volume"),
             amount=_optional_float(row, "amount"),
             provider=ProviderName.BAOSTOCK,
         )
@@ -193,4 +221,12 @@ def _optional_float(row: Mapping[str, Any], field_name: str) -> float | None:
         return None
     if isinstance(row[field_name], str) and not row[field_name].strip():
         return None
+    return to_float(row[field_name], field_name)
+
+
+def _volume_float(row: Mapping[str, Any], field_name: str) -> float:
+    if field_name not in row or row[field_name] is None:
+        return 0.0
+    if isinstance(row[field_name], str) and not row[field_name].strip():
+        return 0.0
     return to_float(row[field_name], field_name)

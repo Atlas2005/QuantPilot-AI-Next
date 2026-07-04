@@ -106,6 +106,7 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
         "run_fund_positioning_agent",
         "run_liquidity_regime_agent",
         "run_ml_factor_training_v1",
+        "run_ml_ranking_robustness_walkforward_v1",
         "run_ml_ranking_scaleup_evaluation_v1",
         "run_moneyflow_structure_agent",
         "run_news_impact_agent",

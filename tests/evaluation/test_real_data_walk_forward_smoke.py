@@ -73,13 +73,24 @@ class FakeBaoStockDataFrame:
 
 
 class FakeBaoStockQueryResult:
+    fields = ["date", "code", "open", "high", "low", "close", "volume", "amount"]
+
     def __init__(self, rows: list[dict[str, str]]) -> None:
         self.rows = rows
         self.error_code = "0"
         self.error_msg = "success"
+        self.index = -1
+
+    def next(self) -> bool:
+        self.index += 1
+        return self.index < len(self.rows)
+
+    def get_row_data(self) -> list[str]:
+        row = self.rows[self.index]
+        return [row.get(field, "") for field in self.fields]
 
     def get_data(self) -> FakeBaoStockDataFrame:
-        return FakeBaoStockDataFrame(self.rows)
+        raise AssertionError("BaoStock adapter must not call get_data")
 
 
 class FakeBaoStockClient:

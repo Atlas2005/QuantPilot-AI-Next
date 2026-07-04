@@ -1,6 +1,7 @@
 from datetime import date
 
 import pytest
+import pandas as pd
 
 from quantpilot_core.real_data_provider import (
     Adjustment,
@@ -9,6 +10,7 @@ from quantpilot_core.real_data_provider import (
     DailyBarRequest,
     ProviderDataError,
     ProviderName,
+    baostock_result_to_frame,
     detect_baostock_dependency,
     normalize_baostock_daily_bars,
 )
@@ -22,21 +24,32 @@ def available_importer(name):
     return object()
 
 
-class FakeDataFrame:
-    def __init__(self, rows):
-        self.rows = rows
-
-    def to_dict(self, orient):
-        assert orient == "records"
-        return self.rows
-
-
 class FakeQueryResult:
-    def __init__(self, rows):
+    fields = ["date", "code", "open", "high", "low", "close", "volume", "amount"]
+
+    def __init__(self, rows, *, error_code: str = "0", error_msg: str = "success", fail_after_rows: int | None = None):
         self.rows = rows
+        self.error_code = error_code
+        self.error_msg = error_msg
+        self.fail_after_rows = fail_after_rows
+        self.index = -1
+        self.get_data_called = False
+
+    def next(self):
+        if self.fail_after_rows is not None and self.index + 1 >= self.fail_after_rows:
+            self.error_code = "100010"
+            self.error_msg = "iteration failed"
+            return False
+        self.index += 1
+        return self.index < len(self.rows)
+
+    def get_row_data(self):
+        row = self.rows[self.index]
+        return [row.get(field, "") for field in self.fields]
 
     def get_data(self):
-        return FakeDataFrame(self.rows)
+        self.get_data_called = True
+        raise AssertionError("get_data must not be called")
 
 
 class FakeBaoStockClient:
@@ -100,6 +113,65 @@ def test_module_import_does_not_require_real_dependency() -> None:
     assert provider.provider_name is ProviderName.BAOSTOCK
 
 
+def test_baostock_result_to_frame_collects_rows_preserving_field_order() -> None:
+    result = FakeQueryResult(valid_rows())
+
+    frame = baostock_result_to_frame(result)
+
+    assert isinstance(frame, pd.DataFrame)
+    assert list(frame.columns) == FakeQueryResult.fields
+    assert frame.to_dict("records")[0] == {
+        "date": "2026-01-01",
+        "code": "sh.600000",
+        "open": "10.0",
+        "high": "10.5",
+        "low": "9.8",
+        "close": "10.2",
+        "volume": "1000",
+        "amount": "10200",
+    }
+    assert result.get_data_called is False
+
+
+def test_baostock_result_to_frame_returns_empty_frame_with_expected_columns() -> None:
+    result = FakeQueryResult([])
+
+    frame = baostock_result_to_frame(result)
+
+    assert frame.empty
+    assert list(frame.columns) == FakeQueryResult.fields
+    assert result.get_data_called is False
+
+
+def test_baostock_result_to_frame_rejects_initial_error_code() -> None:
+    result = FakeQueryResult([], error_code="100001", error_msg="bad request")
+
+    with pytest.raises(ProviderDataError, match="100001: bad request"):
+        baostock_result_to_frame(result)
+
+    assert result.get_data_called is False
+
+
+def test_baostock_result_to_frame_rejects_iteration_error() -> None:
+    result = FakeQueryResult(valid_rows(), fail_after_rows=1)
+
+    with pytest.raises(ProviderDataError, match="100010: iteration failed"):
+        baostock_result_to_frame(result)
+
+    assert result.get_data_called is False
+
+
+def test_provider_normalization_receives_expected_raw_frame_records() -> None:
+    result = FakeQueryResult(valid_rows())
+    frame = baostock_result_to_frame(result)
+
+    bars = normalize_baostock_daily_bars(frame, symbol="sh.600000")
+
+    assert len(bars) == 2
+    assert bars[0].symbol == "sh.600000"
+    assert bars[0].trade_date == date(2026, 1, 1)
+
+
 def test_normalize_valid_dict_rows_into_daily_bars() -> None:
     bars = normalize_baostock_daily_bars(valid_rows(), symbol="sh.600000")
 
@@ -142,6 +214,16 @@ def test_normalize_rejects_non_numeric_ohlcv() -> None:
 
     with pytest.raises(ProviderDataError, match="open"):
         normalize_baostock_daily_bars([row], symbol="sh.600000")
+
+
+def test_normalize_blank_baostock_volume_as_zero_without_forward_fill() -> None:
+    row = valid_rows()[0] | {"volume": "", "amount": ""}
+
+    bars = normalize_baostock_daily_bars([row], symbol="sh.600000")
+
+    assert bars[0].volume == 0.0
+    assert bars[0].amount is None
+    assert bars[0].close == 10.2
 
 
 def test_provider_name_is_baostock() -> None:
