@@ -29,6 +29,7 @@ from quantpilot_core.evaluation.real_data_walk_forward_smoke import (
     DEFAULT_REAL_DATA_SCALEUP_SYMBOLS,
     RealDataWalkForwardScaleupConfig,
     RealDataWalkForwardSmokeConfig,
+    TurnoverAwareRebalanceConfig,
     _bars_to_price_frame,
     _data_quality_warnings,
     _load_bars,
@@ -84,6 +85,7 @@ class MLRankingRobustnessWalkForwardConfig:
     min_order_lot: int = 100
     same_window_rule_ranking_mode: str = "low_volatility_v1"
     cost_multipliers: tuple[float, ...] = (1.0, 1.5, 2.0)
+    turnover_aware_rebalance: TurnoverAwareRebalanceConfig = field(default_factory=TurnoverAwareRebalanceConfig)
     artifact_path: str | Path | None = DEFAULT_ML_RANKING_ROBUSTNESS_WALKFORWARD_REPORT_ARTIFACT_PATH
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -450,6 +452,7 @@ def _evaluate_prediction_records(
         ranking_mode=config.same_window_rule_ranking_mode,
         min_order_lot=config.min_order_lot,
         cost_multiplier=cost_multiplier,
+        turnover_aware_rebalance=config.turnover_aware_rebalance,
         metadata={
             **dict(config.metadata),
             "ml_ranking_robustness_walkforward_v1": True,
@@ -526,6 +529,8 @@ def _scenario_row(fold_index: int, fold: Mapping[str, str], multiplier: float, m
         "rule_deferred_order_count": rule_execution["deferred_order_count"],
         "rule_execution_rejection_reasons": rule_execution["rejection_reasons"],
         "rule_rejected_trade_ratio": rule_report.rejected_trade_ratio,
+        "turnover_aware_attribution": getattr(ml_report, "turnover_aware_attribution", {}),
+        "rule_turnover_aware_attribution": getattr(rule_report, "turnover_aware_attribution", {}),
         "ml_beats_rule": _gt(ml_report.strategy_excess_return, rule_report.strategy_excess_return),
     }
 
@@ -554,7 +559,7 @@ def _fold_row_from_scenario(
         "model_trained": bool(status.get("model_trained")),
         "prediction_count": prediction_count,
         "invalid_prediction_count": invalid_prediction_count,
-        "ml_result": {key: scenario.get(key) for key in ("total_return", "benchmark_total_return", "strategy_excess_return", "max_drawdown", "cost_total", "turnover", "trade_count", "attempted_order_count", "fill_ratio", "partial_fill_count", "rejected_order_count", "deferred_order_count", "execution_rejection_reasons", "rejected_trade_ratio")},
+        "ml_result": {key: scenario.get(key) for key in ("total_return", "benchmark_total_return", "strategy_excess_return", "max_drawdown", "cost_total", "turnover", "trade_count", "attempted_order_count", "fill_ratio", "partial_fill_count", "rejected_order_count", "deferred_order_count", "execution_rejection_reasons", "rejected_trade_ratio", "turnover_aware_attribution")},
         "ml_execution_windows": _execution_windows_from_scaleup(ml_report),
         "same_window_rule_baseline": {
             "ranking_mode": rule_report.ranking_mode,
@@ -571,6 +576,7 @@ def _fold_row_from_scenario(
             "deferred_order_count": scenario.get("rule_deferred_order_count"),
             "execution_rejection_reasons": scenario.get("rule_execution_rejection_reasons"),
             "rejected_trade_ratio": scenario.get("rule_rejected_trade_ratio"),
+            "turnover_aware_attribution": scenario.get("rule_turnover_aware_attribution"),
         },
         "rule_execution_windows": _execution_windows_from_scaleup(rule_report),
         "identical_ml_rule_evaluation_window": (

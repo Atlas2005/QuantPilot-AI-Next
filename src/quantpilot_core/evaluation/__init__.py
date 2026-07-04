@@ -40,6 +40,12 @@ from quantpilot_core.evaluation.ml_ranking_robustness_walkforward import (
     detect_target_horizon_trading_days,
     run_ml_ranking_robustness_walkforward_v1,
 )
+from quantpilot_core.evaluation.turnover_aware_rebalance_optimization import (
+    DEFAULT_TURNOVER_AWARE_REBALANCE_OPTIMIZATION_ARTIFACT_PATH,
+    TurnoverAwareRebalanceOptimizationConfig,
+    TurnoverAwareRebalanceOptimizationReport,
+    run_turnover_aware_rebalance_optimization_v1,
+)
 from quantpilot_core.evaluation.a_share_market_reality_execution import (
     DEFAULT_A_SHARE_MARKET_REALITY_EXECUTION_REPORT_ARTIFACT_PATH,
     AShareMarketRealityExecutionConfig,
@@ -66,6 +72,7 @@ from quantpilot_core.evaluation.real_data_walk_forward_smoke import (
     RealDataWalkForwardScaleupSweepReport,
     RealDataWalkForwardSmokeConfig,
     RealDataWalkForwardSmokeReport,
+    TurnoverAwareRebalanceConfig,
     build_real_data_walk_forward_scaleup_sweep_grid,
     run_factor_ranking_sweep_integration_v1,
     run_real_data_walk_forward_scaleup_sweep,
@@ -83,6 +90,7 @@ __all__ = [
     "DEFAULT_ML_RANKING_SCALEUP_EVALUATION_REPORT_ARTIFACT_PATH",
     "DEFAULT_ML_RANKING_ROBUSTNESS_WALKFORWARD_REPORT_ARTIFACT_PATH",
     "DEFAULT_REAL_DATA_SCALEUP_SYMBOLS",
+    "DEFAULT_TURNOVER_AWARE_REBALANCE_OPTIMIZATION_ARTIFACT_PATH",
     "FACTOR_RANKING_BASELINE_MODES",
     "FACTOR_RANKING_SWEEP_BASELINE_REFERENCE",
     "FACTOR_RANKING_SWEEP_INTEGRATION_MODES",
@@ -115,6 +123,9 @@ __all__ = [
     "RealDataWalkForwardScaleupSweepReport",
     "RealDataWalkForwardSmokeConfig",
     "RealDataWalkForwardSmokeReport",
+    "TurnoverAwareRebalanceConfig",
+    "TurnoverAwareRebalanceOptimizationConfig",
+    "TurnoverAwareRebalanceOptimizationReport",
     "build_real_data_walk_forward_scaleup_sweep_grid",
     "build_ml_prediction_records",
     "build_ml_factor_dataset_v1",
@@ -122,6 +133,7 @@ __all__ = [
     "build_ml_ranking_walkforward_folds",
     "detect_target_horizon_trading_days",
     "run_ml_ranking_robustness_walkforward_v1",
+    "run_turnover_aware_rebalance_optimization_v1",
     "run_a_share_market_reality_execution_v1",
     "run_a_share_tradability_metadata_enrichment_v1",
     "run_ml_ranking_scaleup_evaluation_v1",

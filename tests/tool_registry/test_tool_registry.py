@@ -4,6 +4,7 @@ from dataclasses import fields
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from quantpilot_core.data_provider_normalization import ProviderCrossCheckReport
 from quantpilot_core.tool_registry import (
@@ -117,6 +118,7 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
         "run_real_data_walk_forward_scaleup_v1",
         "run_real_data_walk_forward_smoke",
         "run_shareholder_dividend_agent",
+        "run_turnover_aware_rebalance_optimization_v1",
         "run_valuation_agent",
         "run_vectorbt_signal_backtest",
         "run_walk_forward_paper_evaluation",
@@ -131,6 +133,34 @@ def test_registry_contracts_are_explicit_and_deterministic() -> None:
         "error",
         "error_type",
     ]
+    assert registry.list_names().count("run_turnover_aware_rebalance_optimization_v1") == 1
+
+
+def test_turnover_aware_optimization_registry_callable_resolves_to_runner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = build_default_tool_registry()
+    calls = []
+
+    def fake_runner(**kwargs):
+        calls.append(kwargs)
+        return {"runner": "turnover_aware_rebalance_optimization_v1", "kwargs": kwargs}
+
+    monkeypatch.setattr(
+        "quantpilot_core.evaluation.turnover_aware_rebalance_optimization.run_turnover_aware_rebalance_optimization_v1",
+        fake_runner,
+    )
+
+    tool = registry.get("run_turnover_aware_rebalance_optimization_v1")
+    result = registry.execute("run_turnover_aware_rebalance_optimization_v1", dry_run=True)
+
+    assert tool.callable.__name__ == "run_turnover_aware_rebalance_optimization_v1"
+    assert result.ok is True
+    assert result.output == {
+        "runner": "turnover_aware_rebalance_optimization_v1",
+        "kwargs": {"dry_run": True},
+    }
+    assert calls == [{"dry_run": True}]
 
 
 def test_default_registry_prefers_mature_replacement_path_over_legacy_blockers() -> None:
