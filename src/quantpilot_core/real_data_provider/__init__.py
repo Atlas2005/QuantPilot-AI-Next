@@ -21,6 +21,7 @@ from quantpilot_core.real_data_provider.contracts import (
     ProviderName,
     parse_yyyymmdd,
     require_columns,
+    is_suspended_trade_status,
     to_float,
     to_yyyymmdd,
 )
@@ -98,6 +99,7 @@ __all__ = [
     "parse_yyyymmdd",
     "provenance_warnings",
     "require_columns",
+    "is_suspended_trade_status",
     "to_float",
     "to_yyyymmdd",
 ]

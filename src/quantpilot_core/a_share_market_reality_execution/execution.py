@@ -906,6 +906,12 @@ def _available_volume(row: Mapping[str, Any]) -> int | None:
 
 
 def _estimated_buy_cash(quantity: int, price: float, cost_assumptions: PaperFillCostAssumptions) -> float:
+    return estimate_buy_cash_required(quantity, price, cost_assumptions)
+
+
+def estimate_buy_cash_required(quantity: int, price: float, cost_assumptions: PaperFillCostAssumptions) -> float:
+    """Return the canonical buy-side cash reserve used by A-share execution."""
+
     fill_price = price * (1 + cost_assumptions.slippage_bps / 10_000)
     gross = quantity * fill_price
     fee = max(gross * cost_assumptions.fee_rate, cost_assumptions.min_fee)

@@ -164,3 +164,9 @@ class QuantFirmDecisionReport:
     limitations: tuple[str, ...]
     next_actions: tuple[str, ...]
     deepseek_advisory: tuple[Any, ...] = field(default_factory=tuple)
+
+
+def is_quant_firm_approved(report: QuantFirmDecisionReport) -> bool:
+    """Return whether the committee approved the offline shadow cycle."""
+
+    return report.final_recommendation == "approve_offline_shadow_cycle"
