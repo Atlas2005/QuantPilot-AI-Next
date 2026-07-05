@@ -141,6 +141,24 @@ def build_announcement_advisory_payload(event: Mapping[str, Any]) -> Mapping[str
     return _advisory_payload(row, content_source=_content_source(row))
 
 
+def assess_announcement_event_with_keyword_fallback(
+    event: Mapping[str, Any],
+) -> AnnouncementImpactAssessment:
+    """Assess one announcement with the canonical deterministic keyword fallback only."""
+
+    row = dict(event)
+    content_source = _content_source(row)
+    return _assessment_from_event(
+        row,
+        content_source=content_source,
+        model_status="deterministic_keyword_baseline",
+        schema_validation_status="not_applicable",
+        cache_status="not_supported",
+        fallback_unavailable_reason=None,
+        advisory_output=None,
+    )
+
+
 def announcement_assessment_to_information_signal(
     assessment: AnnouncementImpactAssessment,
 ) -> InformationAgentSignal:
