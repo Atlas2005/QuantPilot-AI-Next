@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import json
 
 import pandas as pd
 
@@ -36,6 +37,17 @@ def advisory_output(
     regime_notes = ["market_regime_not_supplied"]
     tool_notes = ["keep_information_layer_inputs_offline_or_explicitly_supplied"]
     if structured_impact:
+        raw_model_response = json.dumps(
+            {
+                "direction": direction,
+                "horizon": horizon,
+                "severity": severity,
+                "confidence": confidence,
+                "evidence": ["fixture evidence"],
+                "rationale": "Fixture structured rationale.",
+                "limitations": ["fixture limitation"],
+            }
+        )
         research_directions.extend(
             [
                 f"announcement_direction:{direction}",
@@ -43,6 +55,8 @@ def advisory_output(
             ]
         )
         tool_notes.append(f"announcement_severity:{severity}")
+    else:
+        raw_model_response = "fixture prompt"
     if is_fallback:
         tool_notes.append("advisory_only_no_network_call")
     return DeepSeekAdvisoryOutput(
@@ -59,7 +73,7 @@ def advisory_output(
         confidence=confidence,
         used_model="deterministic_fallback" if is_fallback else "deepseek-v4-fixture",
         is_fallback=is_fallback,
-        raw_model_response="fixture prompt",
+        raw_model_response=raw_model_response,
     )
 
 
@@ -131,7 +145,7 @@ def test_model_derived_assessment_enters_existing_advisory_and_committee_path() 
     assert assessment.full_text_available is True
     assert assessment.model_status == "model_advisory"
     assert assessment.schema_validation_status == "passed"
-    assert assessment.impact_assessment_source == "advisory_output"
+    assert assessment.impact_assessment_source == "model_structured_output"
     assert assessment.event_impact_direction == "positive"
     assert assessment.event_impact_horizon == "short_term"
     assert assessment.impact_severity == 0.65
@@ -166,7 +180,7 @@ def test_provider_summary_remains_explicitly_labeled_and_confidence_capped() -> 
     signal = conclusion.information_signals[0]
     assert assessment.content_source == "provider_summary"
     assert assessment.confidence == 0.55
-    assert assessment.impact_assessment_source == "advisory_output"
+    assert assessment.impact_assessment_source == "model_structured_output"
     assert any("provider_summary:" in item for item in assessment.concise_evidence)
     assert any("Provider summary evidence" in item for item in signal.limitations)
 
@@ -191,7 +205,7 @@ def test_title_fallback_is_degraded_and_not_presented_as_full_text() -> None:
     assert assessment.content_source == "title_fallback"
     assert assessment.full_text_available is False
     assert assessment.confidence == 0.30
-    assert assessment.impact_assessment_source == "advisory_output"
+    assert assessment.impact_assessment_source == "model_structured_output"
     assert any("title_only:" in item for item in assessment.concise_evidence)
     assert any("Title-only evidence caps confidence" in item for item in signal.limitations)
 

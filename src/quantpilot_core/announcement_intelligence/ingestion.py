@@ -21,7 +21,7 @@ DEFAULT_CONTENT_CACHE_DIR = Path(".cache/quantpilot_announcement_content")
 DEFAULT_MAX_INPUT_CHARS = 6000
 MAX_DETAIL_RESPONSE_BYTES = 2_000_000
 CONTENT_CACHE_SCHEMA_VERSION = "announcement_content_cache_v2"
-CONTENT_CLASSIFIER_VERSION = "announcement_body_quality_v1"
+CONTENT_CLASSIFIER_VERSION = "announcement_body_quality_v3"
 BODY_SOURCE_VALUES = {"full_text", "provider_summary", "title_fallback", "unavailable"}
 AKSHARE_ANNOUNCEMENT_COLUMN_ALIASES: Mapping[str, tuple[str, ...]] = {
     "代码": ("代码", "股票代码", "stock_code", "security_code", "code", "symbol"),
@@ -81,6 +81,22 @@ BOILERPLATE_TERMS = (
     "搜索",
     "登录",
     "注册",
+)
+TITLE_BODY_WRAPPER_LABEL_PATTERN = re.compile(
+    r"(?i)(?:^|[\s;；。,.，])(?:title|content|标题|内容)\s*[:：]\s*"
+)
+TRIVIAL_METADATA_PREFIXES = (
+    "公告日期",
+    "公告时间",
+    "发布时间",
+    "发布日期",
+    "股票代码",
+    "证券代码",
+    "证券简称",
+    "公告编号",
+    "公告类型",
+    "来源",
+    "公司名称",
 )
 
 
@@ -691,10 +707,39 @@ def _apply_content_detail(
     if not raw_detail.strip():
         raw_detail = fallback
         declared_source = "title_fallback"
-    classification = _classify_announcement_body(title, raw_detail, declared_source=declared_source)
-    source = str(classification["content_source"])
-    retained_text = str(classification["retained_text"] or fallback or title)
+    raw_classification = _classify_announcement_body(title, raw_detail, declared_source=declared_source)
+    raw_source = str(raw_classification["content_source"])
+    retained_text = str(raw_classification["retained_text"] or fallback or title)
     content = _bounded_announcement_content(title, retained_text, max_input_chars=max_input_chars)
+    classification = _classify_announcement_body(title, content, declared_source=raw_source)
+    source = str(classification["content_source"])
+    if source == "title_fallback":
+        content = _bounded_announcement_content(title, title, max_input_chars=max_input_chars)
+        classification = _classify_announcement_body(title, content, declared_source="title_fallback")
+        evidence = dict(classification["content_quality_evidence"])
+        if raw_classification["content_quality_reason"] == "title_only_duplicate_body":
+            classification = {
+                **dict(classification),
+                "content_quality_reason": "title_only_duplicate_body",
+                "content_quality_evidence": evidence,
+            }
+        elif raw_source == "title_fallback" and raw_classification["content_quality_reason"] != "title_only_fallback":
+            evidence["raw_page_quality_reason"] = raw_classification["content_quality_reason"]
+            evidence["raw_page_retained_char_count"] = raw_classification["content_quality_evidence"].get("retained_char_count")
+            classification = {
+                **dict(classification),
+                "content_quality_reason": raw_classification["content_quality_reason"],
+                "content_quality_evidence": evidence,
+            }
+        elif raw_source == "full_text":
+            evidence["raw_page_quality_reason"] = raw_classification["content_quality_reason"]
+            evidence["raw_page_retained_char_count"] = raw_classification["content_quality_evidence"].get("retained_char_count")
+            classification = {
+                **dict(classification),
+                "content_quality_reason": "persisted_content_lacks_validated_body",
+                "content_quality_evidence": evidence,
+            }
+    source = str(classification["content_source"])
     frame.at[index, "content"] = content
     frame.at[index, "content_source"] = source
     frame.at[index, "content_quality_status"] = classification["content_quality_status"]
@@ -740,6 +785,7 @@ def _classify_announcement_body(title: str, raw_text: str, *, declared_source: s
         "body_sentence_count": _body_sentence_count(retained_without_title),
         "body_paragraph_count": _body_paragraph_count(retained_lines),
         "title_duplicate": bool(title_text and retained == title_text),
+        "title_only_duplicate_body": _is_title_only_duplicate_body(title_text, raw_text),
         "declared_source": source,
         "classifier_version": CONTENT_CLASSIFIER_VERSION,
     }
@@ -751,6 +797,8 @@ def _classify_announcement_body(title: str, raw_text: str, *, declared_source: s
         return _quality_result("title_fallback", "title_only_fallback", "title_fallback", title_text, evidence)
     if source == "unavailable" or not normalized_raw:
         return _quality_result("unavailable", "body_unavailable", "unavailable", "", evidence)
+    if evidence["title_only_duplicate_body"]:
+        return _quality_result("title_fallback", "title_only_duplicate_body", "title_fallback", title_text, evidence)
     if evidence["boilerplate_dominance"] >= 0.55 or boilerplate_hits >= 8:
         if _looks_body_like(retained_without_title, evidence):
             return _quality_result("usable_full_text", "body_survived_boilerplate_removal", "full_text", retained, evidence)
@@ -760,6 +808,50 @@ def _classify_announcement_body(title: str, raw_text: str, *, declared_source: s
     if _looks_body_like(retained_without_title, evidence):
         return _quality_result("usable_full_text", "body_like_text_detected", "full_text", retained, evidence)
     return _quality_result("title_fallback", "insufficient_body_structure", "title_fallback", title_text, evidence)
+
+
+def _is_title_only_duplicate_body(title: str, raw_text: str) -> bool:
+    title_key = _semantic_text_key(title)
+    if not title_key:
+        return False
+    saw_title = False
+    meaningful_fragments: list[str] = []
+    for fragment in _semantic_body_fragments(raw_text):
+        key = _semantic_text_key(fragment)
+        if not key:
+            continue
+        if key == title_key:
+            saw_title = True
+            continue
+        if _is_trivial_metadata_fragment(fragment):
+            continue
+        meaningful_fragments.append(fragment)
+    return saw_title and not meaningful_fragments
+
+
+def _semantic_body_fragments(text: str) -> tuple[str, ...]:
+    stripped = TITLE_BODY_WRAPPER_LABEL_PATTERN.sub("\n", str(text).replace("\u3000", " "))
+    parts = re.split(r"[\n\r]+", stripped)
+    fragments: list[str] = []
+    for part in parts:
+        normalized = _normalize_whitespace(part)
+        if normalized:
+            fragments.append(normalized)
+    return tuple(fragments)
+
+
+def _semantic_text_key(text: str) -> str:
+    normalized = _normalize_whitespace(text).lower()
+    return re.sub(r"[\s:：,，.。;；!！?？()（）【】\[\]《》<>\"'“”‘’\-—_/\\|]+", "", normalized)
+
+
+def _is_trivial_metadata_fragment(text: str) -> bool:
+    normalized = _normalize_whitespace(text)
+    if not normalized:
+        return True
+    if any(normalized.startswith(prefix) for prefix in TRIVIAL_METADATA_PREFIXES):
+        return True
+    return bool(re.fullmatch(r"[\d\-:/年月日\s]+", normalized))
 
 
 def _quality_result(
