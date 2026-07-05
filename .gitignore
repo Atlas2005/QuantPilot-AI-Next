@@ -1,6 +1,9 @@
 # Python caches
+.cache/
 __pycache__/
 *.py[cod]
+*.pyc
+*.pyo
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

@@ -109,6 +109,11 @@ def canonicalize_a_share_symbol(symbol: Any) -> str:
         return f"{cleaned[3:]}.SZ"
     if cleaned.startswith("SH."):
         return f"{cleaned[3:]}.SH"
+    if len(cleaned) == 6 and cleaned.isdigit():
+        if cleaned.startswith(("000", "001", "002", "003", "300", "301")):
+            return f"{cleaned}.SZ"
+        if cleaned.startswith(("600", "601", "603", "605", "688", "689")):
+            return f"{cleaned}.SH"
     return cleaned
 
 
@@ -173,4 +178,3 @@ def _ordered_normalized_frame(frame: pd.DataFrame) -> pd.DataFrame:
     ordered = frame.loc[:, NORMALIZED_OHLCV_COLUMNS].copy()
     ordered = ordered.sort_values(["symbol", "date"], kind="stable").reset_index(drop=True)
     return ordered
-
