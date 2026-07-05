@@ -9,6 +9,7 @@ import pytest
 from quantpilot_core.data_provider_normalization import (
     NORMALIZED_OHLCV_COLUMNS,
     ProviderKey,
+    canonicalize_a_share_symbol,
     cross_check_normalized_provider_frames,
     normalize_baostock_history_k_frame,
     normalize_tushare_daily_frame,
@@ -107,6 +108,26 @@ def test_tushare_daily_frame_normalizes_units_and_schema() -> None:
     }
 
 
+def test_canonicalize_a_share_symbol_infers_exchange_for_bare_six_digit_codes() -> None:
+    assert canonicalize_a_share_symbol("000001") == "000001.SZ"
+    assert canonicalize_a_share_symbol("000002") == "000002.SZ"
+    assert canonicalize_a_share_symbol("002415") == "002415.SZ"
+    assert canonicalize_a_share_symbol("300750") == "300750.SZ"
+    assert canonicalize_a_share_symbol("600000") == "600000.SH"
+    assert canonicalize_a_share_symbol("601318") == "601318.SH"
+    assert canonicalize_a_share_symbol("603000") == "603000.SH"
+    assert canonicalize_a_share_symbol("605000") == "605000.SH"
+    assert canonicalize_a_share_symbol("688001") == "688001.SH"
+
+
+def test_canonicalize_a_share_symbol_preserves_existing_accepted_forms() -> None:
+    assert canonicalize_a_share_symbol("000001.SZ") == "000001.SZ"
+    assert canonicalize_a_share_symbol("sz.000001") == "000001.SZ"
+    assert canonicalize_a_share_symbol("000001.sz") == "000001.SZ"
+    assert canonicalize_a_share_symbol("600000.SH") == "600000.SH"
+    assert canonicalize_a_share_symbol("sh.600000") == "600000.SH"
+
+
 def test_normalizers_require_in_memory_pandas_frames() -> None:
     with pytest.raises(TypeError, match="pandas DataFrame"):
         normalize_baostock_history_k_frame([{"date": "2026-01-02"}])  # type: ignore[arg-type]
@@ -200,4 +221,3 @@ def test_module_has_no_fetch_download_or_forbidden_runtime_terms() -> None:
         "USE_LEGACY_ENGINE",
     )
     assert all(term not in source.lower() for term in forbidden_terms)
-
