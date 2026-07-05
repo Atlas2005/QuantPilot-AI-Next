@@ -14,6 +14,8 @@ from quantpilot_core.real_data_provider.contracts import (
     DailyBarRequest,
     NormalizedDailyBar,
     ProviderDataError,
+    ProviderDependencyError,
+    ProviderError,
     ProviderName,
     parse_yyyymmdd,
     require_columns,
@@ -75,7 +77,7 @@ class BaoStockDailyBarProvider(DailyBarProvider):
     ) -> tuple[list[NormalizedDailyBar], tuple[str, ...]]:
         client = self._get_client()
         if not hasattr(client, "query_history_k_data_plus"):
-            raise RuntimeError(
+            raise ProviderDependencyError(
                 "BaoStock-compatible client must expose query_history_k_data_plus."
             )
         logged_in = self._login(client)
@@ -122,14 +124,14 @@ class BaoStockDailyBarProvider(DailyBarProvider):
         if error_code != "0":
             error_msg = str(getattr(result, "error_msg", "")).strip()
             detail = f"{error_code}: {error_msg}" if error_msg else error_code
-            raise RuntimeError(f"BaoStock login failed: {detail}")
+            raise ProviderError(f"BaoStock login failed: {detail}")
         return True
 
     def _get_client(self) -> Any:
         if self._client is not None:
             return self._client
         if detect_baostock_dependency(self._importer) is BaoStockDependencyStatus.MISSING:
-            raise RuntimeError(
+            raise ProviderDependencyError(
                 "BaoStock is an optional dependency and is missing. Inject a "
                 "BaoStock-compatible client for tests or install it for real fetches."
             )

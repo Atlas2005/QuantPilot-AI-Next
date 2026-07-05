@@ -45,6 +45,8 @@ from quantpilot_core.real_data_provider import (
     NormalizedDailyBar,
     ProviderError,
     ProviderName,
+    TusharePrimaryBaoStockFallbackProvider,
+    provenance_warnings,
 )
 
 
@@ -91,7 +93,8 @@ DEFAULT_REAL_DATA_SCALEUP_SYMBOLS = (
     "601318.SH",
     "601398.SH",
 )
-DEFAULT_PROVIDER = "baostock"
+TUSHARE_PRIMARY_BAOSTOCK_FALLBACK_PROVIDER = "tushare_primary_baostock_fallback"
+DEFAULT_PROVIDER = TUSHARE_PRIMARY_BAOSTOCK_FALLBACK_PROVIDER
 DEFAULT_REAL_DATA_SCALEUP_ARTIFACT_PATH = Path("artifacts/real_data_walk_forward_scaleup/latest_report.json")
 DEFAULT_REAL_DATA_SCALEUP_SWEEP_ARTIFACT_PATH = Path(
     "artifacts/real_data_walk_forward_scaleup_sweep/latest_report.json"
@@ -2065,7 +2068,12 @@ def _load_bars(config: RealDataWalkForwardSmokeConfig) -> _LoadedBars:
     bars: list[NormalizedDailyBar] = []
     warnings: list[str] = []
     for request in request_batch:
-        symbol_bars = provider.fetch_daily_bars(request)
+        if hasattr(provider, "fetch_daily_bars_with_provenance"):
+            result = provider.fetch_daily_bars_with_provenance(request)
+            warnings.extend(provenance_warnings(result))
+            symbol_bars = list(result.bars)
+        else:
+            symbol_bars = provider.fetch_daily_bars(request)
         if not symbol_bars and config.allow_partial_universe:
             warnings.append(f"empty_provider_rows:{request.symbol}")
             continue
@@ -2776,6 +2784,8 @@ def _resolve_provider(provider: str | DailyBarProvider) -> DailyBarProvider:
         module = import_module(f"quantpilot_core.real_data_provider.{TU_PROVIDER}_adapter")
         provider_cls = getattr(module, "Tu" + "shareDailyBarProvider")
         return provider_cls()
+    if provider_name == TUSHARE_PRIMARY_BAOSTOCK_FALLBACK_PROVIDER:
+        return TusharePrimaryBaoStockFallbackProvider()
     if provider_name == AK_PROVIDER:
         return AkShareDailyBarProvider()
     raise ValueError(f"unsupported provider: {provider}")

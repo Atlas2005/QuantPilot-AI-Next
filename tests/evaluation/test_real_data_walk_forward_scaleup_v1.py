@@ -144,7 +144,7 @@ def test_scaleup_config_defaults_are_stock_first_and_manual() -> None:
 
     assert len(config.symbols) == 40
     assert 20 <= len(config.symbols) <= 50
-    assert config.provider == "baostock"
+    assert config.provider == "tushare_primary_baostock_fallback"
     assert config.allow_partial_universe is True
     assert config.min_symbols_required == 20
     assert config.benchmark_mode == "equal_weight_close_to_close"

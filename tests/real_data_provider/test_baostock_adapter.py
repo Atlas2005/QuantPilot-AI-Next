@@ -9,6 +9,7 @@ from quantpilot_core.real_data_provider import (
     BaoStockDependencyStatus,
     DailyBarRequest,
     ProviderDataError,
+    ProviderDependencyError,
     ProviderName,
     baostock_result_to_frame,
     detect_baostock_dependency,
@@ -270,7 +271,7 @@ def test_provider_can_use_fake_client_without_dependency() -> None:
 def test_provider_fetch_fails_clearly_when_dependency_missing() -> None:
     provider = BaoStockDailyBarProvider(importer=missing_importer)
 
-    with pytest.raises(RuntimeError, match="optional dependency"):
+    with pytest.raises(ProviderDependencyError, match="optional dependency"):
         provider.fetch_daily_bars(request())
 
 
