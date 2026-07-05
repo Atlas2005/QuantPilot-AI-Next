@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -15,6 +16,9 @@ from quantpilot_core.announcement_intelligence import (
     evaluate_announcement_events_with_deepseek,
 )
 from quantpilot_core.quant_firm import DeepSeekAdvisoryOutput, DeepSeekAdvisoryRole
+
+
+PYTHON_EXECUTABLE = sys.executable
 
 
 class StaticAdvisoryAgent:
@@ -415,7 +419,7 @@ def test_default_runner_mode_makes_no_live_request_and_writes_report(tmp_path: P
 
     completed = subprocess.run(
         [
-            ".venv/bin/python",
+            PYTHON_EXECUTABLE,
             "scripts/run_announcement_deepseek_evaluation_v1.py",
             "--events-path",
             str(events_path),
@@ -450,7 +454,7 @@ def test_live_runner_requires_key_and_enforces_hard_cap(tmp_path: Path) -> None:
     events_path = tmp_path / "events.json"
     pd.DataFrame([announcement_event()]).to_json(events_path, orient="records")
     base = [
-        ".venv/bin/python",
+        PYTHON_EXECUTABLE,
         "scripts/run_announcement_deepseek_evaluation_v1.py",
         "--events-path",
         str(events_path),
@@ -485,7 +489,7 @@ def test_runner_rejects_non_positive_max_input_chars_and_defaults_to_ignored_out
 
     zero = subprocess.run(
         [
-            ".venv/bin/python",
+            PYTHON_EXECUTABLE,
             "scripts/run_announcement_deepseek_evaluation_v1.py",
             "--events-path",
             str(events_path),
@@ -499,7 +503,7 @@ def test_runner_rejects_non_positive_max_input_chars_and_defaults_to_ignored_out
     )
     default_run = subprocess.run(
         [
-            ".venv/bin/python",
+            PYTHON_EXECUTABLE,
             "scripts/run_announcement_deepseek_evaluation_v1.py",
             "--events-path",
             str(events_path),
