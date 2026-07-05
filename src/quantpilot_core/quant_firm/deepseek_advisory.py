@@ -87,6 +87,7 @@ class DeepSeekAdvisoryOutput:
     used_model: str
     is_fallback: bool
     raw_model_response: str | None = None
+    raw_response_usage: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -342,6 +343,9 @@ class DeepSeekAdvisoryAgent:
                 "parameter tuning suggestions, research directions, regime notes, risk notes, and tool integration notes.",
             ]
         )
+        structured_schema = _announcement_structured_schema(advisory_input)
+        if structured_schema:
+            lines.extend(structured_schema)
         return "\n".join(lines)
 
     def _fallback(
@@ -375,6 +379,7 @@ class DeepSeekAdvisoryAgent:
             used_model="deterministic_fallback",
             is_fallback=True,
             raw_model_response=prompt,
+            raw_response_usage=None,
         )
 
     def _live_advisory(
@@ -408,6 +413,7 @@ class DeepSeekAdvisoryAgent:
         request["extra_body"] = {"enable_thinking": model_selection.enable_thinking}
         response = client.chat.completions.create(**request)
         raw = response.choices[0].message.content or ""
+        usage = _response_usage(response)
         fallback = self._fallback(advisory_input, prompt, model_selection)
         return DeepSeekAdvisoryOutput(
             role=advisory_input.role,
@@ -425,6 +431,7 @@ class DeepSeekAdvisoryAgent:
             used_model=model_selection.model,
             is_fallback=False,
             raw_model_response=raw,
+            raw_response_usage=usage,
         )
 
 
@@ -525,6 +532,52 @@ def _model_selection_notes(
         f"deepseek_thinking:{thinking}",
         f"deepseek_reasoning_effort:{model_selection.reasoning_effort}",
     ) + model_selection.warnings
+
+
+def _response_usage(response: Any) -> Mapping[str, Any] | None:
+    usage = getattr(response, "usage", None)
+    if usage is None and isinstance(response, Mapping):
+        usage = response.get("usage")
+    if usage is None:
+        return None
+    if isinstance(usage, Mapping):
+        return dict(usage)
+    if is_dataclass(usage) and not isinstance(usage, type):
+        return asdict(usage)
+    model_dump = getattr(usage, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump()
+        return dict(dumped) if isinstance(dumped, Mapping) else None
+    result: dict[str, Any] = {}
+    for key in (
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "prompt_tokens_details",
+        "completion_tokens_details",
+    ):
+        if hasattr(usage, key):
+            result[key] = getattr(usage, key)
+    return result or None
+
+
+def _announcement_structured_schema(advisory_input: DeepSeekAdvisoryInput) -> tuple[str, ...]:
+    if advisory_input.role is not DeepSeekAdvisoryRole.INFORMATION_DESK:
+        return ()
+    summary = advisory_input.information_agent_summary
+    if not isinstance(summary, Mapping) or not summary.get("announcement_structured_output_schema"):
+        return ()
+    return (
+        "Announcement-specific output requirement:",
+        "Return exactly one JSON object and no markdown or prose outside JSON.",
+        'Required JSON keys: "direction", "horizon", "severity", "confidence", "evidence", "rationale", "limitations".',
+        "direction must be one of: positive, negative, neutral, mixed, uncertain.",
+        "horizon must be one of: immediate, short_term, medium_term.",
+        "severity and confidence must be numbers from 0.0 to 1.0.",
+        "evidence and limitations must be arrays of short strings.",
+        "rationale must be a concise final rationale, not hidden reasoning or chain-of-thought.",
+        "Do not include expected returns, profitability claims, broker actions, or orders.",
+    )
 
 
 def _compact(value: Any) -> str:

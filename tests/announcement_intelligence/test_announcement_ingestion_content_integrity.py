@@ -14,6 +14,7 @@ from quantpilot_core.announcement_intelligence import (
     normalize_a_share_announcement_events,
     write_announcement_ingestion_artifacts,
 )
+from quantpilot_core.quant_firm import DeepSeekAdvisoryOutput, DeepSeekAdvisoryRole
 
 
 def provider_rows() -> pd.DataFrame:
@@ -135,6 +136,14 @@ def eastmoney_detail_chrome_text() -> str:
     )
 
 
+def generic_provider_shell_that_collapses_after_cleaning() -> str:
+    line = (
+        " 页面展示若干通用栏目说明和行情入口提示，文字长度较长并带有句号用于模拟网页外壳，"
+        "继续补充足够多的普通描述字符避免短行过滤。"
+    )
+    return "\n".join(("东方财富" + line, "数据中心" + line, "全球财经快讯" + line))
+
+
 def test_provider_rows_bare_codes_dedupe_and_date_only_pit() -> None:
     events = normalize_a_share_announcement_events(
         provider_rows(),
@@ -170,6 +179,247 @@ def test_genuine_body_like_text_classified_as_full_text(tmp_path: Path) -> None:
     assert bool(enriched.loc[0, "full_text_available"]) is True
     assert enriched.loc[0, "content_quality_evidence"]["retained_char_count"] >= 80
     assert enriched.loc[0, "content_cache_schema_version"] == "announcement_content_cache_v2"
+
+
+def test_title_content_english_wrapper_duplicate_is_title_fallback(tmp_path: Path) -> None:
+    title = "美晨科技:2024年度业绩预告"
+    events = normalize_a_share_announcement_events(
+        provider_rows().iloc[[0]].assign(公告标题=title),
+        ingestion_time="2026-01-03T00:00:00",
+    )
+
+    enriched = enrich_announcement_content(
+        events,
+        detail_fetcher=lambda event: {"content_source": "full_text", "content": f"Title: {title}\nContent: {title}"},
+        cache_dir=tmp_path,
+    )
+
+    assert enriched.loc[0, "content_source"] == "title_fallback"
+    assert enriched.loc[0, "content_quality_status"] == "title_fallback"
+    assert enriched.loc[0, "content_quality_reason"] == "title_only_duplicate_body"
+    assert bool(enriched.loc[0, "full_text_available"]) is False
+    assert enriched.loc[0, "content_quality_evidence"]["title_only_duplicate_body"] is True
+    assert enriched.loc[0, "content_quality_evidence"]["classifier_version"] == "announcement_body_quality_v3"
+    assert "title_only_duplicate_body" in enriched.loc[0, "data_quality_flags"]
+
+
+def test_title_content_chinese_wrapper_duplicate_is_title_fallback(tmp_path: Path) -> None:
+    title = "美晨科技:2024年度业绩预告"
+    events = normalize_a_share_announcement_events(
+        provider_rows().iloc[[0]].assign(公告标题=title),
+        ingestion_time="2026-01-03T00:00:00",
+    )
+
+    enriched = enrich_announcement_content(
+        events,
+        detail_fetcher=lambda event: {"content_source": "full_text", "content": f"标题：{title}\n内容：{title}"},
+        cache_dir=tmp_path,
+    )
+
+    assert enriched.loc[0, "content_source"] == "title_fallback"
+    assert enriched.loc[0, "content_quality_reason"] == "title_only_duplicate_body"
+    assert bool(enriched.loc[0, "full_text_available"]) is False
+
+
+def test_repeated_title_with_whitespace_punctuation_is_title_fallback(tmp_path: Path) -> None:
+    title = "美晨科技:2024年度业绩预告"
+    events = normalize_a_share_announcement_events(
+        provider_rows().iloc[[0]].assign(公告标题=title),
+        ingestion_time="2026-01-03T00:00:00",
+    )
+
+    enriched = enrich_announcement_content(
+        events,
+        detail_fetcher=lambda event: {"content_source": "full_text", "content": f"  {title}  \n；{title}。 \n {title} "},
+        cache_dir=tmp_path,
+    )
+
+    assert enriched.loc[0, "content_source"] == "title_fallback"
+    assert enriched.loc[0, "content_quality_reason"] == "title_only_duplicate_body"
+
+
+def test_title_with_trivial_metadata_only_is_title_fallback(tmp_path: Path) -> None:
+    title = "美晨科技:2024年度业绩预告"
+    events = normalize_a_share_announcement_events(
+        provider_rows().iloc[[0]].assign(公告标题=title),
+        ingestion_time="2026-01-03T00:00:00",
+    )
+
+    enriched = enrich_announcement_content(
+        events,
+        detail_fetcher=lambda event: {
+            "content_source": "full_text",
+            "content": f"标题：{title}\n公告日期：2025-01-20\n证券代码：300237\n内容：{title}",
+        },
+        cache_dir=tmp_path,
+    )
+
+    assert enriched.loc[0, "content_source"] == "title_fallback"
+    assert enriched.loc[0, "content_quality_reason"] == "title_only_duplicate_body"
+    assert bool(enriched.loc[0, "full_text_available"]) is False
+
+
+def test_title_then_multiple_sentence_body_remains_full_text(tmp_path: Path) -> None:
+    title = "美晨科技:2024年度业绩预告"
+    body = (
+        f"标题：{title}\n内容：{title}\n"
+        "公司预计2024年度归属于上市公司股东的净利润较上年同期明显改善，主要原因是主营业务订单交付增加。"
+        "报告期内公司持续推进降本增效，期间费用有所下降，现金流状况保持稳定。"
+        "本公告所载财务数据为初步测算结果，具体数据以年度报告披露为准。"
+    )
+    events = normalize_a_share_announcement_events(
+        provider_rows().iloc[[0]].assign(公告标题=title),
+        ingestion_time="2026-01-03T00:00:00",
+    )
+
+    enriched = enrich_announcement_content(
+        events,
+        detail_fetcher=lambda event: {"content_source": "full_text", "content": body},
+        cache_dir=tmp_path,
+    )
+
+    assert enriched.loc[0, "content_source"] == "full_text"
+    assert enriched.loc[0, "content_quality_status"] == "usable_full_text"
+    assert bool(enriched.loc[0, "full_text_available"]) is True
+
+
+def test_genuine_body_containing_title_once_is_not_rejected(tmp_path: Path) -> None:
+    title = "董事会决议公告"
+    body = (
+        "董事会决议公告显示，公司于2026年1月召开董事会会议，审议通过年度经营计划和内部控制改进方案。"
+        "会议同意继续推进重点项目建设，并要求管理层按季度披露项目进展和资金使用情况。"
+        "独立董事对相关事项发表明确意见，认为决策程序符合公司章程和监管要求。"
+    )
+    events = normalize_a_share_announcement_events(
+        provider_rows().iloc[[0]].assign(公告标题=title),
+        ingestion_time="2026-01-03T00:00:00",
+    )
+
+    enriched = enrich_announcement_content(
+        events,
+        detail_fetcher=lambda event: {"content_source": "full_text", "content": body},
+        cache_dir=tmp_path,
+    )
+
+    assert enriched.loc[0, "content_source"] == "full_text"
+    assert enriched.loc[0, "content_quality_status"] == "usable_full_text"
+    assert enriched.loc[0, "content_quality_evidence"]["title_only_duplicate_body"] is False
+
+
+def test_generic_shell_cannot_transfer_full_text_quality_to_title_only_content(tmp_path: Path) -> None:
+    title = "美晨科技:2024年度业绩预告"
+    events = normalize_a_share_announcement_events(
+        provider_rows().iloc[[0]].assign(公告标题=title),
+        ingestion_time="2026-01-03T00:00:00",
+    )
+
+    enriched = enrich_announcement_content(
+        events,
+        detail_fetcher=lambda event: {
+            "content_source": "full_text",
+            "content": generic_provider_shell_that_collapses_after_cleaning(),
+        },
+        cache_dir=tmp_path,
+    )
+    content = enriched.loc[0, "content"]
+
+    assert enriched.loc[0, "content_source"] == "title_fallback"
+    assert enriched.loc[0, "content_quality_status"] == "title_fallback"
+    assert enriched.loc[0, "content_quality_reason"] == "persisted_content_lacks_validated_body"
+    assert bool(enriched.loc[0, "full_text_available"]) is False
+    assert content == f"Title: {title}\nContent: {title}"
+    assert enriched.loc[0, "content_char_count"] == len(content)
+    assert enriched.loc[0, "content_hash"] == ingestion_module._content_hash(content)
+    assert enriched.loc[0, "content_quality_evidence"]["raw_page_quality_reason"] == "body_survived_boilerplate_removal"
+
+
+def test_genuine_body_is_persisted_as_advisory_content(tmp_path: Path) -> None:
+    from quantpilot_core.announcement_intelligence import assess_announcement_event_with_deepseek
+
+    class RecordingAgent:
+        def __init__(self) -> None:
+            self.summary = None
+
+        def advise(self, advisory_input):
+            self.summary = advisory_input.information_agent_summary
+            return DeepSeekAdvisoryOutput(
+                role=DeepSeekAdvisoryRole.INFORMATION_DESK,
+                advisory_summary='{"direction":"positive","horizon":"short_term","severity":0.4,"confidence":0.6,"evidence":["body"],"rationale":"body","limitations":["fixture"]}',
+                evidence_used=("information_agent_summary",),
+                failure_explanation="fixture",
+                strategy_mutation_rationale="fixture",
+                parameter_tuning_suggestions=(),
+                research_directions=(),
+                regime_notes=(),
+                risk_notes=(),
+                tool_integration_notes=(),
+                confidence=0.6,
+                used_model="fixture",
+                is_fallback=False,
+                raw_model_response='{"direction":"positive","horizon":"short_term","severity":0.4,"confidence":0.6,"evidence":["body"],"rationale":"body","limitations":["fixture"]}',
+            )
+
+    events = normalize_a_share_announcement_events(provider_rows().iloc[[0]], ingestion_time="2026-01-03T00:00:00")
+    enriched = enrich_announcement_content(
+        events,
+        detail_fetcher=lambda event: {"content_source": "full_text", "content": body_like_text()},
+        cache_dir=tmp_path,
+    )
+    agent = RecordingAgent()
+    assess_announcement_event_with_deepseek(enriched.iloc[0].to_dict(), advisory_agent=agent)
+
+    assert enriched.loc[0, "content_source"] == "full_text"
+    assert "年度权益分派方案" in enriched.loc[0, "content"]
+    assert agent.summary["evidence_text"] == enriched.loc[0, "content"]
+
+
+def test_repeated_generic_shell_across_distinct_events_is_not_usable_full_text(tmp_path: Path) -> None:
+    rows = provider_rows().iloc[[0, 2]].copy()
+    rows.loc[rows.index[0], "公告标题"] = "美晨科技:2024年度业绩预告"
+    rows.loc[rows.index[0], "网址"] = "https://example.test/news/AN-shell-1"
+    rows.loc[rows.index[1], "公告标题"] = "美晨科技:关于累计诉讼、仲裁及进展情况的公告"
+    rows.loc[rows.index[1], "网址"] = "https://example.test/news/AN-shell-2"
+    events = normalize_a_share_announcement_events(rows, ingestion_time="2026-01-03T00:00:00")
+
+    enriched = enrich_announcement_content(
+        events,
+        detail_fetcher=lambda event: {
+            "content_source": "full_text",
+            "content": generic_provider_shell_that_collapses_after_cleaning(),
+        },
+        cache_dir=tmp_path,
+    )
+
+    assert set(enriched["content_source"]) == {"title_fallback"}
+    assert set(enriched["content_quality_reason"]) == {"persisted_content_lacks_validated_body"}
+    assert bool(enriched["full_text_available"].any()) is False
+
+
+def test_distinct_genuine_bodies_remain_usable_full_text(tmp_path: Path) -> None:
+    rows = provider_rows().iloc[[0, 2]].copy()
+    rows.loc[rows.index[0], "公告标题"] = "年度权益分派实施公告"
+    rows.loc[rows.index[0], "网址"] = "https://example.test/news/AN-body-1"
+    rows.loc[rows.index[1], "公告标题"] = "关于诉讼事项的公告"
+    rows.loc[rows.index[1], "网址"] = "https://example.test/news/AN-body-2"
+    events = normalize_a_share_announcement_events(rows, ingestion_time="2026-01-03T00:00:00")
+    bodies = {
+        "年度权益分派实施公告": body_like_text(),
+        "关于诉讼事项的公告": (
+            "公司收到法院关于合同纠纷案件的受理通知，案件目前处于审理阶段，尚未形成生效判决。"
+            "公司已组织法律顾问准备应诉材料，并将根据案件进展及时履行信息披露义务。"
+            "本次诉讼暂未对公司日常经营造成重大不利影响，最终影响以法院裁判结果为准。"
+        ),
+    }
+
+    enriched = enrich_announcement_content(
+        events,
+        detail_fetcher=lambda event: {"content_source": "full_text", "content": bodies[str(event["title"])]},
+        cache_dir=tmp_path,
+    )
+
+    assert set(enriched["content_source"]) == {"full_text"}
+    assert set(enriched["content_quality_status"]) == {"usable_full_text"}
+    assert bool(enriched["full_text_available"].all()) is True
 
 
 def test_eastmoney_navigation_footer_pdf_placeholder_downgraded(tmp_path: Path) -> None:
@@ -370,6 +620,35 @@ def test_old_low_quality_cache_is_revalidated_and_valid_cache_is_reused(tmp_path
     assert valid_first.loc[0, "content_source"] == "full_text"
     assert valid_second.loc[0, "content_retrieval_status"] == "cache_hit"
     assert valid_second.loc[0, "content_source"] == "full_text"
+
+
+def test_cached_title_only_duplicate_payload_is_revalidated_and_downgraded(tmp_path: Path) -> None:
+    title = "美晨科技:2024年度业绩预告"
+    events = normalize_a_share_announcement_events(
+        provider_rows().iloc[[0]].assign(公告标题=title),
+        ingestion_time="2026-01-03T00:00:00",
+    )
+    calls = 0
+
+    first = enrich_announcement_content(
+        events,
+        detail_fetcher=lambda event: {"content_source": "full_text", "content": f"Title: {title}\nContent: {title}"},
+        cache_dir=tmp_path,
+    )
+
+    def fetcher(event: Mapping[str, object]) -> Mapping[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"content_source": "full_text", "content": body_like_text()}
+
+    second = enrich_announcement_content(events, detail_fetcher=fetcher, cache_dir=tmp_path)
+
+    assert calls == 0
+    assert first.loc[0, "content_source"] == "title_fallback"
+    assert second.loc[0, "content_retrieval_status"] == "cache_hit"
+    assert second.loc[0, "content_source"] == "title_fallback"
+    assert second.loc[0, "content_quality_reason"] == "title_only_duplicate_body"
+    assert bool(second.loc[0, "full_text_available"]) is False
 
 
 def test_600309_empty_response_does_not_collapse_valid_batch(tmp_path: Path) -> None:

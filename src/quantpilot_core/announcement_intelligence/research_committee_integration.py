@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import json
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -37,6 +38,12 @@ QUALITY_CONFIDENCE_CAPS = {
     "title_fallback": 0.30,
     "unavailable": 0.0,
 }
+ANNOUNCEMENT_STRUCTURED_OUTPUT_SCHEMA_VERSION = "announcement_structured_output_v1"
+ANNOUNCEMENT_CONTENT_QUALITY_POLICY_VERSION = "announcement_content_quality_caps_v1"
+MAX_STRUCTURED_EVIDENCE_ITEMS = 6
+MAX_STRUCTURED_LIMITATION_ITEMS = 6
+MAX_STRUCTURED_ITEM_CHARS = 240
+MAX_STRUCTURED_RATIONALE_CHARS = 500
 POSITIVE_TERMS = (
     "beat",
     "buyback",
@@ -84,7 +91,7 @@ def assess_announcement_event_with_deepseek(
         return _unavailable_assessment(row, "announcement_content_unavailable")
 
     agent = advisory_agent or DeepSeekAdvisoryAgent()
-    advisory_payload = _advisory_payload(row, content_source=content_source)
+    advisory_payload = build_announcement_advisory_payload(row)
     advisory_input = DeepSeekAdvisoryInput(
         role=DeepSeekAdvisoryRole.INFORMATION_DESK,
         information_agent_summary=advisory_payload,
@@ -112,15 +119,26 @@ def assess_announcement_event_with_deepseek(
             fallback_unavailable_reason="invalid_deepseek_advisory_output",
             advisory_output=None,
         )
+    schema_status = _schema_validation_status(output)
+    model_status = "deterministic_fallback" if output.is_fallback else "model_advisory"
+    if not output.is_fallback and schema_status == "failed":
+        model_status = "model_advisory_schema_invalid"
     return _assessment_from_event(
         row,
         content_source=content_source,
-        model_status="deterministic_fallback" if output.is_fallback else "model_advisory",
-        schema_validation_status="passed",
+        model_status=model_status,
+        schema_validation_status=schema_status,
         cache_status=_cache_status(output),
         fallback_unavailable_reason=None,
         advisory_output=output,
     )
+
+
+def build_announcement_advisory_payload(event: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Build the exact deterministic announcement payload supplied to DeepSeek advisory."""
+
+    row = dict(event)
+    return _advisory_payload(row, content_source=_content_source(row))
 
 
 def announcement_assessment_to_information_signal(
@@ -190,7 +208,11 @@ def _assessment_from_event(
     advisory_output: DeepSeekAdvisoryOutput | None,
 ) -> AnnouncementImpactAssessment:
     impact = _impact_from_advisory_output(advisory_output)
-    impact_assessment_source = "advisory_output"
+    impact_assessment_source = (
+        "model_structured_output"
+        if advisory_output is not None and _structured_announcement_output(advisory_output) is not None
+        else "advisory_output"
+    )
     fallback_reason = fallback_unavailable_reason
     if impact is None:
         direction, severity = _keyword_fallback_impact(row)
@@ -278,7 +300,19 @@ def _advisory_payload(row: Mapping[str, Any], *, content_source: str) -> Mapping
             "do_not_treat_title_only_as_full_text",
             "do_not_make_profitability_claims",
             "do_not_invent_facts_not_in_evidence",
+            "do_not_store_chain_of_thought",
         ),
+        "announcement_structured_output_schema_version": ANNOUNCEMENT_STRUCTURED_OUTPUT_SCHEMA_VERSION,
+        "announcement_content_quality_policy_version": ANNOUNCEMENT_CONTENT_QUALITY_POLICY_VERSION,
+        "announcement_structured_output_schema": {
+            "direction": "positive|negative|neutral|mixed|uncertain",
+            "horizon": "immediate|short_term|medium_term",
+            "severity": "number 0.0 to 1.0",
+            "confidence": "number 0.0 to 1.0",
+            "evidence": [f"1-{MAX_STRUCTURED_EVIDENCE_ITEMS} short evidence items"],
+            "rationale": f"concise final rationale, max {MAX_STRUCTURED_RATIONALE_CHARS} chars",
+            "limitations": [f"1-{MAX_STRUCTURED_LIMITATION_ITEMS} short limitations"],
+        },
     }
 
 
@@ -292,6 +326,14 @@ def _valid_advisory_output(output: Any) -> bool:
     except (TypeError, ValueError):
         return False
     return math.isfinite(confidence) and 0.0 <= confidence <= 1.0
+
+
+def _schema_validation_status(output: DeepSeekAdvisoryOutput) -> str:
+    if _structured_announcement_output(output) is not None:
+        return "passed"
+    if output.is_fallback:
+        return "not_applicable"
+    return "failed"
 
 
 def _cache_status(output: DeepSeekAdvisoryOutput) -> str:
@@ -324,6 +366,15 @@ def _impact_from_advisory_output(
 ) -> tuple[str, str, float] | None:
     if output is None:
         return None
+    structured = _structured_announcement_output(output)
+    if structured is not None:
+        return (
+            str(structured["direction"]),
+            str(structured["horizon"]),
+            round(float(structured["severity"]), 6),
+        )
+    if not output.is_fallback and output.raw_model_response:
+        return None
     values = _advisory_values(output)
     direction = _advisory_value(values, "announcement_direction")
     horizon = _advisory_value(values, "announcement_horizon")
@@ -337,6 +388,81 @@ def _impact_from_advisory_output(
     if numeric_severity is None or not math.isfinite(numeric_severity):
         return None
     return direction, horizon, round(_clamp(numeric_severity, 0.0, 1.0), 6)
+
+
+def _structured_announcement_output(output: DeepSeekAdvisoryOutput) -> Mapping[str, Any] | None:
+    raw = str(output.raw_model_response or "").strip()
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, Mapping):
+        return None
+    direction = str(data.get("direction") or "").strip().lower()
+    horizon = str(data.get("horizon") or "").strip().lower()
+    if direction not in VALID_DIRECTIONS or horizon not in VALID_HORIZONS:
+        return None
+    severity = _bounded_metric(data.get("severity"))
+    confidence = _bounded_metric(data.get("confidence"))
+    if severity is None or confidence is None:
+        return None
+    evidence = _bounded_string_sequence(
+        data.get("evidence"),
+        max_items=MAX_STRUCTURED_EVIDENCE_ITEMS,
+        max_chars=MAX_STRUCTURED_ITEM_CHARS,
+    )
+    if not evidence:
+        return None
+    rationale = str(data.get("rationale") or "").strip()[:MAX_STRUCTURED_RATIONALE_CHARS]
+    if not rationale:
+        return None
+    limitations = _bounded_string_sequence(
+        data.get("limitations"),
+        max_items=MAX_STRUCTURED_LIMITATION_ITEMS,
+        max_chars=MAX_STRUCTURED_ITEM_CHARS,
+    )
+    if not limitations:
+        return None
+    return {
+        "direction": direction,
+        "horizon": horizon,
+        "severity": severity,
+        "confidence": confidence,
+        "evidence": evidence,
+        "rationale": rationale,
+        "limitations": limitations,
+    }
+
+
+def _bounded_metric(value: Any) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric) or numeric < 0.0 or numeric > 1.0:
+        return None
+    return round(numeric, 6)
+
+
+def _bounded_string_sequence(
+    value: Any,
+    *,
+    max_items: int,
+    max_chars: int,
+) -> tuple[str, ...]:
+    if not isinstance(value, list) or not value:
+        return ()
+    bounded = []
+    for item in value[:max_items]:
+        if not isinstance(item, str):
+            return ()
+        text = item.strip()
+        if not text:
+            return ()
+        bounded.append(text[:max_chars])
+    return tuple(bounded)
 
 
 def _advisory_values(output: DeepSeekAdvisoryOutput) -> tuple[str, ...]:
@@ -394,6 +520,9 @@ def _keyword_fallback_horizon(row: Mapping[str, Any]) -> str:
 def _advisory_confidence(output: DeepSeekAdvisoryOutput | None) -> float:
     if output is None:
         return 0.0
+    structured = _structured_announcement_output(output)
+    if structured is not None:
+        return _clamp(float(structured["confidence"]), 0.0, 1.0)
     return _clamp(float(output.confidence), 0.0, 1.0)
 
 
@@ -417,8 +546,8 @@ def _evidence(
         else "advisory_provenance:not_available"
     )
     advisory_evidence = (
-        f"advisory_evidence_used:{','.join(advisory_output.evidence_used)}"
-        if advisory_output and advisory_output.evidence_used
+        f"advisory_evidence_used:{','.join(_structured_evidence_or_advisory(advisory_output))}"
+        if advisory_output and _structured_evidence_or_advisory(advisory_output)
         else "advisory_evidence_used:none"
     )
     return (
@@ -431,6 +560,18 @@ def _evidence(
         advisory_evidence,
         f"evidence:{text[:220]}",
     )
+
+
+def _structured_evidence_or_advisory(
+    advisory_output: DeepSeekAdvisoryOutput | None,
+) -> tuple[str, ...]:
+    if advisory_output is None:
+        return ()
+    structured = _structured_announcement_output(advisory_output)
+    if structured is not None:
+        rationale = str(structured["rationale"])[:160]
+        return tuple(structured["evidence"]) + (f"structured_rationale:{rationale}",)
+    return advisory_output.evidence_used
 
 
 def _assessment_limitations(
