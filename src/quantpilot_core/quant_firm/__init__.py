@@ -39,6 +39,7 @@ from quantpilot_core.quant_firm.contracts import (
     QuantFirmDecisionReport,
     StrategyMutationPlan,
     StrategyMutationRecommendation,
+    is_quant_firm_approved,
 )
 from quantpilot_core.quant_firm.deepseek_advisory import (
     DeepSeekAdvisoryAgent,
@@ -106,6 +107,7 @@ __all__ = [
     "QuantFirmOrchestrator",
     "QuantFirmRoleSkill",
     "QuantFirmRoleSkillRegistry",
+    "is_quant_firm_approved",
     "RQAlphaBacktestAgent",
     "RiskBudgetAgent",
     "StatisticalStrategyAgent",

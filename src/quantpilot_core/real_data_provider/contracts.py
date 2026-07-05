@@ -111,3 +111,10 @@ def to_float(value: Any, field_name: str) -> float:
         return float(value)
     except (TypeError, ValueError) as exc:
         raise ProviderDataError(f"{field_name} must be a number") from exc
+
+
+def is_suspended_trade_status(value: Any) -> bool:
+    """Interpret provider trade-status values using repository-wide semantics."""
+
+    normalized = str(value).strip().lower()
+    return normalized in {"0", "suspended", "停牌", "halted", "false"}
