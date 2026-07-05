@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import importlib
+import os
 from enum import Enum
 from typing import Any, Callable, Mapping, Sequence
 
 from quantpilot_core.real_data_provider.contracts import (
+    Adjustment,
     DailyBarProvider,
     DailyBarRequest,
     NormalizedDailyBar,
     ProviderDataError,
+    ProviderDependencyError,
+    ProviderError,
     ProviderName,
     parse_yyyymmdd,
     require_columns,
     to_float,
+    to_yyyymmdd,
 )
 
 
@@ -43,49 +48,100 @@ class TushareDailyBarProvider(DailyBarProvider):
     def __init__(
         self,
         tushare_client: Any | None = None,
+        token: str | None = None,
+        client_factory: Callable[[str], Any] | None = None,
         importer: Callable[[str], object] | None = None,
     ) -> None:
         self._client = tushare_client
+        self._token = token
+        self._client_factory = client_factory
         self._importer = importer
 
+    def __repr__(self) -> str:
+        return "TushareDailyBarProvider(token=<configured>)" if self._token else "TushareDailyBarProvider()"
+
     def fetch_daily_bars(self, request: DailyBarRequest) -> list[NormalizedDailyBar]:
+        if request.adjustment is not Adjustment.NONE:
+            raise ProviderDataError(
+                f"Tushare daily adapter does not support {request.adjustment.value} adjustment through daily()."
+            )
         client = self._get_client()
         if not hasattr(client, "daily"):
-            raise RuntimeError("Tushare-compatible client must expose daily.")
+            raise ProviderDependencyError("Tushare-compatible client must expose daily.")
 
-        raw = client.daily(
-            ts_code=request.symbol,
-            start_date=request.start_date.strftime("%Y%m%d"),
-            end_date=request.end_date.strftime("%Y%m%d"),
-            fields="ts_code,trade_date,open,high,low,close,vol,amount,pct_chg",
+        try:
+            raw = client.daily(
+                ts_code=request.symbol,
+                start_date=to_yyyymmdd(request.start_date),
+                end_date=to_yyyymmdd(request.end_date),
+                fields="ts_code,trade_date,open,high,low,close,vol,amount,pct_chg",
+            )
+        except ProviderError:
+            raise
+        except Exception:
+            raise ProviderError("Tushare daily bar request failed") from None
+        return normalize_tushare_daily_bars(
+            raw,
+            request.symbol,
+            start_date=request.start_date,
+            end_date=request.end_date,
         )
-        return normalize_tushare_daily_bars(raw, request.symbol)
 
     def _get_client(self) -> Any:
         if self._client is not None:
             return self._client
+        token = _resolve_tushare_token(self._token)
+        if self._client_factory is not None:
+            try:
+                self._client = self._client_factory(token)
+            except Exception:
+                raise ProviderError("Tushare client creation failed") from None
+            return self._client
         if detect_tushare_dependency(self._importer) is TushareDependencyStatus.MISSING:
-            raise RuntimeError(
-                "Tushare is an optional dependency and is missing. Inject a "
-                "Tushare-compatible client for tests or install/configure it for real fetches."
-            )
+            raise ProviderDependencyError("Tushare is an optional dependency. Install it or inject a client.")
         package_importer = self._importer or importlib.import_module
         package = package_importer("tushare")
         factory = getattr(package, "pro_api", None)
         if factory is None:
-            raise RuntimeError("Tushare package must expose pro_api.")
-        self._client = factory()
+            raise ProviderDependencyError("Tushare package must expose pro_api.")
+        try:
+            self._client = factory(token)
+        except Exception:
+            raise ProviderError("Tushare client creation failed") from None
         return self._client
 
 
 def normalize_tushare_daily_bars(
     rows: Any,
     symbol: str,
+    *,
+    start_date: Any | None = None,
+    end_date: Any | None = None,
 ) -> list[NormalizedDailyBar]:
     records = _rows_from_result(rows)
     if not records:
-        raise ProviderDataError("Tushare daily bar rows must be non-empty")
-    return [_normalize_row(row, symbol) for row in records]
+        return []
+    bars_by_date: dict[Any, NormalizedDailyBar] = {}
+    for row in records:
+        bar = _normalize_row(row, symbol)
+        if start_date is not None and bar.trade_date < start_date:
+            continue
+        if end_date is not None and bar.trade_date > end_date:
+            continue
+        existing = bars_by_date.get(bar.trade_date)
+        if existing is None:
+            bars_by_date[bar.trade_date] = bar
+            continue
+        if existing != bar:
+            raise ProviderDataError(f"conflicting duplicate Tushare daily row for {bar.trade_date.isoformat()}")
+    return [bars_by_date[key] for key in sorted(bars_by_date)]
+
+
+def _resolve_tushare_token(explicit_token: str | None) -> str:
+    token = explicit_token if explicit_token is not None else os.environ.get("TUSHARE_TOKEN")
+    if token is None or not str(token).strip():
+        raise ProviderDependencyError("Tushare token is required via constructor token or TUSHARE_TOKEN.")
+    return str(token).strip()
 
 
 def _rows_from_result(value: Any) -> list[Mapping[str, Any]]:

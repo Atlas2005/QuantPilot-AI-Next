@@ -11,10 +11,13 @@ from quantpilot_core.evaluation import (
     RealDataWalkForwardSmokeReport,
     run_real_data_walk_forward_smoke,
 )
+import quantpilot_core.evaluation.real_data_walk_forward_smoke as smoke_module
 from quantpilot_core.real_data_provider import (
     DailyBarRequest,
     NormalizedDailyBar,
+    ProviderError,
     ProviderName,
+    TusharePrimaryBaoStockFallbackProvider,
 )
 from quantpilot_core.real_data_provider.baostock_adapter import BaoStockDailyBarProvider
 from quantpilot_core.tool_registry import build_default_tool_registry
@@ -55,6 +58,37 @@ class UnavailableProvider:
 
     def fetch_daily_bars(self, request: DailyBarRequest) -> list[NormalizedDailyBar]:
         raise RuntimeError("fixture provider unavailable")
+
+
+class FixtureTushareProvider(FixtureDailyBarProvider):
+    provider_name = ProviderName.TUSHARE
+
+    def fetch_daily_bars(self, request: DailyBarRequest) -> list[NormalizedDailyBar]:
+        self.requests.append(request)
+        rows: list[NormalizedDailyBar] = []
+        for index in range(18):
+            trade_date = date(2026, 1, 1) + timedelta(days=index)
+            base = 10.0 + index * 0.2
+            rows.append(
+                NormalizedDailyBar(
+                    symbol=request.symbol,
+                    trade_date=trade_date,
+                    open=base,
+                    high=base + 0.4,
+                    low=base - 0.2,
+                    close=base + 0.1,
+                    volume=1_000_000 + index * 1_000,
+                    provider=ProviderName.TUSHARE,
+                )
+            )
+        return rows
+
+
+class FailingProvider:
+    provider_name = ProviderName.TUSHARE
+
+    def fetch_daily_bars(self, request: DailyBarRequest) -> list[NormalizedDailyBar]:
+        raise ProviderError("primary unavailable")
 
 
 class FakeBaoStockLoginResult:
@@ -169,8 +203,20 @@ def test_config_default_universe_is_stock_first_without_etfs() -> None:
     assert default.allow_partial_universe is True
     assert default.min_symbols_required == 2
     assert default.advisory_mode == "fallback_only"
-    assert default.provider == "baostock"
+    assert default.provider == "tushare_primary_baostock_fallback"
     assert not any(symbol.startswith(("510", "159")) for symbol in default.symbols)
+
+
+def test_default_provider_resolves_to_tushare_primary_chain() -> None:
+    provider = smoke_module._resolve_provider(RealDataWalkForwardSmokeConfig().provider)
+
+    assert isinstance(provider, TusharePrimaryBaoStockFallbackProvider)
+
+
+def test_existing_explicit_provider_names_still_resolve() -> None:
+    assert smoke_module._resolve_provider("baostock").provider_name is ProviderName.BAOSTOCK
+    assert smoke_module._resolve_provider("tushare").provider_name is ProviderName.TUSHARE
+    assert smoke_module._resolve_provider("akshare").provider_name is ProviderName.AKSHARE
 
 
 def test_fixture_provider_produces_walk_forward_report() -> None:
@@ -415,6 +461,46 @@ def test_baostock_smoke_login_failure_is_provider_unavailable(monkeypatch: pytes
     assert "BaoStock login failed: 10002007: login failed" in report.notes[1]
     assert client.events == ["login"]
     assert client.query_codes == []
+
+
+def test_tushare_primary_baostock_fallback_mode_resolves_tushare_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chain = TusharePrimaryBaoStockFallbackProvider(
+        primary=FixtureTushareProvider(),
+        fallback=FixtureDailyBarProvider(),
+    )
+    monkeypatch.setattr(
+        "quantpilot_core.evaluation.real_data_walk_forward_smoke.TusharePrimaryBaoStockFallbackProvider",
+        lambda: chain,
+    )
+
+    report = run_real_data_walk_forward_smoke(config("tushare_primary_baostock_fallback"))
+
+    assert report.windows_run == 2
+    assert report.provider == "tushare_primary_baostock_fallback"
+    assert "provider_fallback_used:tushare->baostock" not in report.data_quality_warnings
+    assert all(call.symbol.endswith((".SZ", ".SH")) for call in chain.primary.requests)
+
+
+def test_tushare_primary_baostock_fallback_mode_records_baostock_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fallback = FixtureDailyBarProvider()
+    chain = TusharePrimaryBaoStockFallbackProvider(
+        primary=FailingProvider(),
+        fallback=fallback,
+    )
+    monkeypatch.setattr(
+        "quantpilot_core.evaluation.real_data_walk_forward_smoke.TusharePrimaryBaoStockFallbackProvider",
+        lambda: chain,
+    )
+
+    report = run_real_data_walk_forward_smoke(config("tushare_primary_baostock_fallback"))
+
+    assert report.windows_run == 2
+    assert "provider_fallback_used:tushare->baostock" in report.data_quality_warnings
+    assert all(call.symbol.startswith(("sz.", "sh.")) for call in fallback.requests)
 
 
 def test_tool_registry_wrapper_runs_with_fixture_provider() -> None:

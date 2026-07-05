@@ -15,6 +15,11 @@ from quantpilot_core.announcement_intelligence import (
     write_announcement_ingestion_artifacts,
 )
 from quantpilot_core.quant_firm import DeepSeekAdvisoryOutput, DeepSeekAdvisoryRole
+from quantpilot_core.real_data_provider import (
+    ProviderName,
+    TradingCalendar,
+    calendar_to_announcement_trading_calendar,
+)
 
 
 def provider_rows() -> pd.DataFrame:
@@ -162,6 +167,23 @@ def test_provider_rows_bare_codes_dedupe_and_date_only_pit() -> None:
     assert sz_event["content_quality_reason"] == "title_only_fallback"
     assert bool(sz_event["full_text_available"]) is False
     assert events["deduplication_key"].is_unique
+
+
+def test_real_calendar_injection_skips_weekday_holiday() -> None:
+    calendar = TradingCalendar(
+        sessions=(pd.Timestamp("2026-01-05").date(), pd.Timestamp("2026-01-06").date()),
+        provider=ProviderName.TUSHARE,
+    )
+    rows = provider_rows().copy()
+    rows.loc[0, "公告日期"] = "2026-01-01"
+
+    events = normalize_a_share_announcement_events(
+        rows.iloc[[0]],
+        ingestion_time="2026-01-03T00:00:00",
+        trading_calendar=calendar_to_announcement_trading_calendar(calendar),
+    )
+
+    assert events.iloc[0]["first_available_time"] == "2026-01-05T09:30:00"
 
 
 def test_genuine_body_like_text_classified_as_full_text(tmp_path: Path) -> None:
