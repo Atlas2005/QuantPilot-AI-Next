@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any, Mapping
+
+from quantpilot_core.information_agents import InformationAgentSignal
+from quantpilot_core.research_committee import ResearchCommitteeReport
+
 ANNOUNCEMENT_EVENT_COLUMNS = (
     "event_id",
     "source",
@@ -42,3 +48,44 @@ ANNOUNCEMENT_EVENT_COLUMNS = (
     "lineage_unavailable",
     "data_quality_flags",
 )
+
+
+@dataclass(frozen=True)
+class AnnouncementImpactAssessment:
+    """Traceable announcement-impact assessment for existing research workflows."""
+
+    canonical_symbol: str
+    announcement_title: str
+    event_type: str
+    announcement_timestamp: str
+    pit_availability_timestamp: str
+    source_provider: str
+    source_url_or_lineage: str
+    content_source: str
+    content_quality_status: str
+    content_quality_reason: str
+    full_text_available: bool
+    impact_assessment_source: str
+    event_impact_direction: str
+    event_impact_horizon: str
+    impact_severity: float
+    confidence: float
+    concise_evidence: tuple[str, ...]
+    model_status: str
+    schema_validation_status: str
+    cache_status: str
+    fallback_unavailable_reason: str | None = None
+    advisory_evidence_used: tuple[str, ...] = ()
+    advisory_tool_notes: tuple[str, ...] = ()
+    source_lineage: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class AnnouncementResearchCommitteeConclusion:
+    """Existing committee conclusion with announcement assessment traceability."""
+
+    assessments: tuple[AnnouncementImpactAssessment, ...]
+    information_signals: tuple[InformationAgentSignal, ...]
+    committee_report: ResearchCommitteeReport
+    integration_path: tuple[str, ...]
+    emitted_orders: tuple[Any, ...] = ()
