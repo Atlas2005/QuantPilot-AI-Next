@@ -604,8 +604,8 @@ def _session_report(
     state_before: DailyPaperLoopState,
     state_after: DailyPaperLoopState,
     config: DailyPaperLoopConfig,
-    loop_input: DailyPaperLoopInput,
-    calendar: TradingCalendar,
+    loop_input: DailyPaperLoopInput | None = None,
+    calendar: TradingCalendar | None = None,
 ) -> Mapping[str, Any]:
     report = {
         "schema_version": DAILY_LOOP_REPORT_SCHEMA_VERSION,
@@ -655,18 +655,33 @@ def _session_report(
     return _json_ready(report)
 
 
+def render_daily_paper_session_report(
+    *,
+    session_record: Mapping[str, Any],
+    state: DailyPaperLoopState,
+    config: DailyPaperLoopConfig,
+    status: str,
+) -> Mapping[str, Any]:
+    """Render a persisted daily-loop session using the canonical PR #111 schema."""
+
+    return _session_report(
+        session_record=session_record,
+        status=status,
+        state_before=state,
+        state_after=state,
+        config=config,
+    )
+
+
 def _idempotent_report(**kwargs: Any) -> Mapping[str, Any]:
     applied = kwargs["applied"]
     state = kwargs["state"]
     config = kwargs["config"]
-    return _session_report(
+    return render_daily_paper_session_report(
         session_record=applied,
-        status=DailyPaperLoopStatus.IDEMPOTENT_REPLAY.value,
-        state_before=state,
-        state_after=state,
+        state=state,
         config=config,
-        loop_input=kwargs["loop_input"],
-        calendar=kwargs["loop_input"].calendar,
+        status=DailyPaperLoopStatus.IDEMPOTENT_REPLAY.value,
     )
 
 
