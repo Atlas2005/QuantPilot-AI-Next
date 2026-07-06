@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, is_dataclass, replace
+from dataclasses import asdict, dataclass, is_dataclass, replace
 from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any, Mapping
@@ -70,6 +70,12 @@ PIT_TIME_FIELD_NAMES = {
 }
 
 
+@dataclass(frozen=True)
+class _BuySizingResult:
+    intent: OrderIntent | None
+    decision: Mapping[str, Any]
+
+
 def run_daily_paper_loop(
     loop_input: DailyPaperLoopInput,
     config: DailyPaperLoopConfig,
@@ -124,7 +130,7 @@ def run_daily_paper_loop(
         deepseek_config=DeepSeekClientConfig(enable_live_call=False),
     )
     allocation_plan = _allocation_plan(loop_input.candidate_report, account_before, prices_for_sizing, config)
-    proposal, order_provenance, skipped_orders = _build_order_proposal(
+    proposal, order_provenance, skipped_orders, sizing_decisions = _build_order_proposal(
         candidate_report=loop_input.candidate_report,
         allocation_plan=allocation_plan,
         account=account_before,
@@ -184,7 +190,9 @@ def run_daily_paper_loop(
         "status": DailyPaperLoopStatus.COMPLETED.value,
         "candidate_report": _candidate_report_payload(loop_input.candidate_report),
         "quant_firm_decision": _json_ready(quant_decision),
+        "quant_firm_candidate_actions": _quant_firm_candidate_actions(loop_input.candidate_report, quant_decision, loop_input.quant_firm_context),
         "allocation_plan": _json_ready(allocation_plan),
+        "sizing_decisions": tuple(sizing_decisions),
         "order_intents": _proposal_payload(proposal),
         "order_provenance": order_provenance,
         "skipped_orders": tuple(skipped_orders),
@@ -201,6 +209,10 @@ def run_daily_paper_loop(
         "information_provenance": dict(loop_input.information_provenance),
         "advisory_provenance": dict(loop_input.advisory_provenance),
         "limitations": _limitations(config),
+    }
+    session_record["next_session_state"] = {
+        "last_completed_session": session_id,
+        "seen_order_ids": tuple(sorted(state_after_execution.seen_order_ids)),
     }
     applied_sessions = {**dict(state_before.applied_sessions), session_id: session_record}
     state_after = replace_state_hash(
@@ -328,11 +340,13 @@ def _build_order_proposal(
     quant_firm_context: Mapping[str, Any],
     missing_decision_symbols: set[str],
     input_digest: str,
-) -> tuple[OrderIntentProposal, Mapping[str, Mapping[str, Any]], tuple[Mapping[str, Any], ...]]:
+) -> tuple[OrderIntentProposal, Mapping[str, Mapping[str, Any]], tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
     intents: list[OrderIntent] = []
     skipped: list[Mapping[str, Any]] = []
+    sizing_decisions: list[Mapping[str, Any]] = []
     provenance: dict[str, Mapping[str, Any]] = {}
     authorization = _quant_order_authorization(quant_decision, quant_firm_context)
+    candidates_by_symbol = {candidate.symbol: candidate for candidate in candidate_report.candidates}
     for symbol in sorted(missing_decision_symbols):
         skipped.append({"symbol": symbol, "reason": "missing_decision_market_data"})
     if allocation_plan is not None:
@@ -343,16 +357,21 @@ def _build_order_proposal(
             lot_size=config.min_order_lot,
         )
         for index, intent in enumerate(proposal.intents, start=1):
+            candidate_id = _candidate_id_for_symbol(candidates_by_symbol, intent.symbol)
             if not authorization["buy_authorized"]:
-                skipped.append({"symbol": intent.symbol, "reason": authorization["skip_reason"]})
+                sizing_decisions.append(_buy_sizing_decision(intent, account, prices_for_sizing, config.cost_assumptions, config, final_quantity=0, status="skipped", reason_codes=(authorization["skip_reason"],), candidate_id=candidate_id))
+                skipped.append({"symbol": intent.symbol, "side": OrderIntentSide.BUY.value, "candidate_id": candidate_id, "reason": authorization["skip_reason"]})
                 continue
-            if not intent.target_shares:
-                skipped.append({"symbol": intent.symbol, "reason": "less_than_one_valid_lot"})
+            if intent.side != OrderIntentSide.BUY or not intent.target_shares:
+                sizing_decisions.append(_buy_sizing_decision(intent, account, prices_for_sizing, config.cost_assumptions, config, final_quantity=0, status="skipped", reason_codes=("less_than_one_valid_lot",), candidate_id=candidate_id))
+                skipped.append({"symbol": intent.symbol, "side": OrderIntentSide.BUY.value, "candidate_id": candidate_id, "reason": "less_than_one_valid_lot"})
                 continue
-            resized = _resize_buy_intent(intent, account, prices_for_sizing, config.cost_assumptions, config)
-            if resized is None:
-                skipped.append({"symbol": intent.symbol, "reason": "insufficient_cash_below_one_lot"})
+            sizing = _resize_buy_intent(intent, account, prices_for_sizing, config.cost_assumptions, config, candidate_id=candidate_id)
+            if sizing.intent is None:
+                sizing_decisions.append(sizing.decision)
+                skipped.append({"symbol": intent.symbol, "side": OrderIntentSide.BUY.value, "candidate_id": candidate_id, "reason": tuple(sizing.decision.get("reason_codes", ("sizing_skip",)))[0]})
                 continue
+            resized = sizing.intent
             order_id = _order_id(session_id, resized.symbol, resized.side, int(resized.target_shares or 0), index)
             metadata = {
                 **dict(resized.metadata),
@@ -365,6 +384,7 @@ def _build_order_proposal(
             }
             final = replace(resized, metadata=metadata, run_label=session_id)
             intents.append(final)
+            sizing_decisions.append({**dict(sizing.decision), "order_id": order_id, "final_order_quantity": int(final.target_shares or 0), "result_status": "order_created"})
             provenance[order_id] = _order_provenance(final, candidate_report, quant_decision, allocation_plan, input_digest)
     for offset, candidate in enumerate(candidate_report.candidates, start=len(intents) + 1):
         if candidate.direction != "short":
@@ -372,15 +392,18 @@ def _build_order_proposal(
         if candidate.symbol in missing_decision_symbols:
             continue
         if not _is_exit_candidate(candidate):
-            skipped.append({"symbol": candidate.symbol, "reason": "non_actionable_sell_candidate"})
+            sizing_decisions.append(_sell_sizing_decision(candidate, account, config, final_quantity=0, status="skipped", reason_codes=("non_actionable_sell_candidate",)))
+            skipped.append({"symbol": candidate.symbol, "side": OrderIntentSide.SELL.value, "candidate_id": dict(candidate.metadata).get("candidate_id"), "reason": "non_actionable_sell_candidate"})
             continue
         if not authorization["sell_authorized"]:
-            skipped.append({"symbol": candidate.symbol, "reason": authorization["skip_reason"]})
+            sizing_decisions.append(_sell_sizing_decision(candidate, account, config, final_quantity=0, status="skipped", reason_codes=(authorization["skip_reason"],)))
+            skipped.append({"symbol": candidate.symbol, "side": OrderIntentSide.SELL.value, "candidate_id": dict(candidate.metadata).get("candidate_id"), "reason": authorization["skip_reason"]})
             continue
         quantity = int(account.positions.get(candidate.symbol, 0))
         sell_quantity = (quantity // int(config.min_order_lot)) * int(config.min_order_lot)
         if sell_quantity <= 0:
-            skipped.append({"symbol": candidate.symbol, "reason": "no_sellable_position_for_exit_candidate"})
+            sizing_decisions.append(_sell_sizing_decision(candidate, account, config, final_quantity=0, status="skipped", reason_codes=("no_sellable_position_for_exit_candidate",)))
+            skipped.append({"symbol": candidate.symbol, "side": OrderIntentSide.SELL.value, "candidate_id": dict(candidate.metadata).get("candidate_id"), "reason": "no_sellable_position_for_exit_candidate"})
             continue
         order_id = _order_id(session_id, candidate.symbol, OrderIntentSide.SELL, sell_quantity, offset)
         intent = OrderIntent(
@@ -406,6 +429,7 @@ def _build_order_proposal(
             },
         )
         intents.append(intent)
+        sizing_decisions.append(_sell_sizing_decision(candidate, account, config, final_quantity=sell_quantity, status="order_created", reason_codes=(), order_id=order_id))
         provenance[order_id] = _order_provenance(intent, candidate_report, quant_decision, allocation_plan, input_digest)
     proposal = OrderIntentProposal(
         intents=tuple(intents),
@@ -419,7 +443,7 @@ def _build_order_proposal(
             "order_count": len(intents),
         },
     )
-    return proposal, dict(sorted(provenance.items())), tuple(skipped)
+    return proposal, dict(sorted(provenance.items())), tuple(skipped), tuple(sizing_decisions)
 
 
 def _resize_buy_intent(
@@ -428,42 +452,219 @@ def _resize_buy_intent(
     prices: Mapping[str, float],
     cost_assumptions: PaperFillCostAssumptions,
     config: DailyPaperLoopConfig,
-) -> OrderIntent | None:
+    *,
+    candidate_id: str | None = None,
+) -> _BuySizingResult:
     if intent.side != OrderIntentSide.BUY:
-        return intent
-    if intent.symbol not in prices:
-        return None
-    price = float(prices[intent.symbol])
-    if price <= 0:
-        return None
+        return _BuySizingResult(intent=intent, decision={})
+    price = float(prices.get(intent.symbol, 0.0) or 0.0)
     current_quantity = int(account.positions.get(intent.symbol, 0))
-    equity = _equity(account, prices)
+    optimizer_target_quantity = int(intent.target_shares or 0)
+    equity = _equity(account, prices) if price > 0 else float(account.cash)
     max_position_value = max(0.0, equity * float(config.max_position_weight))
-    max_target_quantity = int((max_position_value // (price * int(config.min_order_lot))) * int(config.min_order_lot))
-    target_quantity = min(int(intent.target_shares or 0), max_target_quantity)
-    quantity = max(0, target_quantity - current_quantity)
-    quantity = (quantity // int(config.min_order_lot)) * int(config.min_order_lot)
-    if quantity < int(config.min_order_lot):
-        return None
+    max_target_quantity = int((max_position_value // (price * int(config.min_order_lot))) * int(config.min_order_lot)) if price > 0 else 0
+    target_quantity = min(optimizer_target_quantity, max_target_quantity)
+    desired_delta = max(0, target_quantity - current_quantity)
+    quantity = (desired_delta // int(config.min_order_lot)) * int(config.min_order_lot)
     reserve = max(0.0, equity * float(config.reserve_cash_weight))
+    cash_after_reserve = max(0.0, float(account.cash) - reserve)
     affordable = _max_affordable_buy_quantity(
-        cash=max(0.0, float(account.cash) - reserve),
+        cash=cash_after_reserve,
         price=price,
         lot=int(config.min_order_lot),
         cost_assumptions=cost_assumptions,
-    )
+    ) if price > 0 else 0
     resized_quantity = min(quantity, affordable)
-    if resized_quantity < int(config.min_order_lot):
-        return None
+    status = "order_created"
+    reasons: list[str] = []
+    if price <= 0:
+        status = "skipped"
+        reasons.append("invalid_non_positive_sizing_price")
+    elif current_quantity >= target_quantity:
+        status = "skipped"
+        reasons.append("current_position_at_or_above_target")
+    elif quantity < int(config.min_order_lot):
+        status = "skipped"
+        reasons.append("desired_delta_below_one_board_lot_after_position_cap")
+    elif resized_quantity < int(config.min_order_lot):
+        status = "skipped"
+        reasons.append("insufficient_cash_for_one_board_lot_after_reserve")
+    else:
+        if target_quantity < optimizer_target_quantity:
+            reasons.append("max_position_cap_reduction")
+        if quantity < desired_delta:
+            reasons.append("board_lot_reduction")
+        if resized_quantity < quantity:
+            reasons.append("cash_reduction")
     metadata = dict(intent.metadata)
+    metadata["optimizer_target_shares"] = optimizer_target_quantity
+    metadata["optimizer_target_position_shares"] = optimizer_target_quantity
     metadata["current_position_shares"] = current_quantity
+    metadata["max_position_weight_cap_shares"] = max_target_quantity
+    metadata["max_position_weight_applied_target_shares"] = target_quantity
     metadata["target_position_shares"] = target_quantity
+    metadata["desired_delta_shares"] = desired_delta
+    metadata["board_lot_applied_delta_shares"] = quantity
+    metadata["board_lot_rounded_delta_shares"] = quantity
+    metadata["available_cash_after_reserve"] = round(cash_after_reserve, 6)
+    metadata["affordable_quantity_cap_shares"] = affordable
+    metadata["cash_applied_quantity_shares"] = resized_quantity
+    metadata["available_cash_constrained_shares"] = affordable
+    metadata["final_order_quantity_shares"] = resized_quantity
     metadata["position_delta_shares"] = resized_quantity
+    metadata["sizing_compression_reasons"] = tuple(reasons if status == "order_created" else ())
     if resized_quantity < quantity:
         metadata["resized_order"] = True
         metadata["resize_reason"] = "available_cash_after_reserve"
         metadata["original_target_shares"] = quantity
-    return replace(intent, target_shares=resized_quantity, metadata=metadata)
+    decision = _buy_sizing_decision_from_values(
+        intent=replace(intent, metadata=metadata),
+        candidate_id=candidate_id,
+        order_id=None,
+        optimizer_target=optimizer_target_quantity,
+        current_quantity=current_quantity,
+        max_position_cap=max_target_quantity,
+        target_after_cap=target_quantity,
+        desired_delta=desired_delta,
+        board_lot_delta=quantity,
+        affordable=affordable,
+        cash_applied=resized_quantity,
+        final_quantity=resized_quantity if status == "order_created" else 0,
+        status=status,
+        reason_codes=tuple(reasons),
+    )
+    if status != "order_created":
+        return _BuySizingResult(intent=None, decision=decision)
+    return _BuySizingResult(intent=replace(intent, target_shares=resized_quantity, metadata=metadata), decision=decision)
+
+
+def _buy_sizing_decision(
+    intent: OrderIntent,
+    account: PaperAccount,
+    prices: Mapping[str, float],
+    cost_assumptions: PaperFillCostAssumptions,
+    config: DailyPaperLoopConfig,
+    *,
+    final_quantity: int,
+    status: str,
+    reason_codes: tuple[str, ...],
+    order_id: str | None = None,
+    candidate_id: str | None = None,
+) -> Mapping[str, Any]:
+    price = float(prices.get(intent.symbol, 0.0) or 0.0)
+    current_quantity = int(account.positions.get(intent.symbol, 0))
+    optimizer_target = int(intent.metadata.get("optimizer_target_shares", intent.target_shares or 0) or 0)
+    equity = _equity(account, prices) if price > 0 else float(account.cash)
+    max_position_value = max(0.0, equity * float(config.max_position_weight))
+    max_position_cap = int((max_position_value // (price * int(config.min_order_lot))) * int(config.min_order_lot)) if price > 0 else 0
+    target_after_cap = min(optimizer_target, max_position_cap)
+    desired_delta = max(0, target_after_cap - current_quantity)
+    board_lot_delta = (desired_delta // int(config.min_order_lot)) * int(config.min_order_lot)
+    reserve = max(0.0, equity * float(config.reserve_cash_weight))
+    cash_after_reserve = max(0.0, float(account.cash) - reserve)
+    affordable = _max_affordable_buy_quantity(
+        cash=cash_after_reserve,
+        price=price,
+        lot=int(config.min_order_lot),
+        cost_assumptions=cost_assumptions,
+    ) if price > 0 else 0
+    cash_applied = min(board_lot_delta, affordable)
+    return _buy_sizing_decision_from_values(
+        intent=intent,
+        candidate_id=candidate_id,
+        order_id=order_id,
+        optimizer_target=optimizer_target,
+        current_quantity=current_quantity,
+        max_position_cap=max_position_cap,
+        target_after_cap=target_after_cap,
+        desired_delta=desired_delta,
+        board_lot_delta=board_lot_delta,
+        affordable=affordable,
+        cash_applied=cash_applied,
+        final_quantity=final_quantity,
+        status=status,
+        reason_codes=reason_codes,
+    )
+
+
+def _buy_sizing_decision_from_values(
+    *,
+    intent: OrderIntent,
+    candidate_id: str | None,
+    order_id: str | None,
+    optimizer_target: int,
+    current_quantity: int,
+    max_position_cap: int,
+    target_after_cap: int,
+    desired_delta: int,
+    board_lot_delta: int,
+    affordable: int,
+    cash_applied: int,
+    final_quantity: int,
+    status: str,
+    reason_codes: tuple[str, ...],
+) -> Mapping[str, Any]:
+    return {
+        "symbol": intent.symbol,
+        "side": OrderIntentSide.BUY.value,
+        "order_id": order_id,
+        "candidate_id": candidate_id or dict(intent.metadata).get("candidate_id"),
+        "optimizer_target_quantity": optimizer_target,
+        "optimizer_target_position_shares": optimizer_target,
+        "current_position_shares": current_quantity,
+        "t_plus_one_sellable_quantity": None,
+        "t_plus_one_sellable_quantity_status": "not_applicable_buy",
+        "max_position_cap_shares": max_position_cap,
+        "target_after_max_position_cap_shares": target_after_cap,
+        "desired_delta_shares": desired_delta,
+        "quantity_after_board_lot_shares": board_lot_delta,
+        "affordable_quantity_cap_shares": affordable,
+        "quantity_after_cash_constraint_shares": cash_applied,
+        "final_order_quantity": int(final_quantity),
+        "result_status": status,
+        "reason_codes": tuple(reason_codes),
+    }
+
+
+def _candidate_id_for_symbol(candidates_by_symbol: Mapping[str, ExecutionCandidate], symbol: str) -> str | None:
+    candidate = candidates_by_symbol.get(symbol)
+    if candidate is None:
+        return None
+    return dict(candidate.metadata).get("candidate_id", candidate.symbol)
+
+
+def _sell_sizing_decision(
+    candidate: ExecutionCandidate,
+    account: PaperAccount,
+    config: DailyPaperLoopConfig,
+    *,
+    final_quantity: int,
+    status: str,
+    reason_codes: tuple[str, ...],
+    order_id: str | None = None,
+) -> Mapping[str, Any]:
+    current_quantity = int(account.positions.get(candidate.symbol, 0))
+    board_lot_quantity = (current_quantity // int(config.min_order_lot)) * int(config.min_order_lot)
+    return {
+        "symbol": candidate.symbol,
+        "side": OrderIntentSide.SELL.value,
+        "order_id": order_id,
+        "candidate_id": dict(candidate.metadata).get("candidate_id"),
+        "optimizer_target_quantity": current_quantity,
+        "optimizer_target_position_shares": 0,
+        "current_position_shares": current_quantity,
+        "t_plus_one_sellable_quantity": None,
+        "t_plus_one_sellable_quantity_status": "unavailable_until_execution_inventory_check",
+        "max_position_cap_shares": None,
+        "target_after_max_position_cap_shares": 0,
+        "desired_delta_shares": current_quantity,
+        "quantity_after_board_lot_shares": board_lot_quantity,
+        "affordable_quantity_cap_shares": None,
+        "quantity_after_cash_constraint_shares": None,
+        "final_order_quantity": int(final_quantity),
+        "result_status": status,
+        "reason_codes": tuple(reason_codes),
+    }
 
 
 def _max_affordable_buy_quantity(*, cash: float, price: float, lot: int, cost_assumptions: PaperFillCostAssumptions) -> int:
@@ -628,7 +829,9 @@ def _session_report(
         "advisory_provenance": dict(session_record["advisory_provenance"]),
         "candidate_report": session_record["candidate_report"],
         "quant_firm_report": session_record["quant_firm_decision"],
+        "quant_firm_candidate_actions": session_record.get("quant_firm_candidate_actions", ()),
         "allocation_sizing": session_record["allocation_plan"],
+        "sizing_decisions": session_record.get("sizing_decisions", ()),
         "order_intents": session_record["order_intents"],
         "order_provenance": session_record["order_provenance"],
         "skipped_orders": session_record["skipped_orders"],
@@ -645,10 +848,10 @@ def _session_report(
         "execution_summary": session_record["execution_summary"],
         "metadata_availability": session_record["metadata_availability"],
         "reconciliation_audit": session_record["reconciliation_audit"],
-        "next_session_state": {
+        "next_session_state": session_record.get("next_session_state", {
             "last_completed_session": state_after.last_completed_session,
             "seen_order_ids": tuple(sorted(state_after.execution_state.seen_order_ids)),
-        },
+        }),
         "leakage_audit": session_record["leakage_audit"],
         "limitations": session_record["limitations"],
     }
@@ -815,6 +1018,30 @@ def _quant_order_authorization(
         "requested_action": str(context.get("requested_action", "")),
         "skip_reason": "",
     }
+
+
+def _quant_firm_candidate_actions(
+    report: ExecutionCandidateReport,
+    quant_decision: QuantFirmDecisionReport,
+    context: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    authorization = _quant_order_authorization(quant_decision, context)
+    rows: list[Mapping[str, Any]] = []
+    for candidate in report.candidates:
+        action = "exit" if candidate.direction == "short" else "buy" if candidate.direction == "long" else "hold"
+        approved = authorization["sell_authorized"] if action == "exit" else authorization["buy_authorized"] if action == "buy" else True
+        rows.append(
+            {
+                "symbol": candidate.symbol,
+                "candidate_id": dict(candidate.metadata).get("candidate_id", candidate.symbol),
+                "candidate_direction": candidate.direction,
+                "requested_action": action,
+                "approved": bool(approved),
+                "reason_code": "approved" if approved else authorization["skip_reason"],
+                "quant_firm_final_recommendation": quant_decision.final_recommendation,
+            }
+        )
+    return tuple(rows)
 
 
 def _is_exit_candidate(candidate: ExecutionCandidate) -> bool:
