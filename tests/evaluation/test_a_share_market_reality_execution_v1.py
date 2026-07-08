@@ -177,8 +177,9 @@ def test_quantity_normalization_and_invalid_quantities_are_reported() -> None:
 
     assert invalid.outcomes[0].rejection_or_deferral_reason == "buy_quantity_below_lot_size"
     assert normalized.outcomes[0].normalized_quantity == 100
-    assert normalized.outcomes[0].rejection_or_deferral_reason == "buy_quantity_normalized_to_lot_increment"
-    assert normalized.outcomes[0].status == "rejected"
+    assert normalized.outcomes[0].status == "filled"
+    assert normalized.outcomes[0].filled_quantity == 100
+    assert normalized.outcomes[0].rule_diagnostics["buy_lot_normalization"]["triggered"] is True
 
 
 def test_suspension_unavailable_price_and_one_price_limit_are_rejected() -> None:
@@ -362,7 +363,10 @@ def test_production_scaleup_path_reports_rule_coverage_for_controlled_execution_
     assert metrics["attempted_order_count"] == 8
     assert outcomes["600000.SH:sell:200"]["status"] == "deferred"
     assert outcomes["600000.SH:sell:100"]["status"] == "filled"
-    assert outcomes["000001.SZ:buy:150"]["rejection_or_deferral_reason"] == "buy_quantity_normalized_to_lot_increment"
+    assert outcomes["000001.SZ:buy:150"]["status"] == "filled"
+    assert outcomes["000001.SZ:buy:150"]["filled_quantity"] == 100
+    assert outcomes["000001.SZ:buy:150"]["normalized_quantity"] == 100
+    assert outcomes["000001.SZ:buy:150"]["rule_diagnostics"]["buy_lot_normalization"]["triggered"] is True
     assert outcomes["000002.SZ:sell:75"]["status"] == "filled"
     assert outcomes["000003.SZ:buy:100"]["rejection_or_deferral_reason"] == "symbol_suspended"
     assert outcomes["000004.SZ:buy:100"]["rejection_or_deferral_reason"] == "one_price_limit_state_no_realistic_fill"
@@ -425,3 +429,185 @@ def _bar(date: pd.Timestamp, symbol: str, **overrides):
     }
     row.update(overrides)
     return row
+
+
+def test_execution_lot_size_per_order_assumptions_fallback_when_metadata_absent() -> None:
+    """Requested quantity 10, metadata has no lot, per-order assumptions lot=10, global=100 → order executes at lot 10."""
+    state = AShareExecutionAccountState(
+        account=PaperAccount(cash=1_000.0),
+    )
+    order = OrderIntent(
+        symbol="600000.SH",
+        side=OrderIntentSide.BUY,
+        target_shares=10,
+        metadata={"order_id": "lot-per-order-1"},
+        run_label="unit",
+    )
+    per_order_cost = PaperFillCostAssumptions(fee_rate=0.0, min_fee=0.0, stamp_tax_rate=0.0, slippage_bps=0.0, lot_size=10)
+    result = execute_a_share_reality_proposal(
+        proposal(order),
+        market_row(open=10.0),
+        state,
+        trade_date="2025-01-02",
+        cost_assumptions=zero_cost(),
+        fee_assumptions_by_order_id={"lot-per-order-1": per_order_cost},
+        config=AShareExecutionConfig(max_participation_rate=1.0),
+    )
+    assert result.outcomes[0].filled_quantity == 10
+    assert result.outcomes[0].status == "filled"
+
+
+def test_execution_lot_size_metadata_wins_over_per_order_assumptions() -> None:
+    """Metadata lot=20, per-order assumptions lot=10 → metadata 20 wins."""
+    state = AShareExecutionAccountState(
+        account=PaperAccount(cash=10_000.0),
+    )
+    order = OrderIntent(
+        symbol="600000.SH",
+        side=OrderIntentSide.BUY,
+        target_shares=40,
+        metadata={"order_id": "lot-meta-wins", "a_share_lot_size": 20},
+        run_label="unit",
+    )
+    per_order_cost = PaperFillCostAssumptions(fee_rate=0.0, min_fee=0.0, stamp_tax_rate=0.0, slippage_bps=0.0, lot_size=10)
+    result = execute_a_share_reality_proposal(
+        proposal(order),
+        market_row(open=10.0),
+        state,
+        trade_date="2025-01-02",
+        cost_assumptions=zero_cost(),
+        fee_assumptions_by_order_id={"lot-meta-wins": per_order_cost},
+        config=AShareExecutionConfig(max_participation_rate=1.0),
+    )
+    # lot=20 means 40 shares is valid (40 % 20 == 0)
+    assert result.outcomes[0].filled_quantity == 40
+    assert result.outcomes[0].status == "filled"
+
+
+def test_execution_lot_size_global_fallback_when_both_metadata_and_per_order_absent() -> None:
+    """Neither metadata lot nor per-order assumptions → config fallback."""
+    state = AShareExecutionAccountState(
+        account=PaperAccount(cash=10_000.0),
+    )
+    order = intent("600000.SH", OrderIntentSide.BUY, 100)
+    result = execute_a_share_reality_proposal(
+        proposal(order),
+        market_row(open=10.0),
+        state,
+        trade_date="2025-01-02",
+        cost_assumptions=PaperFillCostAssumptions(fee_rate=0.0, min_fee=0.0, stamp_tax_rate=0.0, slippage_bps=0.0, lot_size=50),
+        config=AShareExecutionConfig(max_participation_rate=1.0, buy_lot_size=100),
+    )
+    assert result.outcomes[0].filled_quantity == 100
+    assert result.outcomes[0].status == "filled"
+
+
+def test_execution_lot_config_fallback_when_metadata_and_per_order_absent_and_global_cost_lot_1() -> None:
+    """Test A: metadata no lot, per-order no entry, global cost_assumptions.lot_size=1, cfg lot=100, requested=150 → normalized to 100 and filled."""
+    state = AShareExecutionAccountState(
+        account=PaperAccount(cash=10_000.0),
+    )
+    order = intent("600000.SH", OrderIntentSide.BUY, 150)
+    result = execute_a_share_reality_proposal(
+        proposal(order),
+        market_row(open=10.0),
+        state,
+        trade_date="2025-01-02",
+        cost_assumptions=PaperFillCostAssumptions(fee_rate=0.0, min_fee=0.0, stamp_tax_rate=0.0, slippage_bps=0.0, lot_size=1),
+        config=AShareExecutionConfig(max_participation_rate=1.0, buy_lot_size=100),
+    )
+    assert result.outcomes[0].status == "filled"
+    assert result.outcomes[0].filled_quantity == 100
+    assert result.outcomes[0].normalized_quantity == 100
+    assert result.outcomes[0].rule_diagnostics["buy_lot_normalization"]["triggered"] is True
+
+
+def test_execution_lot_per_order_explicit_lot_10_executes() -> None:
+    """Test B: explicit per-order lot=10, requested=10 → executes."""
+    state = AShareExecutionAccountState(
+        account=PaperAccount(cash=1_000.0),
+    )
+    order = OrderIntent(
+        symbol="600000.SH",
+        side=OrderIntentSide.BUY,
+        target_shares=10,
+        metadata={"order_id": "lot-per-order-10"},
+        run_label="unit",
+    )
+    per_order_cost = PaperFillCostAssumptions(fee_rate=0.0, min_fee=0.0, stamp_tax_rate=0.0, slippage_bps=0.0, lot_size=10)
+    result = execute_a_share_reality_proposal(
+        proposal(order),
+        market_row(open=10.0),
+        state,
+        trade_date="2025-01-02",
+        cost_assumptions=PaperFillCostAssumptions(fee_rate=0.0, min_fee=0.0, stamp_tax_rate=0.0, slippage_bps=0.0, lot_size=100),
+        fee_assumptions_by_order_id={"lot-per-order-10": per_order_cost},
+        config=AShareExecutionConfig(max_participation_rate=1.0, buy_lot_size=100),
+    )
+    assert result.outcomes[0].filled_quantity == 10
+    assert result.outcomes[0].status == "filled"
+    assert result.outcomes[0].rejection_or_deferral_reason is None
+
+
+def test_execution_lot_metadata_lot_20_wins_over_per_order_lot_10() -> None:
+    """Test C: metadata lot=20, per-order lot=10 → metadata wins."""
+    state = AShareExecutionAccountState(
+        account=PaperAccount(cash=10_000.0),
+    )
+    order = OrderIntent(
+        symbol="600000.SH",
+        side=OrderIntentSide.BUY,
+        target_shares=40,
+        metadata={"order_id": "lot-meta-over-per", "a_share_lot_size": 20},
+        run_label="unit",
+    )
+    per_order_cost = PaperFillCostAssumptions(fee_rate=0.0, min_fee=0.0, stamp_tax_rate=0.0, slippage_bps=0.0, lot_size=10)
+    result = execute_a_share_reality_proposal(
+        proposal(order),
+        market_row(open=10.0),
+        state,
+        trade_date="2025-01-02",
+        cost_assumptions=PaperFillCostAssumptions(fee_rate=0.0, min_fee=0.0, stamp_tax_rate=0.0, slippage_bps=0.0, lot_size=100),
+        fee_assumptions_by_order_id={"lot-meta-over-per": per_order_cost},
+        config=AShareExecutionConfig(max_participation_rate=1.0, buy_lot_size=100),
+    )
+    assert result.outcomes[0].filled_quantity == 40
+    assert result.outcomes[0].status == "filled"
+    assert result.outcomes[0].rejection_or_deferral_reason is None
+
+
+def test_execution_lot_config_lot_200_rejects_100_as_below_lot() -> None:
+    """Test D: config lot=200, global cost_assumptions lot=50, no metadata/per-order, requested=100 → below-lot reject."""
+    state = AShareExecutionAccountState(
+        account=PaperAccount(cash=10_000.0),
+    )
+    order = intent("600000.SH", OrderIntentSide.BUY, 100)
+    result = execute_a_share_reality_proposal(
+        proposal(order),
+        market_row(open=10.0),
+        state,
+        trade_date="2025-01-02",
+        cost_assumptions=PaperFillCostAssumptions(fee_rate=0.0, min_fee=0.0, stamp_tax_rate=0.0, slippage_bps=0.0, lot_size=50),
+        config=AShareExecutionConfig(max_participation_rate=1.0, buy_lot_size=200),
+    )
+    assert result.outcomes[0].filled_quantity == 0
+    assert result.outcomes[0].rejection_or_deferral_reason == "buy_quantity_below_lot_size"
+
+
+def test_sell_odd_lot_rejection_still_rejects() -> None:
+    """Sell odd-lot handling (non-buy_quantity_normalized) must still reject — not silently pass."""
+    state = AShareExecutionAccountState(
+        account=PaperAccount(cash=10_000.0, positions={"600000.SH": 75}, average_costs={"600000.SH": 10.0}),
+        settlement_lots=(SettlementLot("600000.SH", 75, "2025-01-01"),),
+    )
+    order = intent("600000.SH", OrderIntentSide.SELL, 75)
+    result = execute_a_share_reality_proposal(
+        proposal(order),
+        market_row(open=10.0),
+        state,
+        trade_date="2025-01-02",
+        cost_assumptions=zero_cost(),
+        config=AShareExecutionConfig(max_participation_rate=1.0, odd_lot_sell_policy="reject"),
+    )
+    assert result.outcomes[0].rejection_or_deferral_reason is not None
+    assert "odd_lot" in str(result.outcomes[0].rejection_or_deferral_reason).lower()

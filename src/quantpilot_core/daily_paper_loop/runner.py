@@ -41,7 +41,7 @@ from quantpilot_core.daily_paper_loop.state import (
     snapshot_from_execution_state,
     state_to_payload,
 )
-from quantpilot_core.execution_candidate import ExecutionCandidate, ExecutionCandidateReport
+from quantpilot_core.execution_candidate import ExecutionCandidate, ExecutionCandidateReport, candidate_report_aggregate_score
 from quantpilot_core.execution_optimizer import OptimizationAssumption, build_portfolio_allocation_plan
 from quantpilot_core.order_intent import (
     OrderIntent,
@@ -53,6 +53,16 @@ from quantpilot_core.order_intent import (
 from quantpilot_core.paper_trading import PaperAccount, PaperFillCostAssumptions, account_symbol_pnl_breakdown
 from quantpilot_core.quant_firm import DeepSeekClientConfig, QuantFirmDecisionReport, is_quant_firm_approved, run_quant_firm_decision_cycle
 from quantpilot_core.real_data_provider import ProviderName, TradingCalendar
+from quantpilot_core.runtime_account import (
+    BrokerFeeProfile,
+    RuntimeFeeModel,
+    account_executable_candidate_report,
+    candidate_action_side,
+    estimate_pre_trade_cash_requirement,
+    fee_assumptions_from_profile,
+    resolve_runtime_fee_profile,
+)
+from quantpilot_core.runtime_account.policy import instrument_rules_for_candidate, permission_denial_reason
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 CANONICAL_DIRECTIONS = {"long", "short", "flat"}
@@ -114,8 +124,35 @@ def run_daily_paper_loop(
 
     account_before = state_before.execution_state.account
     prices_for_sizing = dict(market_evidence["decision_prices"])
+    executable_buy_prices = dict(market_evidence["executable_buy_prices"])
+    equity_before = _equity(account_before, prices_for_sizing)
+    reserve_before = max(0.0, equity_before * float(config.reserve_cash_weight))
+    fee_resolution = resolve_runtime_fee_profile(
+        broker_returned_account_fee_profile=config.broker_returned_account_fee_profile,
+        persisted_user_account_fee_profile=config.persisted_user_account_fee_profile,
+        engineering_fallback=_engineering_fallback_fee_profile(config.cost_assumptions),
+    )
+    candidate_filter = account_executable_candidate_report(
+        loop_input.candidate_report,
+        capabilities=config.account_capabilities,
+        positions=account_before.positions,
+        prices=prices_for_sizing,
+        available_cash=max(0.0, float(account_before.cash) - reserve_before),
+        fee_profile=fee_resolution.profile,
+        market_rows=loop_input.market.decision_rows_by_symbol,
+        executable_buy_prices=executable_buy_prices,
+    )
+    pipeline_meta = dict(loop_input.quant_firm_context.get("candidate_pipeline", {}) or {})
+    original_selected = tuple(pipeline_meta.get("original_selected_symbols", ()) or ())
+    forwarded_standbys = tuple(pipeline_meta.get("forwarded_standby_symbols", ()) or ())
+    final_decision = _resolve_final_account_decision(
+        candidate_filter,
+        original_selected_symbols=original_selected if original_selected else None,
+        forwarded_standby_symbols=forwarded_standbys if forwarded_standbys else None,
+    )
+    account_candidate_report = final_decision.account_executable_report
     quant_decision = run_quant_firm_decision_cycle(
-        execution_candidate_report=loop_input.candidate_report,
+        execution_candidate_report=account_candidate_report,
         portfolio_allocation_plan=None,
         vectorbt_replay_result=loop_input.quant_firm_context.get("vectorbt_replay_result"),
         cycle_id=session_id,
@@ -129,12 +166,15 @@ def run_daily_paper_loop(
         include_deepseek_advisory=False,
         deepseek_config=DeepSeekClientConfig(enable_live_call=False),
     )
-    allocation_plan = _allocation_plan(loop_input.candidate_report, account_before, prices_for_sizing, config)
-    proposal, order_provenance, skipped_orders, sizing_decisions = _build_order_proposal(
-        candidate_report=loop_input.candidate_report,
+    allocation_plan = _allocation_plan(account_candidate_report, account_before, prices_for_sizing, config, allocation_buy_prices=executable_buy_prices)
+    proposal, order_provenance, skipped_orders, sizing_decisions, fee_assumptions_by_order_id = _build_order_proposal(
+        candidate_report=account_candidate_report,
+        account_filter=candidate_filter,
+        fee_resolution=fee_resolution,
         allocation_plan=allocation_plan,
         account=account_before,
         prices_for_sizing=prices_for_sizing,
+        executable_buy_prices=executable_buy_prices,
         config=config,
         session_id=session_id,
         decision_session=decision_session,
@@ -157,7 +197,8 @@ def run_daily_paper_loop(
         execution_rows,
         state_before.execution_state,
         trade_date=execution_session.isoformat(),
-        cost_assumptions=config.cost_assumptions,
+        cost_assumptions=fee_assumptions_from_profile(fee_resolution.profile, "stock", side="buy"),
+        fee_assumptions_by_order_id=fee_assumptions_by_order_id,
         config=AShareExecutionConfig(max_participation_rate=0.10),
     )
     state_after_execution = _mark_state_to_valuation(execution_result.state, valuation_prices)
@@ -189,12 +230,18 @@ def run_daily_paper_loop(
         "state_hash_before": state_before.state_hash,
         "status": DailyPaperLoopStatus.COMPLETED.value,
         "candidate_report": _candidate_report_payload(loop_input.candidate_report),
+        "quant_firm_input_candidate_report": _candidate_report_payload(account_candidate_report),
+        "account_executable_universe": _account_filter_payload(candidate_filter),
+        "account_final_decision": _final_decision_payload(final_decision),
+        "account_capabilities": _account_capabilities_payload(config.account_capabilities),
+        "fee_resolution": _fee_resolution_payload(fee_resolution),
         "quant_firm_decision": _json_ready(quant_decision),
-        "quant_firm_candidate_actions": _quant_firm_candidate_actions(loop_input.candidate_report, quant_decision, loop_input.quant_firm_context),
+        "quant_firm_candidate_actions": _quant_firm_candidate_actions(account_candidate_report, quant_decision, loop_input.quant_firm_context),
         "allocation_plan": _json_ready(allocation_plan),
         "sizing_decisions": tuple(sizing_decisions),
         "order_intents": _proposal_payload(proposal),
         "order_provenance": order_provenance,
+        "fee_assumptions_by_order_id": _json_ready(fee_assumptions_by_order_id),
         "skipped_orders": tuple(skipped_orders),
         "execution_outcomes": tuple(_json_ready(outcome) for outcome in execution_result.outcomes),
         "execution_summary": summarize_execution_outcomes(execution_result.outcomes),
@@ -304,11 +351,20 @@ def _allocation_plan(
     account: PaperAccount,
     prices_for_sizing: Mapping[str, float],
     config: DailyPaperLoopConfig,
+    *,
+    allocation_buy_prices: Mapping[str, float] | None = None,
 ) -> Any | None:
     long_candidates = tuple(candidate for candidate in report.candidates if candidate.direction == "long" and candidate.symbol in prices_for_sizing)
     if not long_candidates:
         return None
+    # Equity always uses D close (prices_for_sizing).
     equity = _equity(account, prices_for_sizing)
+    # Optimizer last_prices use valid buy references where available.
+    optimizer_prices = dict(prices_for_sizing)
+    if allocation_buy_prices is not None:
+        for sym in optimizer_prices:
+            if sym in allocation_buy_prices:
+                optimizer_prices[sym] = allocation_buy_prices[sym]
     long_report = ExecutionCandidateReport(
         candidates=long_candidates[: max(1, int(config.target_position_count))],
         aggregate_score=report.aggregate_score,
@@ -316,10 +372,10 @@ def _allocation_plan(
     )
     return build_portfolio_allocation_plan(
         long_report,
-        last_prices=prices_for_sizing,
+        last_prices=optimizer_prices,
         assumptions=OptimizationAssumption(
             capital=max(equity, 0.01),
-            lot_size=int(config.min_order_lot),
+            lot_size=1,
             fee_rate=config.cost_assumptions.fee_rate,
             slippage_bps=config.cost_assumptions.slippage_bps,
         ),
@@ -329,9 +385,12 @@ def _allocation_plan(
 def _build_order_proposal(
     *,
     candidate_report: ExecutionCandidateReport,
+    account_filter: Any,
+    fee_resolution: Any,
     allocation_plan: Any | None,
     account: PaperAccount,
     prices_for_sizing: Mapping[str, float],
+    executable_buy_prices: Mapping[str, float] | None = None,
     config: DailyPaperLoopConfig,
     session_id: str,
     decision_session: date,
@@ -340,13 +399,25 @@ def _build_order_proposal(
     quant_firm_context: Mapping[str, Any],
     missing_decision_symbols: set[str],
     input_digest: str,
-) -> tuple[OrderIntentProposal, Mapping[str, Mapping[str, Any]], tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
+) -> tuple[OrderIntentProposal, Mapping[str, Mapping[str, Any]], tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...], Mapping[str, PaperFillCostAssumptions]]:
     intents: list[OrderIntent] = []
     skipped: list[Mapping[str, Any]] = []
     sizing_decisions: list[Mapping[str, Any]] = []
     provenance: dict[str, Mapping[str, Any]] = {}
+    fee_assumptions_by_order_id: dict[str, PaperFillCostAssumptions] = {}
     authorization = _quant_order_authorization(quant_decision, quant_firm_context)
     candidates_by_symbol = {candidate.symbol: candidate for candidate in candidate_report.candidates}
+    long_allocation_participant_count = _allocation_participant_count(allocation_plan)
+    for exclusion in account_filter.exclusions:
+        decision = _excluded_sizing_decision(
+            exclusion=exclusion,
+            account=account,
+            prices=prices_for_sizing,
+            config=config,
+            fee_resolution=fee_resolution,
+        )
+        sizing_decisions.append(decision)
+        skipped.append({"symbol": exclusion.symbol, "side": exclusion.side, "candidate_id": exclusion.candidate_id, "reason": exclusion.reason})
     for symbol in sorted(missing_decision_symbols):
         skipped.append({"symbol": symbol, "reason": "missing_decision_market_data"})
     if allocation_plan is not None:
@@ -358,15 +429,37 @@ def _build_order_proposal(
         )
         for index, intent in enumerate(proposal.intents, start=1):
             candidate_id = _candidate_id_for_symbol(candidates_by_symbol, intent.symbol)
+            candidate = candidates_by_symbol.get(intent.symbol)
+            rules = instrument_rules_for_candidate(candidate, price=prices_for_sizing.get(intent.symbol)) if candidate is not None else None
+            intent = _intent_with_rule_lot_target(intent, rules, prices_for_sizing, executable_buy_prices=executable_buy_prices)
+            intent_cost_assumptions = fee_assumptions_from_profile(
+                fee_resolution.profile,
+                rules.instrument_type if rules is not None else "stock",
+                side="buy",
+                lot_size=rules.lot_size if rules is not None else config.min_order_lot,
+            )
             if not authorization["buy_authorized"]:
-                sizing_decisions.append(_buy_sizing_decision(intent, account, prices_for_sizing, config.cost_assumptions, config, final_quantity=0, status="skipped", reason_codes=(authorization["skip_reason"],), candidate_id=candidate_id))
+                sizing_decisions.append(_buy_sizing_decision(intent, account, prices_for_sizing, intent_cost_assumptions, config, final_quantity=0, status="skipped", reason_codes=(authorization["skip_reason"],), candidate_id=candidate_id, fee_profile_provenance=fee_resolution.provenance.value))
                 skipped.append({"symbol": intent.symbol, "side": OrderIntentSide.BUY.value, "candidate_id": candidate_id, "reason": authorization["skip_reason"]})
                 continue
             if intent.side != OrderIntentSide.BUY or not intent.target_shares:
-                sizing_decisions.append(_buy_sizing_decision(intent, account, prices_for_sizing, config.cost_assumptions, config, final_quantity=0, status="skipped", reason_codes=("less_than_one_valid_lot",), candidate_id=candidate_id))
-                skipped.append({"symbol": intent.symbol, "side": OrderIntentSide.BUY.value, "candidate_id": candidate_id, "reason": "less_than_one_valid_lot"})
+                reason = _no_positive_allocation_reason(candidate)
+                sizing_decisions.append(_allocation_skip_decision(intent, candidate_id=candidate_id, reason=reason, fee_resolution=fee_resolution))
+                skipped.append({"symbol": intent.symbol, "side": _enum_value(intent.side), "candidate_id": candidate_id, "reason": reason})
                 continue
-            sizing = _resize_buy_intent(intent, account, prices_for_sizing, config.cost_assumptions, config, candidate_id=candidate_id)
+            sizing = _resize_buy_intent(
+                intent,
+                account,
+                prices_for_sizing,
+                intent_cost_assumptions,
+                config,
+                candidate=candidate,
+                executable_candidate_count=long_allocation_participant_count,
+                fee_resolution=fee_resolution,
+                account_capabilities=config.account_capabilities,
+                executable_buy_prices=executable_buy_prices,
+                candidate_id=candidate_id,
+            )
             if sizing.intent is None:
                 sizing_decisions.append(sizing.decision)
                 skipped.append({"symbol": intent.symbol, "side": OrderIntentSide.BUY.value, "candidate_id": candidate_id, "reason": tuple(sizing.decision.get("reason_codes", ("sizing_skip",)))[0]})
@@ -381,31 +474,34 @@ def _build_order_proposal(
                 "decision_session": decision_session.isoformat(),
                 "execution_session": execution_session.isoformat(),
                 "input_digest": input_digest,
+                "fee_profile_id": fee_resolution.profile.profile_id,
+                "fee_profile_provenance": fee_resolution.provenance.value,
+                "fee_profile_broker_truth": bool(fee_resolution.broker_truth),
             }
             final = replace(resized, metadata=metadata, run_label=session_id)
             intents.append(final)
+            fee_assumptions_by_order_id[order_id] = intent_cost_assumptions
             sizing_decisions.append({**dict(sizing.decision), "order_id": order_id, "final_order_quantity": int(final.target_shares or 0), "result_status": "order_created"})
             provenance[order_id] = _order_provenance(final, candidate_report, quant_decision, allocation_plan, input_digest)
     for offset, candidate in enumerate(candidate_report.candidates, start=len(intents) + 1):
-        if candidate.direction != "short":
+        if candidate_action_side(candidate) != "sell":
             continue
         if candidate.symbol in missing_decision_symbols:
             continue
-        if not _is_exit_candidate(candidate):
-            sizing_decisions.append(_sell_sizing_decision(candidate, account, config, final_quantity=0, status="skipped", reason_codes=("non_actionable_sell_candidate",)))
-            skipped.append({"symbol": candidate.symbol, "side": OrderIntentSide.SELL.value, "candidate_id": dict(candidate.metadata).get("candidate_id"), "reason": "non_actionable_sell_candidate"})
-            continue
+        rules = instrument_rules_for_candidate(candidate, price=prices_for_sizing.get(candidate.symbol))
+        sell_lot = max(1, int(rules.lot_size))
         if not authorization["sell_authorized"]:
-            sizing_decisions.append(_sell_sizing_decision(candidate, account, config, final_quantity=0, status="skipped", reason_codes=(authorization["skip_reason"],)))
+            sizing_decisions.append(_sell_sizing_decision(candidate, account, config, lot_size=sell_lot, final_quantity=0, status="skipped", reason_codes=(authorization["skip_reason"],), fee_profile_provenance=fee_resolution.provenance.value))
             skipped.append({"symbol": candidate.symbol, "side": OrderIntentSide.SELL.value, "candidate_id": dict(candidate.metadata).get("candidate_id"), "reason": authorization["skip_reason"]})
             continue
         quantity = int(account.positions.get(candidate.symbol, 0))
-        sell_quantity = (quantity // int(config.min_order_lot)) * int(config.min_order_lot)
+        sell_quantity = (quantity // sell_lot) * sell_lot
         if sell_quantity <= 0:
-            sizing_decisions.append(_sell_sizing_decision(candidate, account, config, final_quantity=0, status="skipped", reason_codes=("no_sellable_position_for_exit_candidate",)))
+            sizing_decisions.append(_sell_sizing_decision(candidate, account, config, lot_size=sell_lot, final_quantity=0, status="skipped", reason_codes=("no_sellable_position_for_exit_candidate",), fee_profile_provenance=fee_resolution.provenance.value))
             skipped.append({"symbol": candidate.symbol, "side": OrderIntentSide.SELL.value, "candidate_id": dict(candidate.metadata).get("candidate_id"), "reason": "no_sellable_position_for_exit_candidate"})
             continue
         order_id = _order_id(session_id, candidate.symbol, OrderIntentSide.SELL, sell_quantity, offset)
+        sell_cost_assumptions = fee_assumptions_from_profile(fee_resolution.profile, rules.instrument_type, side="sell", lot_size=rules.lot_size)
         intent = OrderIntent(
             symbol=candidate.symbol,
             side=OrderIntentSide.SELL,
@@ -426,10 +522,17 @@ def _build_order_proposal(
                 "execution_session": execution_session.isoformat(),
                 "input_digest": input_digest,
                 "quant_firm_requested_action": authorization["requested_action"],
+                "instrument_type": rules.instrument_type,
+                "a_share_lot_size": sell_lot,
+                "instrument_rules": _json_ready(rules),
+                "fee_profile_id": fee_resolution.profile.profile_id,
+                "fee_profile_provenance": fee_resolution.provenance.value,
+                "fee_profile_broker_truth": bool(fee_resolution.broker_truth),
             },
         )
         intents.append(intent)
-        sizing_decisions.append(_sell_sizing_decision(candidate, account, config, final_quantity=sell_quantity, status="order_created", reason_codes=(), order_id=order_id))
+        fee_assumptions_by_order_id[order_id] = sell_cost_assumptions
+        sizing_decisions.append(_sell_sizing_decision(candidate, account, config, lot_size=sell_lot, final_quantity=sell_quantity, status="order_created", reason_codes=(), order_id=order_id, fee_profile_provenance=fee_resolution.provenance.value))
         provenance[order_id] = _order_provenance(intent, candidate_report, quant_decision, allocation_plan, input_digest)
     proposal = OrderIntentProposal(
         intents=tuple(intents),
@@ -441,9 +544,50 @@ def _build_order_proposal(
             "strategy_id": config.strategy_id,
             "no_broker_live_execution": True,
             "order_count": len(intents),
+            "account_executable_candidate_count": len(candidate_report.candidates),
+            "fee_profile_provenance": fee_resolution.provenance.value,
         },
     )
-    return proposal, dict(sorted(provenance.items())), tuple(skipped), tuple(sizing_decisions)
+    return proposal, dict(sorted(provenance.items())), tuple(skipped), tuple(sizing_decisions), dict(sorted(fee_assumptions_by_order_id.items()))
+
+
+def _allocation_participant_count(allocation_plan: Any | None) -> int:
+    """Return the count of allocations with positive target_shares from the plan."""
+    if allocation_plan is None:
+        return 0
+    allocs = getattr(allocation_plan, "allocations", ()) or ()
+    return sum(1 for a in allocs if getattr(a, "target_shares", 0) > 0)
+
+
+def _intent_with_rule_lot_target(
+    intent: OrderIntent,
+    rules: Any | None,
+    prices: Mapping[str, float],
+    *,
+    executable_buy_prices: Mapping[str, float] | None = None,
+) -> OrderIntent:
+    if rules is None or intent.side != OrderIntentSide.BUY:
+        return intent
+    lot = max(1, int(rules.lot_size))
+    d_close = float(prices.get(intent.symbol, 0.0) or 0.0)
+    ebp = dict(executable_buy_prices or {})
+    sizing_price = float(ebp.get(intent.symbol, d_close)) if executable_buy_prices is not None else d_close
+    target_shares = int(intent.target_shares or 0)
+    if sizing_price > 0:
+        target_notional = float(dict(intent.metadata).get("target_notional", 0.0) or 0.0)
+        if target_notional > 0:
+            target_shares = int((target_notional / sizing_price) // lot) * lot
+        else:
+            target_shares = (target_shares // lot) * lot
+    elif target_shares > 0:
+        target_shares = (target_shares // lot) * lot
+    metadata = {
+        **dict(intent.metadata),
+        "a_share_lot_size": lot,
+        "instrument_type": rules.instrument_type,
+        "instrument_rules": _json_ready(rules),
+    }
+    return replace(intent, side=OrderIntentSide.BUY if target_shares > 0 else intent.side, target_shares=target_shares or None, metadata=metadata)
 
 
 def _resize_buy_intent(
@@ -453,45 +597,107 @@ def _resize_buy_intent(
     cost_assumptions: PaperFillCostAssumptions,
     config: DailyPaperLoopConfig,
     *,
+    candidate: ExecutionCandidate | None,
+    executable_candidate_count: int,
+    fee_resolution: Any,
+    account_capabilities: Any | None,
+    executable_buy_prices: Mapping[str, float] | None = None,
     candidate_id: str | None = None,
 ) -> _BuySizingResult:
     if intent.side != OrderIntentSide.BUY:
         return _BuySizingResult(intent=intent, decision={})
     price = float(prices.get(intent.symbol, 0.0) or 0.0)
+    ebp = dict(executable_buy_prices or {})
+    buy_price_missing = executable_buy_prices is not None and intent.symbol not in ebp and price > 0
+    # Equity always uses D close (price); sizing uses executable_buy_price when available.
+    sizing_price = float(ebp.get(intent.symbol, price)) if not buy_price_missing else price
     current_quantity = int(account.positions.get(intent.symbol, 0))
     optimizer_target_quantity = int(intent.target_shares or 0)
     equity = _equity(account, prices) if price > 0 else float(account.cash)
-    max_position_value = max(0.0, equity * float(config.max_position_weight))
-    max_target_quantity = int((max_position_value // (price * int(config.min_order_lot))) * int(config.min_order_lot)) if price > 0 else 0
-    target_quantity = min(optimizer_target_quantity, max_target_quantity)
-    desired_delta = max(0, target_quantity - current_quantity)
-    quantity = (desired_delta // int(config.min_order_lot)) * int(config.min_order_lot)
+    rules = instrument_rules_for_candidate(candidate, price=sizing_price) if candidate is not None else None
+    instrument_type = rules.instrument_type if rules is not None else str(dict(intent.metadata).get("instrument_type", "stock"))
+    lot_size = int(rules.lot_size) if rules is not None else int(config.min_order_lot)
+    one_lot_estimate = estimate_pre_trade_cash_requirement(
+        fee_profile=fee_resolution.profile,
+        instrument_type=instrument_type,
+        side="buy",
+        quantity=lot_size,
+        reference_price=sizing_price,
+    ) if sizing_price > 0 else None
+    one_lot_cost = one_lot_estimate.cash_required if one_lot_estimate is not None else float("inf")
     reserve = max(0.0, equity * float(config.reserve_cash_weight))
     cash_after_reserve = max(0.0, float(account.cash) - reserve)
+    policy = _dynamic_position_budget(
+        equity=equity,
+        post_reserve_cash=cash_after_reserve,
+        price=sizing_price,
+        current_quantity=current_quantity,
+        optimizer_target_quantity=optimizer_target_quantity,
+        lot_size=lot_size,
+        config=config,
+        one_lot_all_in_cost=one_lot_cost,
+        executable_candidate_count=executable_candidate_count,
+    )
+    max_target_quantity = int(policy["budget_cap_shares"])
+    target_quantity = min(optimizer_target_quantity, max_target_quantity)
+    buy_increment_restriction: str | None = None
+    if current_quantity > 0 and optimizer_target_quantity > current_quantity:
+        if buy_price_missing:
+            buy_increment_restriction = "buy_increment_missing_price"
+        elif price <= 0:
+            buy_increment_restriction = "buy_increment_missing_price"
+        elif rules is not None:
+            if rules.is_suspended:
+                buy_increment_restriction = "buy_increment_suspended"
+            elif not rules.buy_allowed:
+                buy_increment_restriction = "buy_increment_not_permitted"
+        if buy_increment_restriction is None and account_capabilities is not None and rules is not None:
+            if permission_denial_reason(account_capabilities, rules, side="buy") is not None:
+                buy_increment_restriction = "buy_increment_not_permitted"
+        if buy_increment_restriction is None and one_lot_cost > cash_after_reserve:
+            buy_increment_restriction = "buy_increment_unaffordable"
+    if buy_increment_restriction is not None:
+        target_quantity = min(target_quantity, current_quantity)
+    if (
+        buy_increment_restriction is None
+        and target_quantity < current_quantity + lot_size
+        and optimizer_target_quantity >= lot_size
+        and policy["one_lot_accommodation_allowed"]
+    ):
+        target_quantity = current_quantity + lot_size
+    desired_delta = max(0, target_quantity - current_quantity)
+    quantity = (desired_delta // lot_size) * lot_size
     affordable = _max_affordable_buy_quantity(
         cash=cash_after_reserve,
-        price=price,
-        lot=int(config.min_order_lot),
-        cost_assumptions=cost_assumptions,
-    ) if price > 0 else 0
+        price=sizing_price,
+        lot=lot_size,
+        fee_profile=fee_resolution.profile,
+        instrument_type=instrument_type,
+        side="buy",
+    ) if sizing_price > 0 else 0
     resized_quantity = min(quantity, affordable)
     status = "order_created"
     reasons: list[str] = []
-    if price <= 0:
+    if buy_increment_restriction is not None and current_quantity > 0 and current_quantity >= target_quantity:
+        status = "skipped"
+        reasons.append(buy_increment_restriction)
+    elif price <= 0:
         status = "skipped"
         reasons.append("invalid_non_positive_sizing_price")
-    elif current_quantity >= target_quantity:
+    elif current_quantity > 0 and current_quantity >= target_quantity:
         status = "skipped"
         reasons.append("current_position_at_or_above_target")
-    elif quantity < int(config.min_order_lot):
+    elif quantity < lot_size:
         status = "skipped"
-        reasons.append("desired_delta_below_one_board_lot_after_position_cap")
-    elif resized_quantity < int(config.min_order_lot):
+        reasons.append("holding_selected_no_duplicate_entry" if current_quantity > 0 else "position_budget_below_one_lot")
+    elif resized_quantity < lot_size:
         status = "skipped"
-        reasons.append("insufficient_cash_for_one_board_lot_after_reserve")
+        reasons.append("insufficient_cash_for_one_lot")
     else:
         if target_quantity < optimizer_target_quantity:
-            reasons.append("max_position_cap_reduction")
+            reasons.append("dynamic_account_budget_reduction")
+        if policy["one_lot_accommodation_applied"]:
+            reasons.append("small_account_one_lot_accommodation")
         if quantity < desired_delta:
             reasons.append("board_lot_reduction")
         if resized_quantity < quantity:
@@ -500,8 +706,17 @@ def _resize_buy_intent(
     metadata["optimizer_target_shares"] = optimizer_target_quantity
     metadata["optimizer_target_position_shares"] = optimizer_target_quantity
     metadata["current_position_shares"] = current_quantity
-    metadata["max_position_weight_cap_shares"] = max_target_quantity
+    metadata["max_position_weight_cap_shares"] = policy["static_cap_shares"]
     metadata["max_position_weight_applied_target_shares"] = target_quantity
+    metadata["dynamic_account_aware_budget_shares"] = max_target_quantity
+    metadata["one_lot_all_in_cost"] = round(one_lot_cost, 6) if one_lot_cost != float("inf") else None
+    metadata["dynamic_allocation_policy"] = policy
+    metadata["instrument_type"] = instrument_type
+    metadata["a_share_lot_size"] = lot_size
+    metadata["instrument_rules"] = _json_ready(rules) if rules is not None else {}
+    metadata["fee_profile_id"] = fee_resolution.profile.profile_id
+    metadata["fee_profile_provenance"] = fee_resolution.provenance.value
+    metadata["fee_profile_broker_truth"] = bool(fee_resolution.broker_truth)
     metadata["target_position_shares"] = target_quantity
     metadata["desired_delta_shares"] = desired_delta
     metadata["board_lot_applied_delta_shares"] = quantity
@@ -532,10 +747,69 @@ def _resize_buy_intent(
         final_quantity=resized_quantity if status == "order_created" else 0,
         status=status,
         reason_codes=tuple(reasons),
+        one_lot_all_in_cost=one_lot_cost,
+        dynamic_policy=policy,
+        fee_profile_provenance=fee_resolution.provenance.value,
     )
     if status != "order_created":
         return _BuySizingResult(intent=None, decision=decision)
     return _BuySizingResult(intent=replace(intent, target_shares=resized_quantity, metadata=metadata), decision=decision)
+
+
+def _dynamic_position_budget(
+    *,
+    equity: float,
+    post_reserve_cash: float,
+    price: float,
+    current_quantity: int,
+    optimizer_target_quantity: int,
+    lot_size: int,
+    config: DailyPaperLoopConfig,
+    one_lot_all_in_cost: float,
+    executable_candidate_count: int,
+) -> Mapping[str, Any]:
+    lot = int(lot_size)
+    if price <= 0:
+        return {
+            "static_cap_shares": 0,
+            "budget_cap_shares": 0,
+            "one_lot_accommodation_allowed": False,
+            "one_lot_accommodation_applied": False,
+            "reason": "invalid_price",
+        }
+    static_value = max(0.0, equity * float(config.max_position_weight))
+    static_cap = int((static_value // (price * lot)) * lot)
+    effective_target_count = max(1, max(int(config.target_position_count), max(1, int(executable_candidate_count))))
+    diversified_value = max(static_value, equity / effective_target_count)
+    diversified_cap = int((diversified_value // (price * lot)) * lot)
+    budget_cap = max(static_cap, diversified_cap)
+    one_lot_allowed = (
+        current_quantity == 0
+        and optimizer_target_quantity >= lot
+        and one_lot_all_in_cost <= max(0.0, post_reserve_cash)
+        and price * lot <= max(equity, post_reserve_cash)
+    )
+    one_lot_applied = False
+    if one_lot_allowed and budget_cap < lot:
+        budget_cap = lot
+        one_lot_applied = True
+    concentration_weight = round((budget_cap * price) / max(equity, 0.01), 6)
+    return {
+        "static_cap_shares": static_cap,
+        "diversified_budget_cap_shares": diversified_cap,
+        "budget_cap_shares": budget_cap,
+        "configured_target_position_count": int(config.target_position_count),
+        "executable_candidate_count": int(executable_candidate_count),
+        "effective_target_position_count": effective_target_count,
+        "post_reserve_available_cash": round(max(0.0, post_reserve_cash), 6),
+        "one_lot_all_in_cost": round(float(one_lot_all_in_cost), 6) if math.isfinite(float(one_lot_all_in_cost)) else None,
+        "affordable_lot_count": int(max(0.0, post_reserve_cash) // max(one_lot_all_in_cost, 0.01)) if one_lot_all_in_cost > 0 and math.isfinite(float(one_lot_all_in_cost)) else 0,
+        "optimizer_target_quantity": int(optimizer_target_quantity),
+        "one_lot_accommodation_allowed": one_lot_allowed,
+        "one_lot_accommodation_applied": one_lot_applied,
+        "concentration_weight": concentration_weight,
+        "reason": "dynamic_account_aware_budget",
+    }
 
 
 def _buy_sizing_decision(
@@ -550,22 +824,41 @@ def _buy_sizing_decision(
     reason_codes: tuple[str, ...],
     order_id: str | None = None,
     candidate_id: str | None = None,
+    fee_profile_provenance: str | None = None,
 ) -> Mapping[str, Any]:
     price = float(prices.get(intent.symbol, 0.0) or 0.0)
     current_quantity = int(account.positions.get(intent.symbol, 0))
     optimizer_target = int(intent.metadata.get("optimizer_target_shares", intent.target_shares or 0) or 0)
     equity = _equity(account, prices) if price > 0 else float(account.cash)
-    max_position_value = max(0.0, equity * float(config.max_position_weight))
-    max_position_cap = int((max_position_value // (price * int(config.min_order_lot))) * int(config.min_order_lot)) if price > 0 else 0
-    target_after_cap = min(optimizer_target, max_position_cap)
-    desired_delta = max(0, target_after_cap - current_quantity)
-    board_lot_delta = (desired_delta // int(config.min_order_lot)) * int(config.min_order_lot)
+    lot_size = max(1, int(cost_assumptions.lot_size or config.min_order_lot))
+    one_lot_cost = estimate_buy_cash_required(lot_size, price, cost_assumptions) if price > 0 else float("inf")
     reserve = max(0.0, equity * float(config.reserve_cash_weight))
     cash_after_reserve = max(0.0, float(account.cash) - reserve)
+    policy = _dynamic_position_budget(
+        equity=equity,
+        post_reserve_cash=cash_after_reserve,
+        price=price,
+        current_quantity=current_quantity,
+        optimizer_target_quantity=optimizer_target,
+        lot_size=lot_size,
+        config=config,
+        one_lot_all_in_cost=one_lot_cost,
+        executable_candidate_count=max(1, int(config.target_position_count)),
+    )
+    max_position_cap = int(policy["budget_cap_shares"])
+    target_after_cap = min(optimizer_target, max_position_cap)
+    if (
+        target_after_cap < current_quantity + lot_size
+        and optimizer_target >= lot_size
+        and policy["one_lot_accommodation_allowed"]
+    ):
+        target_after_cap = current_quantity + lot_size
+    desired_delta = max(0, target_after_cap - current_quantity)
+    board_lot_delta = (desired_delta // lot_size) * lot_size
     affordable = _max_affordable_buy_quantity(
         cash=cash_after_reserve,
         price=price,
-        lot=int(config.min_order_lot),
+        lot=lot_size,
         cost_assumptions=cost_assumptions,
     ) if price > 0 else 0
     cash_applied = min(board_lot_delta, affordable)
@@ -584,6 +877,9 @@ def _buy_sizing_decision(
         final_quantity=final_quantity,
         status=status,
         reason_codes=reason_codes,
+        one_lot_all_in_cost=one_lot_cost,
+        dynamic_policy=policy,
+        fee_profile_provenance=fee_profile_provenance,
     )
 
 
@@ -603,6 +899,9 @@ def _buy_sizing_decision_from_values(
     final_quantity: int,
     status: str,
     reason_codes: tuple[str, ...],
+    one_lot_all_in_cost: float | None = None,
+    dynamic_policy: Mapping[str, Any] | None = None,
+    fee_profile_provenance: str | None = None,
 ) -> Mapping[str, Any]:
     return {
         "symbol": intent.symbol,
@@ -616,6 +915,10 @@ def _buy_sizing_decision_from_values(
         "t_plus_one_sellable_quantity_status": "not_applicable_buy",
         "max_position_cap_shares": max_position_cap,
         "target_after_max_position_cap_shares": target_after_cap,
+        "dynamic_account_aware_budget_shares": max_position_cap,
+        "one_lot_all_in_cost": round(float(one_lot_all_in_cost), 6) if one_lot_all_in_cost not in (None, float("inf")) else None,
+        "allocation_policy": _json_ready(dynamic_policy or {}),
+        "fee_profile_provenance": fee_profile_provenance,
         "desired_delta_shares": desired_delta,
         "quantity_after_board_lot_shares": board_lot_delta,
         "affordable_quantity_cap_shares": affordable,
@@ -626,6 +929,87 @@ def _buy_sizing_decision_from_values(
     }
 
 
+def _allocation_skip_decision(
+    intent: OrderIntent,
+    *,
+    candidate_id: str | None,
+    reason: str,
+    fee_resolution: Any,
+) -> Mapping[str, Any]:
+    return {
+        "symbol": intent.symbol,
+        "side": _enum_value(intent.side),
+        "order_id": None,
+        "candidate_id": candidate_id or dict(intent.metadata).get("candidate_id"),
+        "optimizer_target_quantity": int(intent.target_shares or 0),
+        "optimizer_target_position_shares": int(intent.target_shares or 0),
+        "current_position_shares": None,
+        "t_plus_one_sellable_quantity": None,
+        "t_plus_one_sellable_quantity_status": "not_applicable_allocation_skip",
+        "max_position_cap_shares": None,
+        "target_after_max_position_cap_shares": 0,
+        "dynamic_account_aware_budget_shares": None,
+        "one_lot_all_in_cost": None,
+        "allocation_policy": {},
+        "fee_profile_provenance": fee_resolution.provenance.value,
+        "fee_profile_broker_truth": bool(fee_resolution.broker_truth),
+        "desired_delta_shares": 0,
+        "quantity_after_board_lot_shares": 0,
+        "affordable_quantity_cap_shares": None,
+        "quantity_after_cash_constraint_shares": None,
+        "final_order_quantity": 0,
+        "result_status": "skipped",
+        "reason_codes": (reason,),
+    }
+
+
+def _excluded_sizing_decision(
+    *,
+    exclusion: Any,
+    account: PaperAccount,
+    prices: Mapping[str, float],
+    config: DailyPaperLoopConfig,
+    fee_resolution: Any,
+) -> Mapping[str, Any]:
+    symbol = exclusion.symbol
+    current_quantity = int(account.positions.get(symbol, 0))
+    details = dict(getattr(exclusion, "details", {}) or {})
+    one_lot_cost = details.get("one_lot_all_in_cost")
+    available_cash_for_exclusion = details.get("available_cash")
+    buy_ref_price = details.get("buy_reference_price")
+    return {
+        "symbol": symbol,
+        "side": exclusion.side,
+        "order_id": None,
+        "candidate_id": exclusion.candidate_id,
+        "optimizer_target_quantity": 0,
+        "optimizer_target_position_shares": 0,
+        "current_position_shares": current_quantity,
+        "t_plus_one_sellable_quantity": None,
+        "t_plus_one_sellable_quantity_status": "not_applicable_buy" if exclusion.side == "buy" else "unavailable_until_execution_inventory_check" if exclusion.side == "sell" else "not_applicable_non_actionable",
+        "max_position_cap_shares": None,
+        "target_after_max_position_cap_shares": 0,
+        "dynamic_account_aware_budget_shares": None,
+        "one_lot_all_in_cost": round(float(one_lot_cost), 6) if one_lot_cost is not None else None,
+        "buy_reference_price": buy_ref_price,
+        "permission_result": "denied" if exclusion.reason == "account_permission_denied" else "allowed",
+        "affordable_lot_count": 0 if exclusion.reason == "insufficient_cash_for_one_lot" else None,
+        "instrument_rules": _json_ready(exclusion.instrument_rules),
+        "exclusion_stage": exclusion.stage,
+        "desired_delta_shares": 0,
+        "quantity_after_board_lot_shares": 0,
+        "affordable_quantity_cap_shares": 0 if exclusion.reason == "insufficient_cash_for_one_lot" else None,
+        "quantity_after_cash_constraint_shares": 0,
+        "final_order_quantity": 0,
+        "result_status": "skipped",
+        "reason_codes": (exclusion.reason,),
+        "fee_profile_provenance": fee_resolution.provenance.value,
+        "fee_profile_broker_truth": bool(fee_resolution.broker_truth),
+        "available_cash": round(float(available_cash_for_exclusion), 6) if available_cash_for_exclusion is not None else None,
+        "equity": None,
+    }
+
+
 def _candidate_id_for_symbol(candidates_by_symbol: Mapping[str, ExecutionCandidate], symbol: str) -> str | None:
     candidate = candidates_by_symbol.get(symbol)
     if candidate is None:
@@ -633,18 +1017,163 @@ def _candidate_id_for_symbol(candidates_by_symbol: Mapping[str, ExecutionCandida
     return dict(candidate.metadata).get("candidate_id", candidate.symbol)
 
 
+def _pipeline_role(candidate: ExecutionCandidate) -> str:
+    """Return the pipeline_role from candidate metadata, defaulting to original_selected_entry."""
+    role = dict(candidate.metadata).get("pipeline_role")
+    if role in {"original_selected_entry", "original_selected_holding", "forwarded_standby", "sell_exit"}:
+        return str(role)
+    return "original_selected_entry"
+
+
+@dataclass(frozen=True)
+class _FinalAccountDecision:
+    """Resolved final account decision universe after backfill selection."""
+
+    account_executable_report: ExecutionCandidateReport
+    used_backfill_symbols: tuple[str, ...]
+    unused_standby_symbols: tuple[str, ...]
+    account_excluded_original_symbols: tuple[str, ...]
+    original_selected_symbols: tuple[str, ...]
+    forwarded_standby_symbols: tuple[str, ...]
+    final_decision_symbols: tuple[str, ...]
+    final_decision_count: int
+    forwarded_pool_count: int
+
+
+def _resolve_final_account_decision(
+    account_filter_result: Any,
+    *,
+    original_selected_symbols: tuple[str, ...] | None = None,
+    forwarded_standby_symbols: tuple[str, ...] | None = None,
+) -> _FinalAccountDecision:
+    """After account filtering, resolve which standbys fill real vacancies.
+
+    Vacancies are created ONLY by original selected zero-position entry candidates
+    that were excluded at the account stage. Existing holdings never create vacancies.
+    """
+    original = tuple(original_selected_symbols or ())
+    standbys = tuple(forwarded_standby_symbols or ())
+    executable_candidates = account_filter_result.account_executable_report.candidates
+    executable_symbols = {candidate.symbol for candidate in executable_candidates}
+    excluded_by_symbol: dict[str, Any] = {}
+    for exclusion in account_filter_result.exclusions:
+        excluded_by_symbol[exclusion.symbol] = exclusion
+
+    # Identify pipeline roles from candidates (check both executable and original input)
+    all_input_candidates = account_filter_result.research_report.candidates
+    roles_by_symbol: dict[str, str] = {}
+    for candidate in all_input_candidates:
+        roles_by_symbol[candidate.symbol] = _pipeline_role(candidate)
+
+    # Original selected entries that are now zero-position
+    holding_original_symbols: set[str] = set()
+    for symbol in original:
+        role = roles_by_symbol.get(symbol)
+        if role == "original_selected_holding":
+            holding_original_symbols.add(symbol)
+
+    # Count account-excluded original entries → real vacancies
+    # Iterate original in pipeline ranking order for deterministic output.
+    account_excluded_original: list[str] = []
+    for symbol in original:
+        if symbol in holding_original_symbols:
+            continue
+        if symbol not in executable_symbols and symbol in excluded_by_symbol:
+            account_excluded_original.append(symbol)
+
+    real_vacancy_count = len(account_excluded_original)
+
+    # Select top-ranked executable standbys to fill vacancies
+    standby_set = set(standbys)
+    executable_standbys: list[ExecutionCandidate] = []
+    for candidate in executable_candidates:
+        if candidate.symbol in standby_set:
+            executable_standbys.append(candidate)
+
+    used_backfill: list[str] = []
+    unused_standby: list[str] = []
+    for candidate in executable_standbys:
+        if len(used_backfill) < real_vacancy_count:
+            used_backfill.append(candidate.symbol)
+        else:
+            unused_standby.append(candidate.symbol)
+
+    # Also mark as unused any forwarded standbys that weren't even executable
+    for symbol in standbys:
+        if symbol not in executable_symbols and symbol not in unused_standby and symbol not in used_backfill:
+            unused_standby.append(symbol)
+
+    # Build final decision report: keep executable original (entry + holding) + used backfill + sell exits
+    used_backfill_set = set(used_backfill)
+    final_candidates: list[ExecutionCandidate] = []
+    for candidate in executable_candidates:
+        role = _pipeline_role(candidate)
+        if role in {"original_selected_entry", "original_selected_holding"}:
+            # Always keep original selected (entries and holdings)
+            final_candidates.append(candidate)
+        elif role == "forwarded_standby":
+            if candidate.symbol in used_backfill_set:
+                final_candidates.append(candidate)
+            # else: unused standby, excluded from final decision
+        elif role == "sell_exit":
+            final_candidates.append(candidate)
+        else:
+            # backward compat: no pipeline_role — keep all executable
+            final_candidates.append(candidate)
+
+    final_aggregate = candidate_report_aggregate_score(tuple(final_candidates))
+    final_report = ExecutionCandidateReport(
+        candidates=tuple(final_candidates),
+        aggregate_score=final_aggregate,
+        strategy_id=account_filter_result.account_executable_report.strategy_id,
+    )
+
+    return _FinalAccountDecision(
+        account_executable_report=final_report,
+        used_backfill_symbols=tuple(used_backfill),
+        unused_standby_symbols=tuple(sorted(unused_standby)),
+        account_excluded_original_symbols=tuple(account_excluded_original),
+        original_selected_symbols=original,
+        forwarded_standby_symbols=standbys,
+        final_decision_symbols=tuple(candidate.symbol for candidate in final_candidates),
+        final_decision_count=len(final_candidates),
+        forwarded_pool_count=len(all_input_candidates),
+    )
+
+
+def _no_positive_allocation_reason(candidate: ExecutionCandidate | None) -> str:
+    if candidate is None:
+        return "no_positive_allocation"
+    metadata = dict(candidate.metadata)
+    if "expected_gross_edge" in metadata and "estimated_transaction_cost" in metadata:
+        try:
+            gross_edge = float(metadata["expected_gross_edge"])
+            transaction_cost = float(metadata["estimated_transaction_cost"])
+            if gross_edge <= transaction_cost:
+                return "expected_edge_below_cost"
+            return "no_positive_allocation"
+        except (TypeError, ValueError):
+            return "missing_structured_edge_evidence"
+    if "expected_gross_edge" not in metadata and "estimated_transaction_cost" not in metadata:
+        return "no_positive_allocation"
+    return "missing_structured_edge_evidence"
+
+
 def _sell_sizing_decision(
     candidate: ExecutionCandidate,
     account: PaperAccount,
     config: DailyPaperLoopConfig,
     *,
+    lot_size: int | None = None,
     final_quantity: int,
     status: str,
     reason_codes: tuple[str, ...],
     order_id: str | None = None,
+    fee_profile_provenance: str | None = None,
 ) -> Mapping[str, Any]:
     current_quantity = int(account.positions.get(candidate.symbol, 0))
-    board_lot_quantity = (current_quantity // int(config.min_order_lot)) * int(config.min_order_lot)
+    lot = max(1, int(lot_size or config.min_order_lot))
+    board_lot_quantity = (current_quantity // lot) * lot
     return {
         "symbol": candidate.symbol,
         "side": OrderIntentSide.SELL.value,
@@ -664,16 +1193,55 @@ def _sell_sizing_decision(
         "final_order_quantity": int(final_quantity),
         "result_status": status,
         "reason_codes": tuple(reason_codes),
+        "fee_profile_provenance": fee_profile_provenance,
     }
 
 
-def _max_affordable_buy_quantity(*, cash: float, price: float, lot: int, cost_assumptions: PaperFillCostAssumptions) -> int:
+def _max_affordable_buy_quantity(
+    *,
+    cash: float,
+    price: float,
+    lot: int,
+    cost_assumptions: PaperFillCostAssumptions | None = None,
+    fee_profile: BrokerFeeProfile | None = None,
+    instrument_type: str = "stock",
+    side: str = "buy",
+) -> int:
     if cash <= 0 or price <= 0:
         return 0
     rough = int((cash / price) // lot) * lot
-    while rough >= lot and estimate_buy_cash_required(rough, price, cost_assumptions) > cash:
+    while rough >= lot and _pre_trade_cash_required(
+        quantity=rough,
+        price=price,
+        cost_assumptions=cost_assumptions,
+        fee_profile=fee_profile,
+        instrument_type=instrument_type,
+        side=side,
+    ) > cash:
         rough -= lot
     return max(0, rough)
+
+
+def _pre_trade_cash_required(
+    *,
+    quantity: int,
+    price: float,
+    cost_assumptions: PaperFillCostAssumptions | None = None,
+    fee_profile: BrokerFeeProfile | None = None,
+    instrument_type: str = "stock",
+    side: str = "buy",
+) -> float:
+    if fee_profile is not None:
+        return estimate_pre_trade_cash_requirement(
+            fee_profile=fee_profile,
+            instrument_type=instrument_type,
+            side=side,
+            quantity=quantity,
+            reference_price=price,
+        ).cash_required
+    if cost_assumptions is None:
+        raise DailyPaperStateError("pre-trade cash estimate requires cost assumptions or a fee profile")
+    return estimate_buy_cash_required(quantity, price, cost_assumptions)
 
 
 def _execution_rows_for_open(rows_by_symbol: Mapping[str, Mapping[str, Any]]) -> Mapping[str, Mapping[str, Any]]:
@@ -828,12 +1396,18 @@ def _session_report(
         "information_provenance": dict(session_record["information_provenance"]),
         "advisory_provenance": dict(session_record["advisory_provenance"]),
         "candidate_report": session_record["candidate_report"],
+        "quant_firm_input_candidate_report": session_record.get("quant_firm_input_candidate_report", {}),
+        "account_executable_universe": session_record.get("account_executable_universe", {}),
+        "account_final_decision": session_record.get("account_final_decision", {}),
+        "account_capabilities": session_record.get("account_capabilities", {}),
+        "fee_resolution": session_record.get("fee_resolution", {}),
         "quant_firm_report": session_record["quant_firm_decision"],
         "quant_firm_candidate_actions": session_record.get("quant_firm_candidate_actions", ()),
         "allocation_sizing": session_record["allocation_plan"],
         "sizing_decisions": session_record.get("sizing_decisions", ()),
         "order_intents": session_record["order_intents"],
         "order_provenance": session_record["order_provenance"],
+        "fee_assumptions_by_order_id": session_record.get("fee_assumptions_by_order_id", {}),
         "skipped_orders": session_record["skipped_orders"],
         "fills": tuple(row for row in session_record["execution_outcomes"] if row["status"] == "filled"),
         "partial_fills": tuple(row for row in session_record["execution_outcomes"] if row["status"] == "partial"),
@@ -904,33 +1478,36 @@ def _session_hash_after(session_record: Mapping[str, Any], state: DailyPaperLoop
 
 
 def _input_digest(loop_input: DailyPaperLoopInput, config: DailyPaperLoopConfig, decision_session: date, execution_session: date) -> str:
-    return payload_digest(
-        {
-            "loop_version": DAILY_LOOP_VERSION,
-            "decision_session": decision_session.isoformat(),
-            "execution_session": execution_session.isoformat(),
-            "initial_capital": round(float(config.initial_capital), 6),
-            "strategy_id": config.strategy_id,
-            "calendar_sessions": loop_input.calendar.to_iso_strings(),
-            "calendar_provider": loop_input.calendar.provider.value,
-            "calendar_provenance": dict(loop_input.calendar_provenance),
-            "candidate_report": _candidate_report_payload(loop_input.candidate_report),
-            "market": _json_ready(loop_input.market),
-            "market_data_provenance": dict(loop_input.market.market_data_provenance),
-            "information_provenance": dict(loop_input.information_provenance),
-            "advisory_provenance": dict(loop_input.advisory_provenance),
-            "quant_firm_context": dict(loop_input.quant_firm_context),
-            "mode": {"live_market_data": bool(config.live_market_data), "live_symbol_cap": config.live_symbol_cap},
-            "execution_config": {"max_participation_rate": 0.10},
-            "cost_assumptions": _json_ready(config.cost_assumptions),
-            "sizing": {
-                "max_position_weight": config.max_position_weight,
-                "target_position_count": config.target_position_count,
-                "reserve_cash_weight": config.reserve_cash_weight,
-                "min_order_lot": config.min_order_lot,
-            },
-        }
-    )
+    payload = {
+        "loop_version": DAILY_LOOP_VERSION,
+        "decision_session": decision_session.isoformat(),
+        "execution_session": execution_session.isoformat(),
+        "initial_capital": round(float(config.initial_capital), 6),
+        "strategy_id": config.strategy_id,
+        "calendar_sessions": loop_input.calendar.to_iso_strings(),
+        "calendar_provider": loop_input.calendar.provider.value,
+        "calendar_provenance": dict(loop_input.calendar_provenance),
+        "candidate_report": _candidate_report_payload(loop_input.candidate_report),
+        "market": _json_ready(loop_input.market),
+        "market_data_provenance": dict(loop_input.market.market_data_provenance),
+        "information_provenance": dict(loop_input.information_provenance),
+        "advisory_provenance": dict(loop_input.advisory_provenance),
+        "quant_firm_context": dict(loop_input.quant_firm_context),
+        "mode": {"live_market_data": bool(config.live_market_data), "live_symbol_cap": config.live_symbol_cap},
+        "execution_config": {"max_participation_rate": 0.10},
+        "cost_assumptions": _json_ready(config.cost_assumptions),
+        "broker_returned_account_fee_profile": _json_ready(config.broker_returned_account_fee_profile),
+        "persisted_user_account_fee_profile": _json_ready(config.persisted_user_account_fee_profile),
+        "sizing": {
+            "max_position_weight": config.max_position_weight,
+            "target_position_count": config.target_position_count,
+            "reserve_cash_weight": config.reserve_cash_weight,
+            "min_order_lot": config.min_order_lot,
+        },
+    }
+    if config.account_capabilities is not None:
+        payload["account_capabilities"] = _json_ready(config.account_capabilities)
+    return payload_digest(payload)
 
 
 def _candidate_report_payload(report: ExecutionCandidateReport) -> Mapping[str, Any]:
@@ -952,6 +1529,61 @@ def _candidate_payload(candidate: ExecutionCandidate) -> Mapping[str, Any]:
         "timestamp": candidate.timestamp.isoformat(),
         "lot_size": candidate.lot_size,
         "metadata": dict(candidate.metadata),
+    }
+
+
+def _account_filter_payload(filter_result: Any) -> Mapping[str, Any]:
+    return {
+        "research_universe_count": len(filter_result.research_report.candidates),
+        "strategy_ranked_universe_count": len(filter_result.strategy_ranked_report.candidates),
+        "account_executable_universe_count": len(filter_result.account_executable_report.candidates),
+        "account_executable_symbols": tuple(candidate.symbol for candidate in filter_result.account_executable_report.candidates),
+        "exclusions": tuple(_candidate_exclusion_payload(exclusion) for exclusion in filter_result.exclusions),
+    }
+
+
+def _candidate_exclusion_payload(exclusion: Any) -> Mapping[str, Any]:
+    return {
+        "symbol": exclusion.symbol,
+        "candidate_id": exclusion.candidate_id,
+        "side": exclusion.side,
+        "reason": exclusion.reason,
+        "stage": exclusion.stage,
+        "instrument_rules": _json_ready(exclusion.instrument_rules),
+        "details": _json_ready(exclusion.details),
+    }
+
+
+def _account_capabilities_payload(capabilities: Any | None) -> Mapping[str, Any]:
+    return {
+        "supplied": capabilities is not None,
+        "source": "explicit_config" if capabilities is not None else "not_supplied",
+        "capabilities": _json_ready(capabilities) if capabilities is not None else None,
+    }
+
+
+def _fee_resolution_payload(fee_resolution: Any) -> Mapping[str, Any]:
+    return {
+        "profile_id": fee_resolution.profile.profile_id,
+        "provenance": fee_resolution.provenance.value,
+        "broker_truth": bool(fee_resolution.broker_truth),
+        "resolution_order": tuple(fee_resolution.resolution_order),
+        "profile": _json_ready(fee_resolution.profile),
+        "actual_fill_fee_priority_note": "actual broker fill fees override pre-trade profiles when available; offline paper outcomes carry simulated fill fees only.",
+    }
+
+
+def _final_decision_payload(decision: Any) -> Mapping[str, Any]:
+    return {
+        "original_selected_symbols": decision.original_selected_symbols,
+        "forwarded_standby_symbols": decision.forwarded_standby_symbols,
+        "account_excluded_original_symbols": decision.account_excluded_original_symbols,
+        "used_account_backfill_symbols": decision.used_backfill_symbols,
+        "unused_standby_symbols": decision.unused_standby_symbols,
+        "final_account_decision_symbols": decision.final_decision_symbols,
+        "forwarded_pool_count": decision.forwarded_pool_count,
+        "final_decision_count": decision.final_decision_count,
+        "final_aggregate_score": decision.account_executable_report.aggregate_score,
     }
 
 
@@ -984,6 +1616,10 @@ def _order_provenance(
         "quant_firm_decision_id": quant_decision.cycle_id,
         "quant_firm_final_recommendation": quant_decision.final_recommendation,
         "sizing_strategy_id": getattr(allocation_plan, "strategy_id", None),
+        "instrument_type": intent.metadata.get("instrument_type"),
+        "fee_profile_id": intent.metadata.get("fee_profile_id"),
+        "fee_profile_provenance": intent.metadata.get("fee_profile_provenance"),
+        "fee_profile_broker_truth": intent.metadata.get("fee_profile_broker_truth"),
         "strategy_input_digest": input_digest,
         "order_id": intent.metadata.get("order_id"),
         "idempotency_key": intent.metadata.get("idempotency_key"),
@@ -991,7 +1627,7 @@ def _order_provenance(
 
 
 def _fee_breakdown(outcomes: tuple[Any, ...]) -> Mapping[str, float]:
-    result = {"commission": 0.0, "transaction_tax": 0.0, "transfer_or_exchange_fee": 0.0, "slippage_cost": 0.0, "total_cost": 0.0}
+    result = {"commission": 0.0, "transaction_tax": 0.0, "transfer_fee": 0.0, "exchange_fee": 0.0, "transfer_or_exchange_fee": 0.0, "slippage_cost": 0.0, "total_cost": 0.0}
     for outcome in outcomes:
         for key in tuple(result):
             if key == "total_cost":
@@ -999,6 +1635,57 @@ def _fee_breakdown(outcomes: tuple[Any, ...]) -> Mapping[str, float]:
             result[key] = round(result[key] + float(dict(outcome.fee_breakdown).get(key, 0.0)), 6)
         result["total_cost"] = round(result["total_cost"] + float(outcome.total_cost), 6)
     return result
+
+
+def _engineering_fallback_fee_profile(cost_assumptions: PaperFillCostAssumptions) -> BrokerFeeProfile:
+    transfer_fee_rate = float(cost_assumptions.transfer_fee_rate)
+    exchange_fee_rate = float(cost_assumptions.exchange_fee_rate)
+    stamp_rate = float(cost_assumptions.stamp_tax_rate)
+    stock_buy_stamp_rate = stamp_rate if bool(cost_assumptions.stamp_tax_applies_to_buy) else 0.0
+    etf_buy_stamp_rate = stamp_rate if bool(cost_assumptions.stamp_tax_applies_to_buy and cost_assumptions.stamp_tax_applies_to_etf) else 0.0
+    etf_sell_stamp_rate = stamp_rate if bool(cost_assumptions.stamp_tax_applies_to_etf) else 0.0
+    buy_model = RuntimeFeeModel(
+        commission_rate=float(cost_assumptions.fee_rate),
+        min_commission=float(cost_assumptions.min_fee),
+        stamp_duty_rate=stock_buy_stamp_rate,
+        transfer_fee_rate=transfer_fee_rate,
+        exchange_fee_rate=exchange_fee_rate,
+        slippage_bps=float(cost_assumptions.slippage_bps),
+    )
+    sell_model = RuntimeFeeModel(
+        commission_rate=float(cost_assumptions.fee_rate),
+        min_commission=float(cost_assumptions.min_fee),
+        stamp_duty_rate=stamp_rate,
+        transfer_fee_rate=transfer_fee_rate,
+        exchange_fee_rate=exchange_fee_rate,
+        slippage_bps=float(cost_assumptions.slippage_bps),
+    )
+    return BrokerFeeProfile(
+        profile_id="engineering-fallback-from-paper-fill-cost-assumptions",
+        default_buy=buy_model,
+        default_sell=sell_model,
+        instrument_side_overrides={
+            "etf": {
+                "buy": RuntimeFeeModel(
+                    commission_rate=float(cost_assumptions.fee_rate),
+                    min_commission=float(cost_assumptions.min_fee),
+                    stamp_duty_rate=etf_buy_stamp_rate,
+                    transfer_fee_rate=transfer_fee_rate,
+                    exchange_fee_rate=exchange_fee_rate,
+                    slippage_bps=float(cost_assumptions.slippage_bps),
+                ),
+                "sell": RuntimeFeeModel(
+                    commission_rate=float(cost_assumptions.fee_rate),
+                    min_commission=float(cost_assumptions.min_fee),
+                    stamp_duty_rate=etf_sell_stamp_rate,
+                    transfer_fee_rate=transfer_fee_rate,
+                    exchange_fee_rate=exchange_fee_rate,
+                    slippage_bps=float(cost_assumptions.slippage_bps),
+                ),
+            }
+        },
+        notes=("Deterministic engineering fallback derived from DailyPaperLoopConfig.cost_assumptions; not broker truth.",),
+    )
 
 
 def _quant_order_authorization(
@@ -1097,6 +1784,59 @@ def _validate_time_inputs(loop_input: DailyPaperLoopInput, decision_session: dat
                 raise DailyPaperStateError(f"{path} cannot be after decision cutoff")
 
 
+def _resolve_buy_reference_state(row: Mapping[str, Any]) -> tuple[str, float | None]:
+    """Canonical three-state buy-reference parser for a single decision row.
+
+    Returns (state, price):
+    - ("unspecified", None): both keys absent → fallback to D close
+    - ("available", positive_float): explicit valid buy reference
+    - ("unavailable", None): explicitly prohibited
+    Raises ValueError on any invalid/conflicting combination.
+    """
+    has_ebp = "executable_buy_price" in row
+    has_avail = "executable_buy_price_available" in row
+
+    if not has_ebp and not has_avail:
+        return ("unspecified", None)
+
+    if has_ebp and not has_avail:
+        ebp = row["executable_buy_price"]
+        if ebp is None:
+            return ("unavailable", None)
+        try:
+            v = float(ebp)
+        except (TypeError, ValueError):
+            raise ValueError(f"executable_buy_price must be numeric or None, got {type(ebp).__name__}") from None
+        if v > 0 and math.isfinite(v):
+            return ("available", v)
+        raise ValueError(f"executable_buy_price must be positive and finite, got {v}")
+
+    # has_avail is True
+    avail = row["executable_buy_price_available"]
+    if avail is None:
+        ebp = row.get("executable_buy_price")
+        if ebp is None:
+            return ("unspecified", None)
+        raise ValueError("executable_buy_price_available=None with executable_buy_price present is invalid")
+    if avail is True:
+        ebp = row.get("executable_buy_price")
+        if ebp is None:
+            raise ValueError("executable_buy_price_available=True requires executable_buy_price")
+        try:
+            v = float(ebp)
+        except (TypeError, ValueError):
+            raise ValueError(f"executable_buy_price must be numeric, got {type(ebp).__name__}") from None
+        if v > 0 and math.isfinite(v):
+            return ("available", v)
+        raise ValueError(f"executable_buy_price must be positive and finite, got {v}")
+    if avail is False:
+        ebp = row.get("executable_buy_price")
+        if ebp is not None:
+            raise ValueError("executable_buy_price_available=False cannot have a price")
+        return ("unavailable", None)
+    raise ValueError(f"executable_buy_price_available must be bool or None, got {type(avail).__name__}")
+
+
 def _validate_market_bundle(
     market: DailyPaperMarketBundle,
     candidate_symbols: set[str],
@@ -1105,24 +1845,33 @@ def _validate_market_bundle(
     execution_session: date,
 ) -> Mapping[str, Any]:
     decision_symbols = set(market.decision_rows_by_symbol)
+    execution_symbols = set(market.execution_rows_by_symbol)
     missing_holding_decision = holding_symbols - decision_symbols
     if missing_holding_decision:
         raise DailyPaperStateError(f"missing D market evidence for held symbols: {sorted(missing_holding_decision)}")
-    execution_symbols = set(market.execution_rows_by_symbol)
     missing_holding_execution = holding_symbols - execution_symbols
     if missing_holding_execution:
         raise DailyPaperStateError(f"missing D+1 market evidence for held symbols: {sorted(missing_holding_execution)}")
     missing_decision_candidates = candidate_symbols - decision_symbols - holding_symbols
     decision_prices: dict[str, float] = {}
+    executable_buy_prices: dict[str, float] = {}
     for symbol, row in sorted(market.decision_rows_by_symbol.items()):
         _validate_market_row(symbol, row, decision_session, "decision")
         decision_prices[str(symbol)] = _positive_float(row.get("close"), f"decision close for {symbol}")
+        state, ebp_val = _resolve_buy_reference_state(row)
+        if state == "unspecified":
+            executable_buy_prices[str(symbol)] = decision_prices[str(symbol)]
+        elif state == "available":
+            assert ebp_val is not None
+            executable_buy_prices[str(symbol)] = ebp_val
+        # else: "unavailable" → omitted from executable_buy_prices
     valuation_prices: dict[str, float] = {}
     for symbol, row in sorted(market.execution_rows_by_symbol.items()):
         _validate_market_row(str(symbol), row, execution_session, "execution")
         valuation_prices[str(symbol)] = _positive_float(row.get("close"), f"execution close for {symbol}")
     return {
         "decision_prices": decision_prices,
+        "executable_buy_prices": executable_buy_prices,
         "valuation_prices": valuation_prices,
         "missing_decision_candidate_symbols": tuple(sorted(missing_decision_candidates)),
     }
@@ -1273,6 +2022,9 @@ def _config_payload(config: DailyPaperLoopConfig) -> Mapping[str, Any]:
         "live_market_data": config.live_market_data,
         "live_symbol_cap": config.live_symbol_cap,
         "cost_assumptions": _json_ready(config.cost_assumptions),
+        "account_capabilities": _account_capabilities_payload(config.account_capabilities),
+        "broker_returned_account_fee_profile": _json_ready(config.broker_returned_account_fee_profile),
+        "persisted_user_account_fee_profile": _json_ready(config.persisted_user_account_fee_profile),
     }
 
 

@@ -61,6 +61,10 @@ class PaperFillCostAssumptions:
     stamp_tax_rate: float = 0.0005
     slippage_bps: float = 5.0
     lot_size: int = 100
+    transfer_fee_rate: float = 0.0
+    exchange_fee_rate: float = 0.0
+    stamp_tax_applies_to_buy: bool = False
+    stamp_tax_applies_to_etf: bool = False
 
 
 @dataclass(frozen=True)

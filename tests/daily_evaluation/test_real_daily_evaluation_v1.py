@@ -214,14 +214,14 @@ def test_multi_session_evaluation_capital_tiers_resume_and_report_shape(tmp_path
     assert replay.report["capital_runs"][0]["daily_summaries"][0]["idempotency_status"] == "completed"
     assert replay.report["capital_runs"][0]["daily_summaries"][0]["replay_execution_status"] == "idempotent_replay"
     rows = {row["initial_capital"]: row for row in report["capital_comparison"]["rows"]}
-    assert rows[1000.0]["below_one_lot_skips"] >= 1
+    assert rows[1000.0]["insufficient_cash_skips"] >= 1
     assert rows[100000.0]["fill_count"] >= 1
     assert rows[100000.0]["final_equity"] > 0
     assert report["data_quality"]["all_reconciliations_passed"] is True
     assert report["data_quality"]["unexpected_unclassified_reasons"] == ()
     example = report["capital_runs"][2]["sizing_compression"]["largest_compression_examples"][0]
     assert example["optimizer_target_shares"] > example["final_order_quantity"]
-    assert example["optimizer_to_order"]["reason_codes"] == ("max_position_cap_reduction",)
+    assert example["optimizer_to_order"]["reason_codes"][0] == "cash_reduction"
     assert example["order_to_fill"]["shortfall_reason_code"] is None
     assert replay.report["capital_runs"][0]["no_trade_attribution"]["total_count"] == report["capital_runs"][0]["no_trade_attribution"]["total_count"]
     encoded = json.dumps(report, sort_keys=True)
@@ -360,13 +360,13 @@ def test_partial_session_interruption_and_resume_preserves_completed_daily_repor
 def test_sizing_decisions_include_buy_skip_and_created_source_stages(tmp_path: Path) -> None:
     result = run_real_daily_evaluation(config(tmp_path, start_decision_session="2026-04-01", end_decision_session="2026-04-01"))
     all_examples = tuple(example for run in result.report["capital_runs"] for example in run["sizing_compression"]["examples"])
-    small = next(example for example in all_examples if example["result_status"] == "skipped" and "current_position_at_or_above_target" in example["compression_reason_codes"])
+    small = next(example for example in all_examples if example["result_status"] == "skipped" and "insufficient_cash_for_one_lot" in example["compression_reason_codes"])
     large = result.report["capital_runs"][2]["sizing_compression"]["largest_compression_examples"][0]
 
     assert small["result_status"] == "skipped"
     assert small["candidate_id"]
     assert small["final_order_quantity"] == 0
-    assert small["optimizer_to_order"]["compression_ratio"] == 1.0
+    assert small["optimizer_to_order"]["compression_ratio"] is None
     assert large["result_status"] == "order_created"
     assert large["candidate_id"]
     assert large["optimizer_to_order"]["retention_ratio"] < 1.0
@@ -379,18 +379,18 @@ def test_no_trade_sizing_skips_preserve_candidate_identity_without_collapsing() 
         "execution_session": "2026-04-02",
         "sizing_decisions": (
             {"symbol": "600000.SH", "side": "buy", "candidate_id": "held-1", "result_status": "skipped", "reason_codes": ("current_position_at_or_above_target",), "final_order_quantity": 0},
-            {"symbol": "600001.SH", "side": "buy", "candidate_id": "cash-1", "result_status": "skipped", "reason_codes": ("insufficient_cash_for_one_board_lot_after_reserve",), "final_order_quantity": 0},
-            {"symbol": "600001.SH", "side": "buy", "candidate_id": "cash-2", "result_status": "skipped", "reason_codes": ("insufficient_cash_for_one_board_lot_after_reserve",), "final_order_quantity": 0},
+            {"symbol": "600001.SH", "side": "buy", "candidate_id": "cash-1", "result_status": "skipped", "reason_codes": ("insufficient_cash_for_one_lot",), "final_order_quantity": 0},
+            {"symbol": "600001.SH", "side": "buy", "candidate_id": "cash-2", "result_status": "skipped", "reason_codes": ("insufficient_cash_for_one_lot",), "final_order_quantity": 0},
         ),
         "skipped_orders": (
-            {"symbol": "600001.SH", "side": "buy", "candidate_id": "cash-1", "reason": "insufficient_cash_for_one_board_lot_after_reserve"},
+            {"symbol": "600001.SH", "side": "buy", "candidate_id": "cash-1", "reason": "insufficient_cash_for_one_lot"},
         ),
     }
     report = _daily_no_trade({"candidate_events": {}, "rejected": {}, "no_candidate": {}}, daily)
     candidate_ids = {event["candidate_id"] for event in report["events"]}
 
     assert {"held-1", "cash-1", "cash-2"} <= candidate_ids
-    assert report["by_reason_code"]["insufficient_cash_for_one_board_lot_after_reserve"]["count"] == 2
+    assert report["by_reason_code"]["insufficient_cash_for_one_lot"]["count"] == 2
 
 
 def test_live_evaluation_uses_one_bounded_provider_load_per_symbol(tmp_path: Path) -> None:

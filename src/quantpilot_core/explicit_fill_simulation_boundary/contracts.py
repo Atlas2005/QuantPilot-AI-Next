@@ -40,6 +40,8 @@ class FillSimulationCostBreakdown:
     stamp_duty: float
     slippage_cost: float
     total_cost: float
+    transfer_fee: float = 0.0
+    exchange_fee: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,10 @@ class FillSimulationRequest:
     evidence_refs: tuple[str, ...]
     dry_run_accepted: bool
     source_instruction_id: str
+    transfer_fee_rate: float = 0.0
+    exchange_fee_rate: float = 0.0
+    stamp_duty_applies_to_buy: bool = False
+    stamp_duty_applies_to_etf: bool = False
     assumptions: FillSimulationAssumptions = FillSimulationAssumptions(
         partial_fill_allowed=True,
         fill_quantity_policy="min(executable_quantity, volume_cap)",

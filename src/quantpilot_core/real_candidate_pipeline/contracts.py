@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 from quantpilot_core.daily_paper_loop import DailyPaperLoopInput, DailyPaperLoopResult
 from quantpilot_core.execution_candidate import ExecutionCandidateReport
+from quantpilot_core.runtime_account import AccountCapabilities
 
 
 class PipelineIdempotencyConflictError(ValueError):
@@ -32,6 +33,7 @@ class RealCandidatePipelineConfig:
     information_provenance: Mapping[str, Any] = field(default_factory=dict)
     advisory_provenance: Mapping[str, Any] = field(default_factory=dict)
     quant_firm_context: Mapping[str, Any] = field(default_factory=dict)
+    account_capabilities: AccountCapabilities | None = None
 
 
 @dataclass(frozen=True)

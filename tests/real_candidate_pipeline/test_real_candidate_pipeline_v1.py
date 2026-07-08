@@ -21,6 +21,7 @@ from quantpilot_core.real_candidate_pipeline import (
 from quantpilot_core.real_candidate_pipeline.contracts import PipelineIdempotencyConflictError
 from quantpilot_core.real_candidate_pipeline.pipeline import _offline_bars, _offline_calendar
 from quantpilot_core.real_data_provider import NormalizedDailyBar, ProviderName, TradingCalendar
+from quantpilot_core.runtime_account import AccountCapabilities
 
 
 DECISION = "2026-04-03"
@@ -190,12 +191,22 @@ def test_current_holding_rank_dropout_becomes_exit_candidate_without_t_plus_one_
 
 
 def test_selected_current_holding_is_hold_not_duplicate_buy(tmp_path: Path) -> None:
-    seed_holding(tmp_path, "600519.SH")
-    result = build_real_candidate_daily_paper_input(config(tmp_path))
+    # without account_capabilities: backward compatible — holding is event only, not a candidate
+    seed_holding(tmp_path / "no-caps", "600519.SH")
+    no_caps = build_real_candidate_daily_paper_input(config(tmp_path / "no-caps"))
+    assert no_caps.candidate_report.candidates == ()
+    assert no_caps.candidate_report.aggregate_score == 0.0
+    assert no_caps.candidate_pipeline_report["candidate_events"]["holds"][0]["reason"] == "holding_selected_no_duplicate_entry"
 
-    assert result.candidate_report.candidates == ()
-    assert result.candidate_report.aggregate_score == 0.0
-    assert result.candidate_pipeline_report["candidate_events"]["holds"][0]["reason"] == "holding_selected_no_duplicate_entry"
+    # with account_capabilities: holding is a visible candidate with pipeline_role "original_selected_holding"
+    seed_holding(tmp_path / "caps", "600519.SH")
+    with_caps = build_real_candidate_daily_paper_input(replace(config(tmp_path / "caps"), account_capabilities=AccountCapabilities()))
+    holding_candidates = [c for c in with_caps.candidate_report.candidates if c.symbol == "600519.SH"]
+    assert len(holding_candidates) == 1
+    assert holding_candidates[0].direction == "long"
+    assert holding_candidates[0].metadata.get("pipeline_role") == "original_selected_holding"
+    assert with_caps.candidate_pipeline_report["candidate_events"]["holds"][0]["reason"] == "holding_selected_no_duplicate_entry"
+    assert with_caps.candidate_pipeline_report["candidate_events"]["holds"][0]["pipeline_role"] == "original_selected_holding"
 
 
 def test_insufficient_holding_factor_evidence_is_hold_not_forced_exit(tmp_path: Path) -> None:
@@ -313,6 +324,218 @@ def test_equal_score_rank_tie_break_candidate_metadata_and_selected_order_agree(
     assert result.candidate_pipeline_report["selected_symbols"] == ("000001.SZ", "600000.SH")
     assert [candidate.symbol for candidate in result.candidate_report.candidates] == ["000001.SZ", "600000.SH"]
     assert [candidate.metadata["factor_rank"] for candidate in result.candidate_report.candidates] == [1, 2]
+
+
+def test_account_backfill_forwards_ranked_pool_when_top_candidate_permission_denied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_report(*args, **kwargs):
+        return SimpleNamespace(
+            factor_scores=(factor_score("688001.SH", composite=0.9), factor_score("600000.SH", composite=0.8)),
+            selected_symbols=("688001.SH",),
+            rejected_symbols_with_reasons=(),
+            ranking_mode="defensive_composite_v1",
+        )
+
+    monkeypatch.setattr("quantpilot_core.real_candidate_pipeline.pipeline.run_factor_ranking_baseline_v1", fake_report)
+    cfg = config(
+        tmp_path,
+        symbols=("688001.SH", "600000.SH"),
+        target_symbol_count=1,
+        max_execution_symbols=2,
+        account_capabilities=AccountCapabilities(star_market=False),
+    )
+    result = run_real_candidate_daily_paper(cfg)
+
+    assert [candidate.symbol for candidate in result.candidate_report.candidates] == ["688001.SH", "600000.SH"]
+    daily = result.combined_report["daily_paper_loop"]
+    assert daily["account_executable_universe"]["account_executable_symbols"] == ["600000.SH"]
+    assert daily["account_executable_universe"]["exclusions"][0]["symbol"] == "688001.SH"
+    assert daily["fills"][0]["symbol"] == "600000.SH"
+
+
+def test_no_account_capabilities_preserves_original_selected_candidate_behavior(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_report(*args, **kwargs):
+        return SimpleNamespace(
+            factor_scores=(factor_score("688001.SH", composite=0.9), factor_score("600000.SH", composite=0.8)),
+            selected_symbols=("688001.SH",),
+            rejected_symbols_with_reasons=(),
+            ranking_mode="defensive_composite_v1",
+        )
+
+    monkeypatch.setattr("quantpilot_core.real_candidate_pipeline.pipeline.run_factor_ranking_baseline_v1", fake_report)
+    result = build_real_candidate_daily_paper_input(
+        config(tmp_path, symbols=("688001.SH", "600000.SH"), target_symbol_count=1, max_execution_symbols=2)
+    )
+
+    assert [candidate.symbol for candidate in result.candidate_report.candidates] == ["688001.SH"]
+    assert result.loop_input.quant_firm_context["candidate_pipeline"]["selected_symbols"] == ("688001.SH",)
+
+
+def test_account_backfill_pool_excludes_hard_rejected_ranked_candidates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_report(*args, **kwargs):
+        return SimpleNamespace(
+            factor_scores=(
+                factor_score("688001.SH", composite=0.9),
+                factor_score("600000.SH", composite=0.8),
+                factor_score("000001.SZ", composite=0.7),
+            ),
+            selected_symbols=("688001.SH",),
+            rejected_symbols_with_reasons=({"symbol": "000001.SZ", "reasons": ("missing_factor_data",)},),
+            ranking_mode="defensive_composite_v1",
+        )
+
+    monkeypatch.setattr("quantpilot_core.real_candidate_pipeline.pipeline.run_factor_ranking_baseline_v1", fake_report)
+    cfg = config(
+        tmp_path,
+        symbols=("688001.SH", "600000.SH", "000001.SZ"),
+        target_symbol_count=1,
+        max_execution_symbols=3,
+        account_capabilities=AccountCapabilities(star_market=False),
+    )
+    result = run_real_candidate_daily_paper(cfg)
+
+    assert [candidate.symbol for candidate in result.candidate_report.candidates] == ["688001.SH", "600000.SH"]
+    assert any(
+        event["symbol"] == "000001.SZ"
+        and event["reason"] == "factor_rejected"
+        and event["factor_rejection_reasons"] == ("missing_factor_data",)
+        for event in result.candidate_pipeline_report["candidate_events"]["rejected"]
+    )
+    assert "000001.SZ" not in result.candidate_pipeline_report["forwarded_standby_symbols"]
+    assert "000001.SZ" not in result.candidate_pipeline_report["account_candidate_pool_symbols"]
+    daily = result.combined_report["daily_paper_loop"]
+    assert daily["account_executable_universe"]["account_executable_symbols"] == ["600000.SH"]
+    assert daily["fills"][0]["symbol"] == "600000.SH"
+
+
+def test_account_backfill_keeps_cutoff_only_candidates_but_excludes_hard_rejections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_report(*args, **kwargs):
+        return SimpleNamespace(
+            factor_scores=(
+                factor_score("688001.SH", composite=0.9),
+                factor_score("600000.SH", composite=0.8),
+                factor_score("000001.SZ", composite=0.7),
+            ),
+            selected_symbols=("688001.SH",),
+            rejected_symbols_with_reasons=(
+                {"symbol": "600000.SH", "reasons": ("not_selected_lower_rank",)},
+                {"symbol": "000001.SZ", "reasons": ("not_selected_lower_rank", "missing_factor_data")},
+            ),
+            ranking_mode="defensive_composite_v1",
+        )
+
+    monkeypatch.setattr("quantpilot_core.real_candidate_pipeline.pipeline.run_factor_ranking_baseline_v1", fake_report)
+    cfg = config(
+        tmp_path,
+        symbols=("688001.SH", "600000.SH", "000001.SZ"),
+        target_symbol_count=1,
+        max_execution_symbols=3,
+        account_capabilities=AccountCapabilities(star_market=False),
+    )
+    result = run_real_candidate_daily_paper(cfg)
+
+    assert [candidate.symbol for candidate in result.candidate_report.candidates] == ["688001.SH", "600000.SH"]
+    assert result.candidate_pipeline_report["account_candidate_pool_symbols"] == ("688001.SH", "600000.SH")
+    assert result.candidate_pipeline_report["forwarded_standby_symbols"] == ("600000.SH",)
+    assert "000001.SZ" not in result.candidate_pipeline_report["account_candidate_pool_symbols"]
+    assert any(
+        event["symbol"] == "000001.SZ"
+        and event["reason"] == "factor_rejected"
+        and event["factor_rejection_reasons"] == ("missing_factor_data",)
+        for event in result.candidate_pipeline_report["candidate_events"]["rejected"]
+    )
+    daily = result.combined_report["daily_paper_loop"]
+    assert daily["account_executable_universe"]["account_executable_symbols"] == ["600000.SH"]
+    assert daily["fills"][0]["symbol"] == "600000.SH"
+
+
+def test_account_backfill_capacity_counts_existing_holdings_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_holding(tmp_path, "600000.SH")
+
+    def fake_report(*args, **kwargs):
+        return SimpleNamespace(
+            factor_scores=(factor_score("000001.SZ", composite=0.9), factor_score("600519.SH", composite=0.8)),
+            selected_symbols=("000001.SZ",),
+            rejected_symbols_with_reasons=({"symbol": "600519.SH", "reasons": ("not_selected_lower_rank",)},),
+            ranking_mode="defensive_composite_v1",
+        )
+
+    monkeypatch.setattr("quantpilot_core.real_candidate_pipeline.pipeline.run_factor_ranking_baseline_v1", fake_report)
+    result = build_real_candidate_daily_paper_input(
+        config(
+            tmp_path,
+            symbols=("600000.SH", "000001.SZ", "600519.SH"),
+            input_bars=fixture_bars(("600000.SH", "000001.SZ", "600519.SH")),
+            target_symbol_count=1,
+            max_execution_symbols=2,
+            account_capabilities=AccountCapabilities(),
+        )
+    )
+
+    assert result.candidate_pipeline_report["holdings"] == ("600000.SH",)
+    assert result.candidate_pipeline_report["account_candidate_pool_symbols"] == ("000001.SZ",)
+    assert result.candidate_pipeline_report["forwarded_standby_symbols"] == ()
+    assert "600519.SH" not in result.candidate_pipeline_report["forwarded_standby_symbols"]
+    assert set(result.loop_input.market.decision_rows_by_symbol) == {"600000.SH", "000001.SZ"}
+
+
+def test_account_backfill_ranked_holding_does_not_consume_capacity_twice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_holding(tmp_path, "600000.SH")
+
+    def fake_report(*args, **kwargs):
+        return SimpleNamespace(
+            factor_scores=(factor_score("600000.SH", composite=0.9), factor_score("000001.SZ", composite=0.8)),
+            selected_symbols=("600000.SH",),
+            rejected_symbols_with_reasons=({"symbol": "000001.SZ", "reasons": ("not_selected_lower_rank",)},),
+            ranking_mode="defensive_composite_v1",
+        )
+
+    monkeypatch.setattr("quantpilot_core.real_candidate_pipeline.pipeline.run_factor_ranking_baseline_v1", fake_report)
+    result = build_real_candidate_daily_paper_input(
+        config(
+            tmp_path,
+            symbols=("600000.SH", "000001.SZ"),
+            input_bars=fixture_bars(("600000.SH", "000001.SZ")),
+            target_symbol_count=1,
+            max_execution_symbols=2,
+            account_capabilities=AccountCapabilities(),
+        )
+    )
+
+    assert result.candidate_pipeline_report["account_candidate_pool_symbols"] == ("600000.SH", "000001.SZ")
+    assert result.candidate_pipeline_report["forwarded_standby_symbols"] == ("000001.SZ",)
+    # holding 600000.SH is now a visible candidate (pipeline_role: original_selected_holding)
+    candidate_symbols = [candidate.symbol for candidate in result.candidate_report.candidates]
+    assert "600000.SH" in candidate_symbols
+    assert "000001.SZ" in candidate_symbols
+    # holding is registered in events as a hold
+    assert result.candidate_pipeline_report["candidate_events"]["holds"][0]["symbol"] == "600000.SH"
+    assert result.candidate_pipeline_report["candidate_events"]["holds"][0]["pipeline_role"] == "original_selected_holding"
+
+
+def test_holdings_alone_exceeding_execution_cap_has_deterministic_error(tmp_path: Path) -> None:
+    state = initialize_daily_state(100_000.0)
+    seeded = replace(
+        state.execution_state,
+        account=PaperAccount(
+            cash=80_000.0,
+            positions={"600000.SH": 100, "000001.SZ": 100},
+            average_costs={"600000.SH": 10.0, "000001.SZ": 10.0},
+        ),
+        settlement_lots=(SettlementLot("600000.SH", 100, "2026-01-05"), SettlementLot("000001.SZ", 100, "2026-01-05")),
+    )
+    save_daily_state_atomic(replace(state, execution_state=seeded), tmp_path / "state.json")
+
+    with pytest.raises(ValueError, match="holding symbols exceed max_execution_symbols"):
+        build_real_candidate_daily_paper_input(
+            config(
+                tmp_path,
+                symbols=("600000.SH", "000001.SZ"),
+                input_bars=fixture_bars(("600000.SH", "000001.SZ")),
+                target_symbol_count=1,
+                max_execution_symbols=1,
+                account_capabilities=AccountCapabilities(),
+            )
+        )
 
 
 def test_unloaded_acquisition_session_reports_unavailable_holding_period(tmp_path: Path) -> None:
@@ -735,7 +958,7 @@ def test_restart_entry_hold_exit_and_historical_replay_restore_original_session(
     assert s2.daily_paper_loop_result.report["fills"] == []
     assert {candidate.direction for candidate in s3.candidate_report.candidates} == {"long", "short"}
     assert any(fill["side"] == "sell" and fill["symbol"] == "600519.SH" for fill in s3.daily_paper_loop_result.report["fills"])
-    assert state_after_s3["execution_state"]["account"]["positions"] == {"000001.SZ": 500}
+    assert state_after_s3["execution_state"]["account"]["positions"] == {"000001.SZ": 100}
     assert state_after_s3["execution_state"]["account"]["realized_pnl_by_symbol"]
 
     replay = run_real_candidate_daily_paper(cfg1)
@@ -744,7 +967,7 @@ def test_restart_entry_hold_exit_and_historical_replay_restore_original_session(
     assert replay.candidate_report.candidates[0].lot_size == 100
     assert replay.combined_report["candidate_pipeline"]["candidates"]["candidates"][0]["lot_size"] == 100
     assert replay.combined_report["daily_paper_loop"]["candidate_report"]["candidates"][0]["lot_size"] == 100
-    assert replay.daily_paper_loop_result.report["ledger_after"]["positions"] == {"600519.SH": 400}
+    assert replay.daily_paper_loop_result.report["ledger_after"]["positions"] == s1.daily_paper_loop_result.report["ledger_after"]["positions"]
     assert load_state_payload(tmp_path)["state_hash"] == state_after_s3["state_hash"]
     assert replay.daily_paper_loop_result.report["state"]["hash_after"] == s1_hash
     for key in (
@@ -867,3 +1090,227 @@ def factor_score(symbol: str, *, composite: float = 0.7, liquidity: float = 0.5)
         ranking_mode="defensive_composite_v1",
         factor_evidence=evidence,
     )
+
+
+def test_normalized_daily_bar_old_positional_provider_still_works() -> None:
+    """Construct NormalizedDailyBar with TUSHARE as 16th positional arg → provider field correct,
+    new fields default to None."""
+    bar = NormalizedDailyBar(
+        "600000.SH", date(2026, 1, 2), 10.0, 10.0, 10.2, 9.8, 100_000.0,
+        None, None, None, None, None, None, None,  # amount through is_st (7 optional fields)
+        ProviderName.TUSHARE,
+    )
+    assert bar.provider == ProviderName.TUSHARE
+    assert bar.executable_buy_price is None
+    assert bar.executable_buy_price_available is None
+
+
+def test_normalized_daily_bar_default_state_fallback_d_close() -> None:
+    """NormalizedDailyBar defaults → executable_buy_price_available=None, price=None → fallback D close."""
+    bar = NormalizedDailyBar("600000.SH", date(2026, 1, 2), 10.0, 10.0, 10.2, 9.8, 100_000.0)
+    assert bar.executable_buy_price_available is None
+    assert bar.executable_buy_price is None
+
+
+def test_normalized_daily_bar_available_false_buy_unavailable() -> None:
+    """available=False → buy reference explicitly unavailable."""
+    bar = NormalizedDailyBar("600000.SH", date(2026, 1, 2), 10.0, 10.0, 10.2, 9.8, 100_000.0,
+                              executable_buy_price_available=False, executable_buy_price=None)
+    assert bar.executable_buy_price_available is False
+    assert bar.executable_buy_price is None
+
+
+def test_normalized_daily_bar_available_true_price_12() -> None:
+    """available=True, price=12 → valid buy reference."""
+    bar = NormalizedDailyBar("600000.SH", date(2026, 1, 2), 10.0, 10.0, 10.2, 9.8, 100_000.0,
+                              executable_buy_price_available=True, executable_buy_price=12.0)
+    assert bar.executable_buy_price_available is True
+    assert bar.executable_buy_price == 12.0
+
+
+def test_normalized_daily_bar_available_true_zero_price_raises() -> None:
+    """available=True with non-positive price → validation error."""
+    with pytest.raises(ValueError, match="conflict"):
+        NormalizedDailyBar("600000.SH", date(2026, 1, 2), 10.0, 10.0, 10.2, 9.8, 100_000.0,
+                            executable_buy_price_available=True, executable_buy_price=0.0)
+
+
+def test_normalized_daily_bar_available_false_with_price_raises() -> None:
+    """available=False with a price → validation error."""
+    with pytest.raises(ValueError, match="conflict"):
+        NormalizedDailyBar("600000.SH", date(2026, 1, 2), 10.0, 10.0, 10.2, 9.8, 100_000.0,
+                            executable_buy_price_available=False, executable_buy_price=12.0)
+
+
+def test_buy_reference_dict_keys_absent_fallback_d_close() -> None:
+    """Both keys absent → unspecified, fallback D close."""
+    from quantpilot_core.daily_paper_loop.runner import _resolve_buy_reference_state
+    state, price = _resolve_buy_reference_state({"close": 10.0})
+    assert state == "unspecified"
+    assert price is None
+
+
+def test_buy_reference_dict_price_none_key_present_unavailable() -> None:
+    """executable_buy_price=None key present → explicitly unavailable."""
+    from quantpilot_core.daily_paper_loop.runner import _resolve_buy_reference_state
+    state, price = _resolve_buy_reference_state({"close": 10.0, "executable_buy_price": None})
+    assert state == "unavailable"
+    assert price is None
+
+
+def test_buy_reference_dict_positive_price_without_available_flag() -> None:
+    """Positive price without available flag → available."""
+    from quantpilot_core.daily_paper_loop.runner import _resolve_buy_reference_state
+    state, price = _resolve_buy_reference_state({"close": 10.0, "executable_buy_price": 12.0})
+    assert state == "available"
+    assert price == 12.0
+
+
+def test_buy_reference_dict_true_with_valid_price() -> None:
+    """available=True + valid price → available."""
+    from quantpilot_core.daily_paper_loop.runner import _resolve_buy_reference_state
+    state, price = _resolve_buy_reference_state({"close": 10.0, "executable_buy_price_available": True, "executable_buy_price": 12.0})
+    assert state == "available"
+    assert price == 12.0
+
+
+def test_buy_reference_dict_false_with_none() -> None:
+    """available=False + None → explicitly unavailable."""
+    from quantpilot_core.daily_paper_loop.runner import _resolve_buy_reference_state
+    state, price = _resolve_buy_reference_state({"close": 10.0, "executable_buy_price_available": False, "executable_buy_price": None})
+    assert state == "unavailable"
+    assert price is None
+
+
+def test_buy_reference_dict_true_with_none_raises() -> None:
+    """available=True + None → ValueError."""
+    from quantpilot_core.daily_paper_loop.runner import _resolve_buy_reference_state
+    with pytest.raises(ValueError, match="True requires"):
+        _resolve_buy_reference_state({"close": 10.0, "executable_buy_price_available": True, "executable_buy_price": None})
+
+
+def test_buy_reference_dict_false_with_price_raises() -> None:
+    """available=False + price → ValueError."""
+    from quantpilot_core.daily_paper_loop.runner import _resolve_buy_reference_state
+    with pytest.raises(ValueError, match="cannot have a price"):
+        _resolve_buy_reference_state({"close": 10.0, "executable_buy_price_available": False, "executable_buy_price": 12.0})
+
+
+def test_buy_reference_dict_invalid_available_type_raises() -> None:
+    """Non-bool available → ValueError."""
+    from quantpilot_core.daily_paper_loop.runner import _resolve_buy_reference_state
+    with pytest.raises(ValueError, match="must be bool"):
+        _resolve_buy_reference_state({"close": 10.0, "executable_buy_price_available": "yes", "executable_buy_price": 12.0})
+
+
+def test_buy_reference_dict_non_positive_price_raises() -> None:
+    """NaN/inf/non-positive price → ValueError."""
+    from quantpilot_core.daily_paper_loop.runner import _resolve_buy_reference_state
+    with pytest.raises(ValueError, match="positive"):
+        _resolve_buy_reference_state({"close": 10.0, "executable_buy_price": 0.0})
+    with pytest.raises(ValueError, match="positive"):
+        _resolve_buy_reference_state({"close": 10.0, "executable_buy_price": -1.0})
+
+
+def test_canonical_bar_row_uses_provider_value_not_str_enum() -> None:
+    """NormalizedDailyBar(provider=ProviderName.TUSHARE) → canonical provider is 'tushare'."""
+    bar = NormalizedDailyBar("600000.SH", date(2026, 1, 2), 10.0, 10.0, 10.2, 9.8, 100_000.0,
+                              provider=ProviderName.TUSHARE)
+    result = pipeline_module._canonical_bar_row(bar)
+    assert result["provider"] == ProviderName.TUSHARE.value
+    assert result["provider"] == "tushare"
+    assert "ProviderName" not in result["provider"]
+
+
+def test_normalized_daily_bar_object_flows_through_canonical_bar_row() -> None:
+    """NormalizedDailyBar with available=False flows through _canonical_bar_row correctly."""
+    bar = NormalizedDailyBar("600000.SH", date(2026, 1, 2), 10.0, 10.0, 10.2, 9.8, 100_000.0,
+                              executable_buy_price_available=False, executable_buy_price=None)
+    result = pipeline_module._canonical_bar_row(bar)
+    assert result["symbol"] == "600000.SH"
+    assert result["executable_buy_price_available"] is False
+    assert result["executable_buy_price"] is None
+
+
+def test_holding_missing_buy_reference_pipeline_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real-pipeline E2E: holding A has D close (valuation) but executable_buy_price=None on
+    NormalizedDailyBar, optimizer target > current → buy_increment_missing_price, standby B unused."""
+    seed_holding(tmp_path, "600000.SH")
+
+    def fake_report(*args, **kwargs):
+        return SimpleNamespace(
+            factor_scores=(factor_score("600000.SH", composite=0.9), factor_score("000001.SZ", composite=0.8)),
+            selected_symbols=("600000.SH",),
+            rejected_symbols_with_reasons=({"symbol": "000001.SZ", "reasons": ("not_selected_lower_rank",)},),
+            ranking_mode="defensive_composite_v1",
+        )
+
+    monkeypatch.setattr("quantpilot_core.real_candidate_pipeline.pipeline.run_factor_ranking_baseline_v1", fake_report)
+
+    # Use real NormalizedDailyBar objects with three-state contract: available=False → BUY prohibited.
+    decision_date = date.fromisoformat("2026-04-03")
+    raw_bars = []
+    for bar in fixture_bars(("600000.SH", "000001.SZ")):
+        bar_date = date.fromisoformat(str(bar["date"]))
+        if bar["symbol"] == "600000.SH" and bar_date == decision_date:
+            raw_bars.append(NormalizedDailyBar(
+                symbol=bar["symbol"], trade_date=bar_date,
+                open=bar["open"], high=bar["high"], low=bar["low"], close=bar["close"],
+                volume=bar["volume"], amount=bar.get("amount"),
+                previous_close=bar.get("previous_close"),
+                is_st=bar.get("is_st"), provider=ProviderName.TUSHARE,
+                executable_buy_price_available=False, executable_buy_price=None,
+            ))
+        else:
+            raw_bars.append(NormalizedDailyBar(
+                symbol=bar["symbol"], trade_date=bar_date,
+                open=bar["open"], high=bar["high"], low=bar["low"], close=bar["close"],
+                volume=bar["volume"], amount=bar.get("amount"),
+                previous_close=bar.get("previous_close"),
+                is_st=bar.get("is_st"), provider=ProviderName.TUSHARE,
+            ))
+
+    cfg = config(
+        tmp_path,
+        symbols=("600000.SH", "000001.SZ"),
+        input_bars=tuple(raw_bars),
+        target_symbol_count=1,
+        max_execution_symbols=2,
+        account_capabilities=AccountCapabilities(),
+    )
+    result = run_real_candidate_daily_paper(cfg)
+
+    daily = result.combined_report["daily_paper_loop"]
+    fd = daily["account_final_decision"]
+    assert "600000.SH" in fd["final_account_decision_symbols"]
+    assert list(fd["used_account_backfill_symbols"]) == []
+    assert "000001.SZ" in fd["unused_standby_symbols"]
+    assert "600000.SH" not in fd["account_excluded_original_symbols"]
+    assert daily["fills"] == []
+    sizing_a = next((row for row in daily["sizing_decisions"] if row["symbol"] == "600000.SH"), None)
+    assert sizing_a is not None
+    assert list(sizing_a["reason_codes"]) == ["buy_increment_missing_price"]
+    assert sizing_a["optimizer_target_position_shares"] > sizing_a["current_position_shares"]
+
+
+def test_target_symbol_count_becomes_daily_loop_target_position_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """target_symbol_count=1 → DailyPaperLoopConfig.target_position_count=1 (not default 10)."""
+    def fake_report(*args, **kwargs):
+        return SimpleNamespace(
+            factor_scores=(factor_score("600000.SH", composite=0.9), factor_score("000001.SZ", composite=0.8)),
+            selected_symbols=("600000.SH",),
+            rejected_symbols_with_reasons=({"symbol": "000001.SZ", "reasons": ("not_selected_lower_rank",)},),
+            ranking_mode="defensive_composite_v1",
+        )
+
+    monkeypatch.setattr("quantpilot_core.real_candidate_pipeline.pipeline.run_factor_ranking_baseline_v1", fake_report)
+    result = run_real_candidate_daily_paper(
+        config(tmp_path, symbols=("600000.SH", "000001.SZ"), target_symbol_count=1, max_execution_symbols=2)
+    )
+
+    daily = result.combined_report["daily_paper_loop"]
+    sizing = daily["sizing_decisions"][0]
+    policy = sizing["allocation_policy"]
+    assert policy["configured_target_position_count"] == 1
+    assert policy["effective_target_position_count"] == 1
+    assert policy["configured_target_position_count"] != 10

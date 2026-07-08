@@ -10,6 +10,7 @@ from quantpilot_core.execution_candidate.contracts import (
     ExecutionCandidate,
     ExecutionCandidateReport,
     ExecutionDirection,
+    candidate_report_aggregate_score,
 )
 
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     "ExecutionDirection",
     "build_execution_candidate",
     "build_execution_candidate_report",
+    "candidate_report_aggregate_score",
 ]
 

@@ -42,3 +42,13 @@ class ExecutionCandidateReport:
     aggregate_score: float
     strategy_id: str
 
+
+def candidate_report_aggregate_score(candidates: tuple[ExecutionCandidate, ...]) -> float:
+    """Canonical aggregate score: mean of candidate expected_return.
+
+    This is the single shared definition used by ExecutionCandidateBuilder
+    and by all downstream components that trim the candidate universe."""
+    if not candidates:
+        return 0.0
+    return round(sum(float(candidate.expected_return) for candidate in candidates) / len(candidates), 6)
+
