@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Mapping, Protocol
@@ -63,6 +64,8 @@ class NormalizedDailyBar:
     trade_status: str | None = None
     is_st: bool | None = None
     provider: ProviderName = ProviderName.AKSHARE
+    executable_buy_price: float | None = None
+    executable_buy_price_available: bool | None = None
 
     def __post_init__(self) -> None:
         if not self.symbol.strip():
@@ -77,6 +80,21 @@ class NormalizedDailyBar:
             raise ValueError("high must be greater than or equal to open and close")
         if self.low > self.open or self.low > self.close:
             raise ValueError("low must be less than or equal to open and close")
+        self._validate_executable_buy_price()
+
+    def _validate_executable_buy_price(self) -> None:
+        available = self.executable_buy_price_available
+        price = self.executable_buy_price
+        if available is None and price is None:
+            return  # unspecified → fallback D close
+        if available is True and price is not None and price > 0 and math.isfinite(price):
+            return  # explicitly available with valid price
+        if available is False and price is None:
+            return  # explicitly unavailable
+        raise ValueError(
+            "executable_buy_price_available/executable_buy_price conflict: "
+            f"available={available}, price={price}"
+        )
 
 
 class DailyBarProvider(Protocol):

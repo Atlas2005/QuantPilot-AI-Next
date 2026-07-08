@@ -59,12 +59,18 @@ def build_real_candidate_daily_paper_input(
         return replay
     holdings = tuple(symbol for symbol, quantity in sorted(state.execution_state.account.positions.items()) if int(quantity) > 0)
     normalized_holdings = _unique_symbols(holdings)
+    if len(normalized_holdings) > int(config.max_execution_symbols):
+        raise ValueError("holding symbols exceed max_execution_symbols")
     explicit_symbols = _unique_symbols(config.symbols)
     if config.live_market_data and not explicit_symbols:
         raise ValueError("--live-market-data requires an explicit bounded symbol universe")
     _validate_local_pit_inputs(config, decision)
 
-    bars_universe = _unique_symbols(_bar_symbol(row) for row in config.input_bars)
+    # Convert any NormalizedDailyBar objects in input_bars to canonical dicts
+    # so downstream processing only deals with Mappings.
+    input_bars = tuple(_canonical_bar_row(row) for row in config.input_bars) if config.input_bars else ()
+
+    bars_universe = _unique_symbols(_bar_symbol(row) for row in input_bars)
     universe_origin = "explicit_symbols"
     raw_universe = _unique_symbols((*explicit_symbols, *normalized_holdings))
     if not raw_universe and bars_universe:
@@ -95,7 +101,7 @@ def build_real_candidate_daily_paper_input(
         market_provenance = loaded_rows.market_data_provenance
     else:
         calendar = _offline_calendar(decision)
-        bars = tuple(config.input_bars) if config.input_bars else _offline_bars(calendar, raw_universe, decision)
+        bars = input_bars if input_bars else _offline_bars(calendar, raw_universe, decision)
         calendar_provenance = {
             "mode": "offline_fixture",
             "provider": calendar.provider.value,
@@ -145,13 +151,26 @@ def build_real_candidate_daily_paper_input(
     rank_by_symbol = {score.symbol: index for index, score in enumerate(ranked_scores, start=1)}
     factor_selected_set = set(factor_report.selected_symbols)
     selected_symbols = tuple(score.symbol for score in ranked_scores if score.symbol in factor_selected_set)
+    original_selected_symbols = selected_symbols
     rejected_by_symbol = _factor_rejections(factor_report.rejected_symbols_with_reasons)
+    eligible_ranked_symbols = tuple(score.symbol for score in ranked_scores if not _hard_factor_rejection_reasons(rejected_by_symbol, score.symbol))
+    forwarded_standby_symbols: tuple[str, ...] = ()
+    if config.account_capabilities is not None:
+        account_pool = _capacity_limited_account_pool(
+            eligible_ranked_symbols=eligible_ranked_symbols,
+            holdings=normalized_holdings,
+            max_execution_symbols=int(config.max_execution_symbols),
+        )
+        forwarded_standby_symbols = tuple(symbol for symbol in account_pool if symbol not in factor_selected_set and symbol not in set(normalized_holdings))
+        selected_symbols = account_pool
     candidates, candidate_events = _build_candidates(
         config=config,
         decision=decision,
         execution=execution,
         factor_start=factor_start,
         selected_symbols=selected_symbols,
+        original_selected_symbols=original_selected_symbols,
+        forwarded_standby_symbols=forwarded_standby_symbols,
         score_by_symbol=score_by_symbol,
         rank_by_symbol=rank_by_symbol,
         rejected_by_symbol=rejected_by_symbol,
@@ -160,6 +179,7 @@ def build_real_candidate_daily_paper_input(
         state_holdings=holdings,
         state=state,
     )
+    candidate_events = _candidate_events_with_factor_rejections(candidate_events, rejected_by_symbol, score_by_symbol)
     execution_relevant_symbols = _unique_symbols((*holdings, *(candidate.symbol for candidate in candidates)))
     if len(execution_relevant_symbols) > int(config.max_execution_symbols):
         raise ValueError("candidate/holding symbols passed to daily paper loop exceed max_execution_symbols")
@@ -202,7 +222,11 @@ def build_real_candidate_daily_paper_input(
             "candidate_pipeline": {
                 "pipeline_version": REAL_CANDIDATE_PIPELINE_VERSION,
                 "strategy_id": config.strategy_id,
-                "selected_symbols": selected_symbols,
+                "selected_symbols": original_selected_symbols,
+                "original_selected_symbols": original_selected_symbols,
+                "forwarded_standby_symbols": forwarded_standby_symbols,
+                "forwarded_pool_count": len(selected_symbols),
+                "target_symbol_count": int(config.target_symbol_count),
             },
         },
     )
@@ -219,6 +243,8 @@ def build_real_candidate_daily_paper_input(
         universe_origin=universe_origin,
         excluded_bar_symbols=excluded_bar_symbols,
         selected_symbols=selected_symbols,
+        original_selected_symbols=original_selected_symbols,
+        forwarded_standby_symbols=forwarded_standby_symbols,
         factor_report=factor_report,
         score_by_symbol=score_by_symbol,
         rejected_by_symbol=rejected_by_symbol,
@@ -321,11 +347,32 @@ def _dedupe_price_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[Mapping[str, 
 
 
 def _canonical_bar_row(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    # Support both Mapping (dict) and NormalizedDailyBar objects by converting
+    # objects to a dict first. Only propagate executable_buy_price fields when
+    # explicitly set (not default-unspecified).
+    if not isinstance(row, Mapping):
+        obj = row
+        row_dict: dict[str, Any] = {
+            "symbol": obj.symbol, "date": obj.trade_date, "trade_date": obj.trade_date,
+            "open": obj.open, "high": obj.high, "low": obj.low, "close": obj.close,
+            "previous_close": obj.previous_close, "volume": obj.volume, "amount": obj.amount,
+            "is_suspended": getattr(obj, "is_suspended", False),
+            "provider": _canonical_provider(obj),
+        }
+        ebp_avail = getattr(obj, "executable_buy_price_available", None)
+        if ebp_avail is True:
+            row_dict["executable_buy_price_available"] = True
+            row_dict["executable_buy_price"] = float(getattr(obj, "executable_buy_price", 0.0))
+        elif ebp_avail is False:
+            row_dict["executable_buy_price_available"] = False
+            row_dict["executable_buy_price"] = None
+        # else unspecified → don't add the fields
+        row = row_dict
     trade_date = row.get("date", row.get("trade_date"))
     if trade_date is None:
         raise ValueError("daily bar row missing date")
     trade_date = trade_date.isoformat() if isinstance(trade_date, date) else str(trade_date)
-    return {
+    result: dict[str, Any] = {
         "symbol": _normalize_symbol(row["symbol"]),
         "date": date.fromisoformat(trade_date).isoformat(),
         "open": _positive_float(row.get("open"), "open"),
@@ -334,10 +381,31 @@ def _canonical_bar_row(row: Mapping[str, Any]) -> Mapping[str, Any]:
         "close": _positive_float(row.get("close"), "close"),
         "previous_close": None if row.get("previous_close") is None else float(row["previous_close"]),
         "volume": float(row.get("volume", 0.0)),
-        "amount": float(row.get("amount", float(row.get("close", 0.0)) * float(row.get("volume", 0.0)))),
+        "amount": float(_bar_amount(row)),
         "is_suspended": bool(row.get("is_suspended", False)),
         "provider": str(row.get("provider", "input")),
     }
+    if "executable_buy_price" in row:
+        result["executable_buy_price"] = row["executable_buy_price"]
+    if "executable_buy_price_available" in row:
+        result["executable_buy_price_available"] = row["executable_buy_price_available"]
+    return result
+
+
+def _bar_amount(row: Mapping[str, Any]) -> float:
+    amt = row.get("amount")
+    if amt is not None:
+        return float(amt)
+    return float(float(row.get("close", 0.0)) * float(row.get("volume", 0.0)))
+
+
+def _canonical_provider(obj: Any) -> str:
+    """Extract provider string from a NormalizedDailyBar-like object."""
+    from quantpilot_core.real_data_provider import ProviderName
+    provider = getattr(obj, "provider", "input")
+    if isinstance(provider, ProviderName):
+        return provider.value
+    return str(provider)
 
 
 def _positive_float(value: Any, field_name: str) -> float:
@@ -377,6 +445,8 @@ def _build_candidates(
     execution: date,
     factor_start: date,
     selected_symbols: tuple[str, ...],
+    original_selected_symbols: tuple[str, ...],
+    forwarded_standby_symbols: tuple[str, ...],
     score_by_symbol: Mapping[str, Any],
     rank_by_symbol: Mapping[str, int],
     rejected_by_symbol: Mapping[str, tuple[str, ...]],
@@ -385,18 +455,55 @@ def _build_candidates(
     state_holdings: tuple[str, ...],
     state: Any,
 ) -> tuple[tuple[ExecutionCandidate, ...], Mapping[str, Any]]:
+    original_selected_set = set(original_selected_symbols)
+    forwarded_standby_set = set(forwarded_standby_symbols)
     selected_set = set(selected_symbols)
     holding_set = set(state_holdings)
     candidates: list[ExecutionCandidate] = []
     events: dict[str, Any] = {"entries": [], "exits": [], "holds": [], "rejected": []}
     timestamp = datetime(decision.year, decision.month, decision.day, 15, 0, tzinfo=SHANGHAI_TZ)
 
+    account_aware = config.account_capabilities is not None
     available_entry_slots = max(0, int(config.max_execution_symbols) - len(holding_set))
     for symbol in selected_symbols:
         if symbol in holding_set:
-            events["holds"].append({"symbol": symbol, "reason": "holding_selected_no_duplicate_entry"})
+            if account_aware:
+                # existing selected holding — visible candidate, occupies its slot
+                # but does NOT consume an entry slot
+                score = score_by_symbol.get(symbol)
+                pipeline_role = "original_selected_holding"
+                candidates.append(
+                    _candidate(
+                        symbol=symbol,
+                        direction="long",
+                        timestamp=timestamp,
+                        expected_return=LONG_EXPECTED_RETURN_PRIOR,
+                        score=score,
+                        metadata={
+                            **_candidate_metadata(
+                                config=config,
+                                decision=decision,
+                                execution=execution,
+                                factor_start=factor_start,
+                                symbol=symbol,
+                                direction="long",
+                                score=score,
+                                factor_rank=rank_by_symbol.get(symbol),
+                                decision_row=decision_rows.get(symbol, {}),
+                                calendar=calendar,
+                                state=state,
+                            ),
+                            "pipeline_role": pipeline_role,
+                        },
+                    )
+                )
+                events["holds"].append({"symbol": symbol, "reason": "holding_selected_no_duplicate_entry", "pipeline_role": pipeline_role})
+            else:
+                events["holds"].append({"symbol": symbol, "reason": "holding_selected_no_duplicate_entry"})
             continue
-        if len([item for item in candidates if item.direction == "long"]) >= available_entry_slots:
+        # entry candidates count against available slots (holdings don't)
+        entry_candidates_in_loop = [item for item in candidates if item.direction == "long" and dict(item.metadata).get("pipeline_role") != "original_selected_holding"]
+        if len(entry_candidates_in_loop) >= available_entry_slots:
             events["rejected"].append({"symbol": symbol, "reason": "max_execution_symbol_cap"})
             continue
         score = score_by_symbol.get(symbol)
@@ -404,6 +511,12 @@ def _build_candidates(
         if not valid:
             events["rejected"].append({"symbol": symbol, "reason": reason})
             continue
+        if symbol in forwarded_standby_set:
+            pipeline_role = "forwarded_standby"
+        elif symbol in original_selected_set:
+            pipeline_role = "original_selected_entry"
+        else:
+            pipeline_role = "original_selected_entry"
         candidates.append(
             _candidate(
                 symbol=symbol,
@@ -411,22 +524,25 @@ def _build_candidates(
                 timestamp=timestamp,
                 expected_return=LONG_EXPECTED_RETURN_PRIOR,
                 score=score,
-                metadata=_candidate_metadata(
-                    config=config,
-                    decision=decision,
-                    execution=execution,
-                    factor_start=factor_start,
-                    symbol=symbol,
-                    direction="long",
-                    score=score,
-                    factor_rank=rank_by_symbol.get(symbol),
-                    decision_row=decision_rows[symbol],
-                    calendar=calendar,
-                    state=state,
-                ),
+                metadata={
+                    **_candidate_metadata(
+                        config=config,
+                        decision=decision,
+                        execution=execution,
+                        factor_start=factor_start,
+                        symbol=symbol,
+                        direction="long",
+                        score=score,
+                        factor_rank=rank_by_symbol.get(symbol),
+                        decision_row=decision_rows[symbol],
+                        calendar=calendar,
+                        state=state,
+                    ),
+                    "pipeline_role": pipeline_role,
+                },
             )
         )
-        events["entries"].append({"symbol": symbol, "reason": "selected_factor_candidate"})
+        events["entries"].append({"symbol": symbol, "reason": "selected_factor_candidate", "pipeline_role": pipeline_role})
 
     for symbol in state_holdings:
         score = score_by_symbol.get(symbol)
@@ -436,7 +552,7 @@ def _build_candidates(
             continue
         if symbol in selected_set:
             if not any(item["symbol"] == symbol for item in events["holds"]):
-                events["holds"].append({"symbol": symbol, "reason": "holding_selected_no_exit"})
+                events["holds"].append({"symbol": symbol, "reason": "holding_selected_no_exit", "pipeline_role": "original_selected_holding"})
             continue
         candidates.append(
             _candidate(
@@ -462,10 +578,11 @@ def _build_candidates(
                     "action": "exit",
                     "exit_signal": True,
                     "exit_reason": "rank_dropout",
+                    "pipeline_role": "sell_exit",
                 },
             )
         )
-        events["exits"].append({"symbol": symbol, "reason": "rank_dropout"})
+        events["exits"].append({"symbol": symbol, "reason": "rank_dropout", "pipeline_role": "sell_exit"})
     return tuple(candidates), events
 
 
@@ -571,6 +688,52 @@ def _valid_factor_and_market_evidence(
 
 def _factor_rejections(rows: Iterable[Mapping[str, Any]]) -> Mapping[str, tuple[str, ...]]:
     return {str(row["symbol"]): tuple(str(reason) for reason in row.get("reasons", ())) for row in rows}
+
+
+def _hard_factor_rejection_reasons(rejected_by_symbol: Mapping[str, tuple[str, ...]], symbol: str) -> tuple[str, ...]:
+    return tuple(reason for reason in rejected_by_symbol.get(symbol, ()) if reason != "not_selected_lower_rank")
+
+
+def _capacity_limited_account_pool(
+    *,
+    eligible_ranked_symbols: tuple[str, ...],
+    holdings: tuple[str, ...],
+    max_execution_symbols: int,
+) -> tuple[str, ...]:
+    holding_set = set(holdings)
+    if len(holding_set) > int(max_execution_symbols):
+        raise ValueError("holding symbols exceed max_execution_symbols")
+    remaining_new_slots = max(0, int(max_execution_symbols) - len(holding_set))
+    pool: list[str] = []
+    used: set[str] = set()
+    admitted_new_symbols = 0
+    for symbol in eligible_ranked_symbols:
+        if symbol in used:
+            continue
+        if symbol not in holding_set:
+            if admitted_new_symbols >= remaining_new_slots:
+                continue
+            admitted_new_symbols += 1
+        pool.append(symbol)
+        used.add(symbol)
+    return tuple(pool)
+
+
+def _candidate_events_with_factor_rejections(
+    candidate_events: Mapping[str, Any],
+    rejected_by_symbol: Mapping[str, tuple[str, ...]],
+    score_by_symbol: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    events = {key: list(value) for key, value in dict(candidate_events).items()}
+    rejected_events = events.setdefault("rejected", [])
+    already_reported = {str(event.get("symbol")) for event in rejected_events if isinstance(event, Mapping)}
+    for symbol in score_by_symbol:
+        if symbol in already_reported:
+            continue
+        hard_reasons = _hard_factor_rejection_reasons(rejected_by_symbol, symbol)
+        if hard_reasons:
+            rejected_events.append({"symbol": symbol, "reason": "factor_rejected", "factor_rejection_reasons": hard_reasons})
+    return events
 
 
 def _ranked_factor_scores(scores: Iterable[Any]) -> tuple[Any, ...]:
@@ -717,6 +880,8 @@ def _pipeline_report(
     universe_origin: str,
     excluded_bar_symbols: tuple[str, ...],
     selected_symbols: tuple[str, ...],
+    original_selected_symbols: tuple[str, ...],
+    forwarded_standby_symbols: tuple[str, ...],
     factor_report: Any,
     score_by_symbol: Mapping[str, Any],
     rejected_by_symbol: Mapping[str, tuple[str, ...]],
@@ -752,7 +917,11 @@ def _pipeline_report(
         "holdings": holdings,
         "eligible_symbols": tuple(score_by_symbol),
         "rejected": rejected_by_symbol,
-        "selected_symbols": selected_symbols,
+        "selected_symbols": original_selected_symbols,
+        "original_selected_symbols": original_selected_symbols,
+        "forwarded_standby_symbols": forwarded_standby_symbols,
+        "forwarded_pool_count": len(selected_symbols),
+        "account_candidate_pool_symbols": selected_symbols,
         "evidence": {
             symbol: {
                 "factor_rank": index,
@@ -928,7 +1097,7 @@ def _pipeline_request_digest(config: RealCandidatePipelineConfig, decision: date
 
 
 def _canonical_request_payload(config: RealCandidatePipelineConfig, decision: date) -> Mapping[str, Any]:
-    return {
+    payload = {
         "pipeline_version": REAL_CANDIDATE_PIPELINE_VERSION,
         "decision_session": decision.isoformat(),
         "strategy_id": config.strategy_id.strip(),
@@ -943,6 +1112,9 @@ def _canonical_request_payload(config: RealCandidatePipelineConfig, decision: da
         "advisory_provenance": _json_ready(config.advisory_provenance),
         "quant_firm_context": _json_ready(config.quant_firm_context),
     }
+    if config.account_capabilities is not None:
+        payload["account_capabilities"] = _json_ready(config.account_capabilities)
+    return payload
 
 
 def _canonical_request_bars(rows: Iterable[Mapping[str, Any]]) -> tuple[Mapping[str, Any], ...]:
@@ -986,6 +1158,8 @@ def _daily_loop_config(config: RealCandidatePipelineConfig, *, report_path: str 
         report_path=report_path,
         live_market_data=config.live_market_data,
         live_symbol_cap=config.max_execution_symbols,
+        target_position_count=int(config.target_symbol_count),
+        account_capabilities=config.account_capabilities,
     )
 
 

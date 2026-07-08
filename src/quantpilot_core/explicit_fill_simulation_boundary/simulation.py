@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from math import floor
 
-from quantpilot_core.executable_candidate import CandidateAssetType, CandidateSide
-from quantpilot_core.executable_candidate.cost import estimate_a_share_cost
 from quantpilot_core.explicit_fill_simulation_boundary.contracts import (
     FillSimulationCostBreakdown,
     FillSimulationIssue,
@@ -122,8 +120,8 @@ def _result(
     warnings: tuple[FillSimulationIssue, ...],
 ) -> FillSimulationResult:
     gross_notional = round(filled_quantity * fill_price, 6)
-    cost = _cost_breakdown(request, gross_notional)
-    net_cash_impact = _net_cash_impact(request.side, gross_notional, cost.total_cost)
+    cost = _cost_breakdown(request, gross_notional, filled_quantity)
+    net_cash_impact = _net_cash_impact(request.side, gross_notional, cost)
     return FillSimulationResult(
         accepted=accepted,
         status=status,
@@ -148,6 +146,7 @@ def _result(
 def _cost_breakdown(
     request: FillSimulationRequest,
     gross_notional: float,
+    filled_quantity: int,
 ) -> FillSimulationCostBreakdown:
     if gross_notional <= 0:
         return FillSimulationCostBreakdown(
@@ -155,30 +154,37 @@ def _cost_breakdown(
             stamp_duty=0.0,
             slippage_cost=0.0,
             total_cost=0.0,
+            transfer_fee=0.0,
+            exchange_fee=0.0,
         )
-    cost = estimate_a_share_cost(
-        CandidateSide(request.side.value),
-        gross_notional,
-        request.commission_rate,
-        request.min_commission,
-        request.stamp_duty_rate,
-        request.slippage_bps,
-        asset_type=CandidateAssetType.ETF if request.asset_type == CandidateAssetType.ETF.value else CandidateAssetType.STOCK,
+    commission = round(max(gross_notional * request.commission_rate, request.min_commission), 6)
+    is_etf = str(request.asset_type).lower() == "etf"
+    stamp_allowed = (
+        (request.side == FillSimulationSide.SELL and (not is_etf or request.stamp_duty_applies_to_etf))
+        or (request.side == FillSimulationSide.BUY and request.stamp_duty_applies_to_buy)
     )
+    stamp_duty = round(gross_notional * request.stamp_duty_rate, 6) if stamp_allowed else 0.0
+    transfer_fee = round(gross_notional * request.transfer_fee_rate, 6)
+    exchange_fee = round(gross_notional * request.exchange_fee_rate, 6)
+    slippage_cost = round(abs(gross_notional - filled_quantity * request.reference_price), 6)
+    total_cost = round(commission + stamp_duty + transfer_fee + exchange_fee + slippage_cost, 6)
     return FillSimulationCostBreakdown(
-        commission=cost.commission,
-        stamp_duty=cost.stamp_duty,
-        slippage_cost=cost.slippage,
-        total_cost=cost.total_cost,
+        commission=commission,
+        stamp_duty=stamp_duty,
+        slippage_cost=slippage_cost,
+        total_cost=total_cost,
+        transfer_fee=transfer_fee,
+        exchange_fee=exchange_fee,
     )
 
 
-def _net_cash_impact(side: FillSimulationSide, gross_notional: float, total_cost: float) -> float:
+def _net_cash_impact(side: FillSimulationSide, gross_notional: float, cost: FillSimulationCostBreakdown) -> float:
     if gross_notional <= 0:
         return 0.0
+    cash_fees = round(cost.commission + cost.stamp_duty + cost.transfer_fee + cost.exchange_fee, 6)
     if side == FillSimulationSide.BUY:
-        return round(-gross_notional - total_cost, 6)
-    return round(gross_notional - total_cost, 6)
+        return round(-gross_notional - cash_fees, 6)
+    return round(gross_notional - cash_fees, 6)
 
 
 def _fatal(code: str, message: str) -> FillSimulationIssue:

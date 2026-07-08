@@ -12,6 +12,7 @@ from quantpilot_core.execution_candidate.contracts import (
     ExecutionCandidate,
     ExecutionCandidateReport,
     ExecutionDirection,
+    candidate_report_aggregate_score,
 )
 
 
@@ -133,10 +134,10 @@ class ExecutionCandidateBuilder:
 
         ranked = sorted(scored, key=lambda item: (-abs(item[1]), -item[1], item[0]))
         candidates = tuple(item[2] for item in ranked[: self.top_n])
-        aggregate_score = _mean(candidate.expected_return for candidate in candidates)
+        aggregate_score = candidate_report_aggregate_score(candidates)
         return ExecutionCandidateReport(
             candidates=candidates,
-            aggregate_score=round(aggregate_score, 6),
+            aggregate_score=aggregate_score,
             strategy_id=self.strategy_id,
         )
 
@@ -308,12 +309,6 @@ def _direction(score: float) -> ExecutionDirection:
         return "short"
     return "flat"
 
-
-def _mean(values: Iterable[float]) -> float:
-    items = tuple(values)
-    if not items:
-        return 0.0
-    return sum(items) / len(items)
 
 
 def _clamp(value: float, low: float, high: float) -> float:

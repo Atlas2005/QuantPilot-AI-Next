@@ -90,6 +90,7 @@ def execute_a_share_reality_proposal(
     *,
     trade_date: str,
     cost_assumptions: PaperFillCostAssumptions,
+    fee_assumptions_by_order_id: Mapping[str, PaperFillCostAssumptions] | None = None,
     config: AShareExecutionConfig | None = None,
 ) -> AShareExecutionRealityResult:
     """Execute intents with A-share inventory/tradability checks and partial fills."""
@@ -106,6 +107,12 @@ def execute_a_share_reality_proposal(
 
     for index, intent in enumerate(proposal.intents, start=1):
         order_id = _order_id(intent, proposal.run_label, index)
+        order_cost_assumptions = dict(fee_assumptions_by_order_id or {}).get(order_id, cost_assumptions)
+        order_lot_size = max(1, int(
+            dict(intent.metadata).get("a_share_lot_size")
+            or (order_cost_assumptions.lot_size if fee_assumptions_by_order_id and order_id in fee_assumptions_by_order_id else None)
+            or cfg.buy_lot_size
+        ))
         side = _side(intent)
         requested_quantity = int(intent.target_shares or 0)
         sellable_before = _sellable_quantity(lots, intent.symbol, trade_date, cfg)
@@ -115,8 +122,8 @@ def execute_a_share_reality_proposal(
             requested_quantity=requested_quantity,
             current_position=int(account.positions.get(intent.symbol, 0)),
             config=cfg,
+            lot_size=order_lot_size,
         )
-        reason = normalize_reason
         row = market_rows.get(intent.symbol, {})
         metadata_availability = _metadata_availability(
             row=row,
@@ -136,19 +143,27 @@ def execute_a_share_reality_proposal(
             frozen_cash=float(state.frozen_cash),
         )
 
+        # Only buy_quantity_normalized_to_lot_increment with positive quantity
+        # is a safe adjustment. All other normalization reasons are fatal.
+        fatal_reason: str | None = None
+        if normalize_reason == "buy_quantity_normalized_to_lot_increment" and normalized_quantity > 0:
+            fatal_reason = None
+        elif normalize_reason is not None:
+            fatal_reason = normalize_reason
+
         if order_id in seen_order_ids:
-            reason = "duplicate_order_id"
-        elif reason is None:
-            reason = _tradability_reason(side, normalized_quantity, row, cfg)
-        if reason is None and side is OrderIntentSide.SELL and normalized_quantity > sellable_before:
-            reason = "t_plus_one_sellable_quantity_insufficient"
+            fatal_reason = "duplicate_order_id"
+        elif fatal_reason is None:
+            fatal_reason = _tradability_reason(side, normalized_quantity, row, cfg)
+        if fatal_reason is None and side is OrderIntentSide.SELL and normalized_quantity > sellable_before:
+            fatal_reason = "t_plus_one_sellable_quantity_insufficient"
             rule_diagnostics = _mark_rule(rule_diagnostics, "t_plus_sellable_inventory", triggered=True, changed_order=True)
-        if reason is None and side is OrderIntentSide.SELL and normalized_quantity > int(account.positions.get(intent.symbol, 0)):
-            reason = "insufficient_position"
+        if fatal_reason is None and side is OrderIntentSide.SELL and normalized_quantity > int(account.positions.get(intent.symbol, 0)):
+            fatal_reason = "insufficient_position"
 
         price = _execution_price(row)
-        if reason is not None or side is OrderIntentSide.HOLD:
-            reject_reason = reason or "hold_intent_no_fill"
+        if fatal_reason is not None or side is OrderIntentSide.HOLD:
+            reject_reason = fatal_reason or "hold_intent_no_fill"
             rejections.append(_rejected(intent, reject_reason, requested_quantity))
             outcomes.append(
                 _outcome(
@@ -177,7 +192,7 @@ def execute_a_share_reality_proposal(
         dry_run_accepted = True
         reserve = 0.0
         if side is OrderIntentSide.BUY:
-            reserve = _estimated_buy_cash(normalized_quantity, price, cost_assumptions)
+            reserve = _estimated_buy_cash(normalized_quantity, price, order_cost_assumptions)
             if reserve > cash_available:
                 dry_run_accepted = False
                 rule_diagnostics = _mark_rule(rule_diagnostics, "available_cash_frozen_cash", triggered=True, changed_order=True)
@@ -190,14 +205,18 @@ def execute_a_share_reality_proposal(
             reference_price=price,
             available_volume=_available_volume(row),
             max_participation_rate=cfg.max_participation_rate,
-            commission_rate=cost_assumptions.fee_rate,
-            min_commission=cost_assumptions.min_fee,
-            stamp_duty_rate=cost_assumptions.stamp_tax_rate,
-            slippage_bps=cost_assumptions.slippage_bps,
+            commission_rate=order_cost_assumptions.fee_rate,
+            min_commission=order_cost_assumptions.min_fee,
+            stamp_duty_rate=order_cost_assumptions.stamp_tax_rate,
+            slippage_bps=order_cost_assumptions.slippage_bps,
             asset_type=str(intent.metadata.get("asset_type", "stock")),
             evidence_refs=(f"a_share_market_reality_execution:{trade_date}:{intent.symbol}",),
             dry_run_accepted=dry_run_accepted,
             source_instruction_id=order_id,
+            transfer_fee_rate=order_cost_assumptions.transfer_fee_rate,
+            exchange_fee_rate=order_cost_assumptions.exchange_fee_rate,
+            stamp_duty_applies_to_buy=order_cost_assumptions.stamp_tax_applies_to_buy,
+            stamp_duty_applies_to_etf=order_cost_assumptions.stamp_tax_applies_to_etf,
         )
         fill = simulate_fill_boundary(fill_request)
         if not fill.accepted or fill.simulated_filled_quantity <= 0:
@@ -228,7 +247,7 @@ def execute_a_share_reality_proposal(
             continue
 
         filled_quantity = int(fill.simulated_filled_quantity)
-        trade = _trade_from_fill(intent, side, fill, cost_assumptions)
+        trade = _trade_from_fill(intent, side, fill, order_cost_assumptions)
         applied = _apply_trades(account, (trade,), {intent.symbol: price})
         _assert_account_consistent(applied)
         account = applied
@@ -248,7 +267,9 @@ def execute_a_share_reality_proposal(
                 fee_breakdown={
                     "commission": fill.cost_breakdown.commission,
                     "transaction_tax": fill.cost_breakdown.stamp_duty,
-                    "transfer_or_exchange_fee": 0.0,
+                    "transfer_fee": fill.cost_breakdown.transfer_fee,
+                    "exchange_fee": fill.cost_breakdown.exchange_fee,
+                    "transfer_or_exchange_fee": round(fill.cost_breakdown.transfer_fee + fill.cost_breakdown.exchange_fee, 6),
                     "slippage_cost": fill.cost_breakdown.slippage_cost,
                 },
                 total_cost=float(fill.cost_breakdown.total_cost),
@@ -433,13 +454,15 @@ def _normalize_quantity(
     requested_quantity: int,
     current_position: int,
     config: AShareExecutionConfig,
+    lot_size: int | None = None,
 ) -> tuple[int, str | None]:
+    lot = max(1, int(lot_size or config.buy_lot_size))
     if requested_quantity <= 0:
         return 0, "quantity_must_be_positive"
     if side is OrderIntentSide.BUY:
-        if requested_quantity < config.buy_lot_size:
+        if requested_quantity < lot:
             return 0, "buy_quantity_below_lot_size"
-        normalized = (requested_quantity // config.buy_lot_increment) * config.buy_lot_increment
+        normalized = (requested_quantity // lot) * lot
         if normalized != requested_quantity:
             return normalized, "buy_quantity_normalized_to_lot_increment"
         return normalized, None
@@ -447,7 +470,7 @@ def _normalize_quantity(
         if requested_quantity > current_position:
             return requested_quantity, "insufficient_position"
         residual = current_position - requested_quantity
-        if requested_quantity % config.buy_lot_increment == 0:
+        if requested_quantity % lot == 0:
             return requested_quantity, None
         if config.odd_lot_sell_policy == "allow_position_residual" and residual == 0:
             return requested_quantity, None
@@ -516,9 +539,13 @@ def _trade_from_fill(
     gross = round(float(fill.gross_notional), 6)
     commission = round(float(fill.cost_breakdown.commission), 6)
     stamp_tax = round(float(fill.cost_breakdown.stamp_duty), 6)
+    transfer_fee = round(float(getattr(fill.cost_breakdown, "transfer_fee", 0.0)), 6)
+    exchange_fee = round(float(getattr(fill.cost_breakdown, "exchange_fee", 0.0)), 6)
     total_cost = round(float(fill.cost_breakdown.total_cost), 6)
     slippage = round(float(fill.cost_breakdown.slippage_cost), 6)
-    cash_impact = round(-gross - commission if side is OrderIntentSide.BUY else gross - commission - stamp_tax, 6)
+    cash_fee_without_tax = round(commission + transfer_fee + exchange_fee, 6)
+    cash_fees = round(cash_fee_without_tax + stamp_tax, 6)
+    cash_impact = round(-gross - cash_fees if side is OrderIntentSide.BUY else gross - cash_fees, 6)
     return PaperTrade(
         symbol=intent.symbol,
         side=side.value,
@@ -526,7 +553,7 @@ def _trade_from_fill(
         reference_price=float(fill.reference_price),
         fill_price=float(fill.simulated_fill_price),
         gross_notional=gross,
-        fee=commission,
+        fee=cash_fee_without_tax,
         slippage_cost=slippage,
         total_cost=total_cost,
         cash_impact=cash_impact,
@@ -539,6 +566,11 @@ def _trade_from_fill(
             "run_label": intent.run_label,
             "a_share_market_reality_execution_v1": True,
             "fee_rate": cost_assumptions.fee_rate,
+            "commission": commission,
+            "transfer_fee": transfer_fee,
+            "exchange_fee": exchange_fee,
+            "transfer_fee_rate": cost_assumptions.transfer_fee_rate,
+            "exchange_fee_rate": cost_assumptions.exchange_fee_rate,
         },
     )
 
@@ -915,7 +947,10 @@ def estimate_buy_cash_required(quantity: int, price: float, cost_assumptions: Pa
     fill_price = price * (1 + cost_assumptions.slippage_bps / 10_000)
     gross = quantity * fill_price
     fee = max(gross * cost_assumptions.fee_rate, cost_assumptions.min_fee)
-    return round(gross + fee, 6)
+    transfer = gross * cost_assumptions.transfer_fee_rate
+    exchange = gross * cost_assumptions.exchange_fee_rate
+    stamp = gross * cost_assumptions.stamp_tax_rate if cost_assumptions.stamp_tax_applies_to_buy else 0.0
+    return round(gross + fee + transfer + exchange + stamp, 6)
 
 
 def _first_issue_code(fill: Any) -> str:

@@ -10,6 +10,7 @@ from typing import Any, Mapping
 from quantpilot_core.execution_candidate import ExecutionCandidateReport
 from quantpilot_core.paper_trading import PaperFillCostAssumptions
 from quantpilot_core.real_data_provider import TradingCalendar
+from quantpilot_core.runtime_account import AccountCapabilities, BrokerFeeProfile
 
 DAILY_LOOP_SCHEMA_VERSION = 1
 DAILY_LOOP_REPORT_SCHEMA_VERSION = 1
@@ -45,6 +46,9 @@ class DailyPaperLoopConfig:
     live_market_data: bool = False
     live_symbol_cap: int = 6
     cost_assumptions: PaperFillCostAssumptions = field(default_factory=PaperFillCostAssumptions)
+    account_capabilities: AccountCapabilities | None = None
+    broker_returned_account_fee_profile: BrokerFeeProfile | None = None
+    persisted_user_account_fee_profile: BrokerFeeProfile | None = None
 
 
 @dataclass(frozen=True)
