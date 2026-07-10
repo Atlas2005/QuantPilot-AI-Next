@@ -326,6 +326,7 @@ class RealDataWalkForwardScaleupReport:
     notes: tuple[str, ...]
     artifact_path: str | None = None
     turnover_aware_attribution: Mapping[str, Any] = field(default_factory=dict)
+    data_source_provenance: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -470,6 +471,12 @@ def run_real_data_walk_forward_scaleup_v1(
     """Run the manual scale-up wrapper without broker or live LLM calls."""
 
     payload = config or RealDataWalkForwardScaleupConfig(**kwargs)
+    provider_for_metadata = payload.provider
+    if hasattr(provider_for_metadata, "tradability_metadata"):
+        payload = replace(payload, metadata={
+            **dict(payload.metadata),
+            **provider_for_metadata.tradability_metadata(payload.start_date, payload.end_date),
+        })
     _validate_scaleup_config(payload)
     smoke_config = RealDataWalkForwardSmokeConfig(
         symbols=payload.symbols,
@@ -571,7 +578,16 @@ def run_real_data_walk_forward_scaleup_v1(
         benchmark_notes=tuple(benchmark["benchmark_notes"]),
     )
     report = _scaleup_report_from_smoke(smoke_report, payload)
-    report = replace(report, valid_symbols=valid_symbols, skipped_symbols=skipped_symbols)
+    report = replace(
+        report,
+        valid_symbols=valid_symbols,
+        skipped_symbols=skipped_symbols,
+        data_source_provenance={
+            **dict(report.data_source_provenance),
+            "valid_symbols": len(valid_symbols),
+            "skipped_empty_symbols": len(skipped_symbols),
+        },
+    )
     artifact_path = _write_scaleup_report_artifact(report, payload.artifact_path)
     if artifact_path is not None:
         report = replace(report, artifact_path=artifact_path)
@@ -2236,6 +2252,11 @@ def _scaleup_report_from_smoke(
         f"advisory_mode:{config.advisory_mode}",
         f"ranking_mode:{config.ranking_mode}",
     )
+    provider = config.provider
+    provenance = (provider.snapshot_provenance(requested_symbols=len(config.symbols))
+                  if hasattr(provider, "snapshot_provenance") else {})
+    provenance = {**provenance, "valid_symbols": len(valid_symbols), "skipped_empty_symbols": len(skipped_symbols),
+                  "adjustment_mode": Adjustment.NONE.value, "universe_source": "snapshot_daily_partitions" if provenance else "provider_request"}
     return RealDataWalkForwardScaleupReport(
         parameter_set_id=(
             str(config.metadata["parameter_set_id"])
@@ -2290,6 +2311,7 @@ def _scaleup_report_from_smoke(
         mature_framework_hooks=_mature_framework_hooks(config.metadata),
         notes=notes + tuple(note for note in smoke_report.notes if note not in {"real_data_smoke_completed"}),
         turnover_aware_attribution=_aggregate_turnover_attribution(smoke_report.per_window_metrics),
+        data_source_provenance=provenance,
     )
 
 
