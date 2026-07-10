@@ -29,6 +29,11 @@ class RealCandidatePipelineConfig:
     target_symbol_count: int = 1
     live_market_data: bool = False
     input_bars: tuple[Mapping[str, Any], ...] = ()
+    # Optional authoritative sessions for an offline immutable-data replay.
+    # This keeps exchange holidays and D+1 boundaries aligned with the source
+    # snapshot without constructing or calling a provider.
+    input_calendar_sessions: tuple[str, ...] = ()
+    input_calendar_provider: str = ""
     information_signals: tuple[Any, ...] = ()
     information_provenance: Mapping[str, Any] = field(default_factory=dict)
     advisory_provenance: Mapping[str, Any] = field(default_factory=dict)

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
+import os
+import subprocess
 import tempfile
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -33,6 +36,10 @@ from quantpilot_core.walk_forward.snapshot import (
     build_fixture_manifest,
     load_and_validate_snapshot,
 )
+
+
+REAL_TUSHARE_SNAPSHOT_SHA256 = "4f76dc8a83901d295c8f8688341649b5994d58ded110844e72a83be5398492c0"
+REAL_TUSHARE_MANIFEST_DIGEST = "34e8a34a053bfc958c3bc898565b972417e1d5df436bd2349297b17135c95ab4"
 
 
 @dataclass(frozen=True)
@@ -138,7 +145,9 @@ class ProductionWindowRunner:
         daily_sessions: list[OOSDailySessionResult] = []
         totals = _zero_fee_totals()
 
-        for decision_date_str in test_dates:
+        for session_index, decision_date_str in enumerate(test_dates, start=1):
+            if os.environ.get("QUANTPILOT_CANONICAL_PROGRESS") == "1" and (session_index == 1 or session_index % 5 == 0):
+                print(f"canonical baseline {context.window.run_label}: {session_index}/{len(test_dates)} {decision_date_str}", flush=True)
             decision_date = date.fromisoformat(decision_date_str)
             try:
                 exec_idx = self._calendar_sessions.index(decision_date_str) + 1
@@ -153,6 +162,8 @@ class ProductionWindowRunner:
                 initial_capital=context.initial_capital, state_path=self._state_path,
                 report_path=None, strategy_id=self._strategy_id,
                 live_market_data=False, input_bars=bars_through_exec,
+                input_calendar_sessions=self._calendar_sessions,
+                input_calendar_provider="tushare",
             )
             pipeline_result = run_real_candidate_daily_paper(pipeline_config)
             daily = _extract_daily_session(pipeline_result, decision_date, execution_date)
@@ -363,6 +374,118 @@ def _max_drawdown_from_series(equities: list[float]) -> float | None:
     return round(md, 6)
 
 
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _code_revision() -> str | None:
+    """Return the current revision when this source is running from a Git checkout."""
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[3],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    revision = completed.stdout.strip()
+    return revision if completed.returncode == 0 and len(revision) == 40 else None
+
+
+def _validate_real_tushare_snapshot(manifest: SnapshotManifest, path: Path) -> None:
+    """Pin the PR #116 immutable snapshot before entering the production loop."""
+    checks = {
+        "SHA256": _file_sha256(path) == REAL_TUSHARE_SNAPSHOT_SHA256,
+        "manifest digest": manifest.digest == REAL_TUSHARE_MANIFEST_DIGEST,
+        "provider": manifest.provider == "tushare",
+        "canonical": manifest.canonical is True,
+        "symbol count": len(manifest.symbols) == 12,
+        "calendar sessions": len(manifest.calendar_sessions) == 303,
+        "equity bars": len(manifest.bars) == 3636,
+        "benchmark": manifest.benchmark_index_symbol == "000300.SH" and len(manifest.benchmark_index_bars) == 303,
+        "decision range": (manifest.decision_date_range_start, manifest.decision_date_range_end) == ("2024-01-02", "2024-12-31"),
+        "data range": (manifest.data_date_range_start, manifest.data_date_range_end) == ("2023-10-09", "2025-01-02"),
+    }
+    failures = tuple(name for name, passed in checks.items() if not passed)
+    if failures:
+        raise ValueError("real Tushare snapshot integrity mismatch: " + ", ".join(failures))
+
+
+def _annualized_return(total_return: float | None, session_count: int) -> float | None:
+    if total_return is None or session_count <= 0 or 1.0 + total_return <= 0:
+        return None
+    return round((1.0 + total_return) ** (252.0 / session_count) - 1.0, 6)
+
+
+def _annualized_volatility(session_returns: tuple[float, ...]) -> float | None:
+    if len(session_returns) < 2:
+        return None
+    mean = sum(session_returns) / len(session_returns)
+    variance = sum((value - mean) ** 2 for value in session_returns) / (len(session_returns) - 1)
+    return round(math.sqrt(variance) * math.sqrt(252.0), 6)
+
+
+def _benchmark_boundary_values(
+    benchmark_bars: tuple[Mapping[str, Any], ...], daily_sessions: tuple[OOSDailySessionResult, ...]
+) -> tuple[float | None, float | None]:
+    if not daily_sessions:
+        return None, None
+    values = {str(row.get("date")): float(row["close"]) for row in benchmark_bars if "date" in row and "close" in row}
+    return values.get(daily_sessions[0].decision_session.isoformat()), values.get(daily_sessions[-1].valuation_session.isoformat())
+
+
+def _execution_summary(sessions: tuple[OOSDailySessionResult, ...]) -> Mapping[str, Any]:
+    intents = sum(s.intent_count for s in sessions)
+    fills = sum(s.filled_count for s in sessions)
+    partials = sum(s.partial_fill_count for s in sessions)
+    rejected = sum(s.rejected_count for s in sessions)
+    requested = sum(s.requested_quantity for s in sessions)
+    filled_quantity = sum(s.filled_quantity for s in sessions)
+    turnover = round(sum(s.turnover for s in sessions), 6)
+    return {
+        "intent_count": intents, "submitted_order_count": intents,
+        "filled_count": fills, "partial_fill_count": partials, "rejected_count": rejected,
+        "unfilled_count": max(0, intents - fills - partials - rejected),
+        "fill_rate": round(filled_quantity / requested, 6) if requested else None,
+        "total_filled_quantity": filled_quantity, "trade_count": fills + partials,
+        "total_turnover": turnover, "buy_turnover": None, "sell_turnover": None,
+        "turnover_directional_breakdown_available": False,
+        "slippage_estimate": round(sum(s.slippage_cost for s in sessions), 6),
+        "fee_drag": round(sum(s.total_cost for s in sessions), 6),
+        "holding_count": sessions[-1].settlement_lot_count if sessions else 0,
+        "settlement_lot_evidence": sum(s.settlement_lot_count for s in sessions),
+        "reconciliation_status": "passed" if all(s.reconciliation_passed for s in sessions) else "failed",
+        "no_trade_reasons": (), "rejection_reasons": (), "execution_blockers": (),
+        "warnings": ("directional turnover and reason codes are not emitted by the existing production report",),
+    }
+
+
+def _write_markdown_summary(report: Mapping[str, Any], path: Path) -> None:
+    """Write a small human-readable companion without duplicating market rows."""
+    data = report["data_provenance"]
+    strategy = report["strategy"]
+    benchmark = report["benchmark"]
+    execution = report["execution"]
+    lines = (
+        "# Canonical Cost-After-Fee OOS Baseline\n\n"
+        f"- Snapshot SHA-256: `{report['snapshot_sha256']}`\n"
+        f"- Manifest digest: `{report['snapshot_digest']}`\n"
+        f"- Provider/canonical: `{data['provider']}` / `{data['canonical']}`\n"
+        f"- Decision range: `{data['decision_date_range']['start']}` to `{data['decision_date_range']['end']}`\n\n"
+        "## Results\n\n"
+        f"- Initial/final equity: {strategy['initial_equity']:.2f} / {strategy['final_equity']:.2f}\n"
+        f"- Net return after fees: {strategy['net_return_after_fees']:.4%}\n"
+        f"- CSI 300 return: {benchmark['total_return']:.4%}; excess: {report['excess_return']:.4%}\n"
+        f"- Total explicit fees: {report['fee_breakdown']['total_cost']:.2f}\n"
+        f"- Filled orders: {execution['filled_count']}; fill rate: {execution['fill_rate']:.2%}\n\n"
+        "This is first historical paper-trading evidence only and makes no profitability claim.\n"
+    )
+    path.write_text(lines, encoding="utf-8")
+
+
 def _dict_to_daily_session(raw: dict[str, Any]) -> OOSDailySessionResult:
     return OOSDailySessionResult(
         decision_session=date.fromisoformat(str(raw["decision_session"])),
@@ -411,6 +534,7 @@ def run_canonical_cost_after_fee_baseline(
             raise ValueError(
                 f"canonical baseline requires a canonical snapshot. "
                 f"Got canonical={manifest.canonical}, provider={manifest.provider}.")
+        _validate_real_tushare_snapshot(manifest, Path(cfg.snapshot_path))
     else:
         raise ValueError(f"data_mode '{cfg.data_mode}' not supported.")
 
@@ -497,30 +621,69 @@ def run_canonical_cost_after_fee_baseline(
 
         output_dir = Path(cfg.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
+        final_equity = flat[-1].session_end_equity if flat else None
+        benchmark_start, benchmark_end = _benchmark_boundary_values(manifest.benchmark_index_bars, flat)
+        session_returns = tuple(
+            s.session_net_pnl / s.session_start_equity
+            for s in flat if s.session_start_equity > 0
+        )
+        annualized_return = _annualized_return(strategy_return, len(flat))
+        volatility = _annualized_volatility(session_returns)
+        window_metrics = tuple({
+            "label": wr.window.run_label,
+            "net_pnl": wr.performance_metrics.get("net_pnl"),
+            "gross_pnl": wr.performance_metrics.get("gross_pnl"),
+            "ending_equity": wr.performance_metrics.get("ending_equity"),
+            "turnover": wr.performance_metrics.get("turnover"),
+            "fill_rate": wr.performance_metrics.get("fill_rate"),
+            "trade_count": wr.performance_metrics.get("trade_count"),
+        } for wr in wf_result.window_results)
+        execution = _execution_summary(flat)
         report_payload = {
-            "schema_version": 1, "baseline_version": "canonical_baseline_v1",
+            "schema_version": 2, "baseline_version": "canonical_baseline_v1",
+            "report_schema": "canonical_cost_after_fee_oos_v2",
+            "run_timestamp": datetime.now(timezone.utc).isoformat(),
+            "code_revision": _code_revision(),
             "parameter_update_mode": "frozen_baseline", "no_profitability_claim": True,
             "snapshot_digest": manifest.digest,
+            "snapshot_sha256": _file_sha256(Path(cfg.snapshot_path)) if cfg.data_mode == "fixed_snapshot" else None,
             "data_provenance": {"mode": cfg.data_mode, "provider": manifest.provider,
                 "canonical": manifest.canonical, "snapshot_path": cfg.snapshot_path,
                 "symbols": manifest.symbols,
+                "decision_date_range": manifest.decision_date_range,
+                "data_date_range": manifest.data_date_range,
                 "benchmark_index_symbol": manifest.benchmark_index_symbol},
             "snapshot_provenance": dict(manifest.provenance),
             "windows": tuple(w.run_label for w in windows), "window_count": len(windows),
-            "strategy": {"net_pnl": strategy_net_pnl,
+            "frozen_runner_config": {"initial_capital": cfg.initial_capital,
+                "train_window_days": cfg.train_window_days, "test_window_days": cfg.test_window_days,
+                "max_windows": cfg.max_windows, "strategy_id": cfg.strategy_id,
+                "benchmark_index": cfg.benchmark_index_symbol},
+            "strategy": {"initial_equity": cfg.initial_capital, "final_equity": final_equity,
+                "net_pnl": strategy_net_pnl,
                 "gross_pnl": round(float(strategy_net_pnl or 0) + agg_fees["total_cost"], 6)
                 if strategy_net_pnl is not None else None,
-                "total_return": strategy_return, "max_drawdown": max_dd,
-                "turnover": total_to, "fill_rate": overall_fr},
+                "total_return": strategy_return, "net_return_after_fees": strategy_return,
+                "gross_return": round((float(strategy_net_pnl or 0) + agg_fees["total_cost"]) / cfg.initial_capital, 6)
+                if strategy_net_pnl is not None else None,
+                "annualized_return": annualized_return, "volatility": volatility,
+                "max_drawdown": max_dd, "turnover": total_to, "fill_rate": overall_fr,
+                "positive_session_count": sum(s.session_net_pnl > 0 for s in flat),
+                "negative_session_count": sum(s.session_net_pnl < 0 for s in flat),
+                "flat_session_count": sum(s.session_net_pnl == 0 for s in flat)},
             "benchmark": {"symbol": manifest.benchmark_index_symbol,
+                "start_value": benchmark_start, "end_value": benchmark_end,
                 "total_return": br, "final_equity": be, "data_gap_reason": bg},
             "excess_return": excess, "fee_breakdown": dict(agg_fees),
+            "execution": execution,
+            "per_window_metrics": window_metrics,
             "limitations": ("paper_trading_only_no_broker_execution",
                 "no_profitability_claim", "parameter_update_mode_frozen_baseline",
                 f"data_mode:{cfg.data_mode}"),
             "production_provenance": tuple(_daily_provenance(s) for s in flat),
         }
         rp = write_report_atomic(report_payload, output_dir / "baseline_report.json")
+        _write_markdown_summary(report_payload, output_dir / "baseline_summary.md")
 
         return CanonicalBaselineResult(
             status="completed", snapshot_digest=manifest.digest,

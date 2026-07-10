@@ -100,7 +100,7 @@ def build_real_candidate_daily_paper_input(
         calendar_provenance = loaded_rows.calendar_provenance
         market_provenance = loaded_rows.market_data_provenance
     else:
-        calendar = _offline_calendar(decision)
+        calendar = _input_calendar(config) if config.input_calendar_sessions else _offline_calendar(decision)
         bars = input_bars if input_bars else _offline_bars(calendar, raw_universe, decision)
         calendar_provenance = {
             "mode": "offline_fixture",
@@ -303,6 +303,19 @@ def _offline_calendar(decision: date) -> TradingCalendar:
     if decision not in sessions:
         raise ValueError("offline fixture decision_session must be a weekday trading session")
     return TradingCalendar(tuple(sessions), ProviderName.BAOSTOCK)
+
+
+def _input_calendar(config: RealCandidatePipelineConfig) -> TradingCalendar:
+    """Build an offline calendar from immutable, caller-supplied sessions."""
+    try:
+        sessions = tuple(date.fromisoformat(value) for value in config.input_calendar_sessions)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("input_calendar_sessions must contain ISO dates") from exc
+    try:
+        provider = ProviderName(config.input_calendar_provider)
+    except ValueError as exc:
+        raise ValueError("input_calendar_provider is required and must name a supported provider") from exc
+    return TradingCalendar(sessions, provider)
 
 
 def _offline_bars(calendar: TradingCalendar, symbols: tuple[str, ...], decision: date) -> tuple[Mapping[str, Any], ...]:
@@ -1107,6 +1120,8 @@ def _canonical_request_payload(config: RealCandidatePipelineConfig, decision: da
         "target_symbol_count": int(config.target_symbol_count),
         "live_market_data": bool(config.live_market_data),
         "input_bars": _canonical_request_bars(config.input_bars),
+        "input_calendar_sessions": tuple(config.input_calendar_sessions),
+        "input_calendar_provider": config.input_calendar_provider,
         "information_signals": _canonical_information_signals(config.information_signals),
         "information_provenance": _json_ready(config.information_provenance),
         "advisory_provenance": _json_ready(config.advisory_provenance),
@@ -1177,6 +1192,8 @@ def _validate_config(config: RealCandidatePipelineConfig) -> date:
     if not str(config.strategy_id).strip():
         raise ValueError("strategy_id must be non-empty")
     _unique_symbols(config.symbols)
+    if config.input_calendar_sessions:
+        _input_calendar(config)
     if config.live_market_data and not config.symbols:
         raise ValueError("live mode requires an explicit symbol universe")
     return decision
