@@ -106,6 +106,28 @@ class TestSnapshotValidator:
         with pytest.raises(ValueError, match="benchmark"):
             load_and_validate_snapshot(str(p))
 
+    def test_rejects_missing_benchmark(self, tmp_path: Path) -> None:
+        p = _write_tushare_snapshot(tmp_path)
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        raw["benchmark_index_bars"] = []
+        raw["digest"] = payload_digest({k: v for k, v in raw.items() if k != "digest"})
+        p.write_text(json.dumps(raw, sort_keys=True, indent=2), encoding="utf-8")
+        with pytest.raises(ValueError, match="benchmark_index_bars"):
+            load_and_validate_snapshot(str(p))
+
+    def test_rejects_missing_symbol_and_digest_tampering(self, tmp_path: Path) -> None:
+        p = _write_tushare_snapshot(tmp_path)
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        raw["symbols"].append("000001.SZ")
+        raw["digest"] = payload_digest({k: v for k, v in raw.items() if k != "digest"})
+        p.write_text(json.dumps(raw, sort_keys=True, indent=2), encoding="utf-8")
+        with pytest.raises(ValueError, match="exactly match"):
+            load_and_validate_snapshot(str(p))
+        raw["digest"] = "tampered"
+        p.write_text(json.dumps(raw, sort_keys=True, indent=2), encoding="utf-8")
+        with pytest.raises(ValueError, match="digest mismatch"):
+            load_and_validate_snapshot(str(p))
+
     def test_synthetic_rejected_as_canonical(self) -> None:
         m = build_fixture_manifest(symbols=("600000.SH",))
         assert m.canonical is False
@@ -345,13 +367,47 @@ class TestBuilderCLI:
         assert rc == 0
         assert Path(out).exists()
 
-    def test_live_path_requires_providers(self, tmp_path: Path) -> None:
+    def test_live_path_requires_providers(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from scripts.build_fixed_snapshot_v1 import main as bm
+        monkeypatch.setattr("scripts.build_fixed_snapshot_v1._construct_tushare_providers",
+                            lambda: (_ for _ in ()).throw(RuntimeError("missing configured Tushare")))
         rc = bm(["--output", str(tmp_path / "s.json"),
                   "--start-decision-session", "2026-04-01",
                   "--end-decision-session", "2026-04-10",
                   "--symbol", "600000.SH"])
-        assert rc == 1  # live path fails without real Tushare in test env
+        assert rc == 1
+
+    def test_live_path_constructs_direct_tushare_providers_and_closes(self, tmp_path: Path,
+                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+        from quantpilot_core.real_data_provider import NormalizedDailyBar, ProviderName, TradingCalendar
+        from scripts.build_fixed_snapshot_v1 import main as bm
+
+        class Calendar:
+            provider_name = ProviderName.TUSHARE
+            def fetch_calendar(self, start: date, end: date) -> TradingCalendar:
+                return TradingCalendar(tuple(start + timedelta(days=i) for i in range((end - start).days + 1)
+                                             if (start + timedelta(days=i)).weekday() < 5), ProviderName.TUSHARE)
+
+        class Bars:
+            provider_name = ProviderName.TUSHARE
+            def fetch_daily_bars(self, request: Any) -> list[NormalizedDailyBar]:
+                return [NormalizedDailyBar(symbol=request.symbol, trade_date=request.start_date,
+                         open=10, high=11, low=9, close=10, volume=1_000,
+                         provider=ProviderName.TUSHARE),
+                        NormalizedDailyBar(symbol=request.symbol, trade_date=request.end_date,
+                         open=11, high=12, low=10, close=11, volume=1_000,
+                         provider=ProviderName.TUSHARE)]
+
+        monkeypatch.setattr("scripts.build_fixed_snapshot_v1._construct_tushare_providers",
+                            lambda: (Calendar(), Bars(), Bars()))
+        out = tmp_path / "s.json"
+        assert bm(["--output", str(out), "--start-decision-session", "2024-04-01",
+                   "--end-decision-session", "2024-04-30", "--symbol", "600000.SH"]) == 0
+        manifest = load_and_validate_snapshot(str(out))
+        assert manifest.canonical is True and manifest.provider == "tushare"
+
+    def test_no_token_argument(self) -> None:
+        assert "--tushare-token" not in Path("scripts/build_fixed_snapshot_v1.py").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

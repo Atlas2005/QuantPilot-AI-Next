@@ -17,6 +17,13 @@ CANONICAL_SNAPSHOT_SCHEMA_VERSION = 1
 CANONICAL_SNAPSHOT_MANIFEST_VERSION = "canonical_baseline_v1"
 DEFAULT_SNAPSHOT_PATH = "data/snapshots/canonical_baseline_v1.json"
 DEFAULT_BENCHMARK_SYMBOL = "000300.SH"
+DEFAULT_CANONICAL_SNAPSHOT_SYMBOLS = (
+    "000001.SZ", "000002.SZ", "000333.SZ", "000651.SZ", "000858.SZ",
+    "002594.SZ", "300750.SZ", "600000.SH", "600036.SH", "600519.SH",
+    "601318.SH", "601398.SH",
+)
+DEFAULT_CANONICAL_DECISION_START = "2024-01-02"
+DEFAULT_CANONICAL_DECISION_END = "2024-12-31"
 
 
 @dataclass(frozen=True)
@@ -105,12 +112,19 @@ def load_and_validate_snapshot(snapshot_path: str) -> SnapshotManifest:
 
 def _validate_no_fallback_deep(provenance: Mapping[str, Any], raw: Mapping[str, Any]) -> None:
     """Deep validation: every provider at every level must be tushare, no fallback."""
+    if raw.get("test_only") or raw.get("comparison_only"):
+        raise ValueError("canonical: test or comparison-only snapshot cannot be canonical")
+    if str(raw.get("benchmark_index_symbol", "")) != DEFAULT_BENCHMARK_SYMBOL:
+        raise ValueError(f"canonical: benchmark must be {DEFAULT_BENCHMARK_SYMBOL}")
+    _validate_explicit_date_ranges(raw)
     # Calendar
     requested = tuple(sorted(str(symbol) for symbol in raw.get("symbols", ()) or ()))
     if not requested:
         raise ValueError("canonical: requested symbols are required")
     bars = tuple(raw.get("bars", ()) or ())
-    present = tuple(sorted({str(row.get("symbol", "")) for row in bars if isinstance(row, Mapping)}))
+    if not all(isinstance(row, Mapping) for row in bars):
+        raise ValueError("canonical: equity bars must be mappings")
+    present = tuple(sorted({str(row.get("symbol", "")) for row in bars}))
     if present != requested:
         raise ValueError("canonical: requested symbols must exactly match equity-bar symbols")
 
@@ -142,11 +156,27 @@ def _validate_no_fallback_deep(provenance: Mapping[str, Any], raw: Mapping[str, 
 
     # Equity bars: every bar's provider field must be "tushare"
     for i, bar in enumerate(bars):
-        if isinstance(bar, Mapping) and str(bar.get("provider", "")) != "tushare":
+        if str(bar.get("provider", "")) != "tushare":
             raise ValueError(f"canonical: equity bar {i} provider is {bar.get('provider')}, not tushare")
     for i, bar in enumerate(raw.get("benchmark_index_bars", ()) or ()):
         if not isinstance(bar, Mapping) or str(bar.get("provider", "")) != "tushare":
             raise ValueError(f"canonical: benchmark bar {i} provider is not tushare")
+        if str(bar.get("symbol", "")) != DEFAULT_BENCHMARK_SYMBOL:
+            raise ValueError(f"canonical: benchmark bar {i} has wrong symbol")
+
+
+def _validate_explicit_date_ranges(raw: Mapping[str, Any]) -> None:
+    for name in ("decision_date_range", "data_date_range"):
+        value = raw.get(name)
+        if not isinstance(value, Mapping):
+            raise ValueError(f"canonical: {name} is required")
+        try:
+            start = date.fromisoformat(str(value["start"]))
+            end = date.fromisoformat(str(value["end"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"canonical: {name} must have ISO start/end dates") from exc
+        if start > end:
+            raise ValueError(f"canonical: {name} start must not exceed end")
 
 
 def _validate_calendar_sessions(sessions: tuple[str, ...]) -> None:
@@ -276,10 +306,14 @@ def build_and_persist_snapshot(
     end = date.fromisoformat(end_decision_session)
     from datetime import timedelta
 
-    cal_result = calendar_provider.fetch_calendar_with_provenance(
-        start - timedelta(days=160), end + timedelta(days=10))
-    cal_prov = str(cal_result.selected_provider.value)
+    calendar_start = start - timedelta(days=160)
+    calendar_end = end + timedelta(days=10)
+    cal_result = _calendar_with_provenance(calendar_provider, calendar_start, calendar_end)
+    cal_prov = _provider_label(cal_result.selected_provider)
     cal_fb = bool(cal_result.fallback_used)
+
+    if not cal_result.calendar.is_session(start) or not cal_result.calendar.is_session(end):
+        raise ValueError("decision range boundaries must be official Tushare trading sessions")
 
     bar_start = cal_result.calendar.shift_session(start, -60)
     bar_end = cal_result.calendar.next_session(end)
@@ -291,8 +325,8 @@ def build_and_persist_snapshot(
     for sym in symbols:
         from quantpilot_core.real_data_provider import DailyBarRequest
         req = DailyBarRequest(symbol=sym, start_date=bar_start, end_date=bar_end)
-        result = bar_provider.fetch_daily_bars_with_provenance(req)
-        sp = str(result.selected_provider.value)
+        result = _bars_with_provenance(bar_provider, req)
+        sp = _provider_label(result.selected_provider)
         sf = bool(result.fallback_used)
         bar_provenance[sym] = {"selected_provider": sp, "fallback_used": sf,
             "attempts": [{"provider": str(a.provider.value), "status": a.status, "reason": a.reason}
@@ -306,7 +340,7 @@ def build_and_persist_snapshot(
                 "open": nb.open, "high": nb.high, "low": nb.low, "close": nb.close,
                 "volume": nb.volume, "amount": nb.amount, "previous_close": nb.previous_close,
                 "is_suspended": getattr(nb, "is_suspended", False),
-                "provider": str(nb.provider.value) if hasattr(nb.provider, "value") else str(nb.provider)})
+                "provider": _provider_label(nb.provider)})
 
     benchmark_bars: list[dict[str, Any]] = []
     benchmark_prov: dict[str, Any] = {}
@@ -314,17 +348,17 @@ def build_and_persist_snapshot(
         from quantpilot_core.real_data_provider import DailyBarRequest
         ireq = DailyBarRequest(symbol=benchmark_index_symbol, start_date=bar_start, end_date=bar_end)
         try:
-            ires = index_provider.fetch_index_daily_bars_with_provenance(ireq)
-            ip = str(ires.selected_provider.value)
+            ires = _index_bars_with_provenance(index_provider, ireq)
+            ip = _provider_label(ires.selected_provider)
             iff = bool(ires.fallback_used)
             benchmark_prov = {"selected_provider": ip, "fallback_used": iff}
             if iff: any_fb = True
             if ip != "tushare": any_non_tushare = True
             for nb in ires.bars:
                 benchmark_bars.append({"symbol": benchmark_index_symbol, "date": nb.trade_date.isoformat(),
-                                       "close": nb.close, "provider": str(nb.provider.value) if hasattr(nb.provider, "value") else str(nb.provider)})
-        except Exception:
-            benchmark_prov = {"error": "index_provider_unavailable"}
+                                       "close": nb.close, "provider": _provider_label(nb.provider)})
+        except Exception as exc:
+            raise ValueError("benchmark index unavailable") from exc
     else:
         benchmark_prov = {"error": "no_index_provider_supplied"}
 
@@ -338,7 +372,8 @@ def build_and_persist_snapshot(
             raise ValueError("benchmark index unavailable; set allow_comparison_fallback=True")
 
     canonical_bars = sorted(all_bars, key=lambda r: (r["date"], r["symbol"]))
-    cal_sessions = cal_result.calendar.to_iso_strings()
+    cal_sessions = tuple(
+        session.isoformat() for session in cal_result.calendar.sessions_between(bar_start, bar_end))
     data_start = str(cal_result.calendar.shift_session(start, -60))
     data_end = str(cal_result.calendar.next_session(end))
 
@@ -367,13 +402,48 @@ def build_and_persist_snapshot(
         payload["comparison_only"] = True
     payload["digest"] = payload_digest({k: v for k, v in payload.items() if k != "digest"})
 
-    path = Path(output_path)
+    _atomic_write_json(Path(output_path), payload)
+    # A successful build is not complete until the on-disk immutable payload
+    # validates against its own digest and canonical provenance rules.
+    load_and_validate_snapshot(output_path)
+    return str(output_path)
+
+
+def _provider_label(provider: Any) -> str:
+    return str(provider.value) if hasattr(provider, "value") else str(provider)
+
+
+def _calendar_with_provenance(provider: Any, start: date, end: date) -> Any:
+    if hasattr(provider, "fetch_calendar_with_provenance"):
+        return provider.fetch_calendar_with_provenance(start, end)
+    from types import SimpleNamespace
+    calendar = provider.fetch_calendar(start, end)
+    return SimpleNamespace(selected_provider=provider.provider_name, calendar=calendar,
+                           fallback_used=False, attempts=())
+
+
+def _bars_with_provenance(provider: Any, request: Any) -> Any:
+    if hasattr(provider, "fetch_daily_bars_with_provenance"):
+        return provider.fetch_daily_bars_with_provenance(request)
+    from types import SimpleNamespace
+    return SimpleNamespace(selected_provider=provider.provider_name,
+                           bars=tuple(provider.fetch_daily_bars(request)),
+                           fallback_used=False, attempts=())
+
+
+def _index_bars_with_provenance(provider: Any, request: Any) -> Any:
+    if hasattr(provider, "fetch_index_daily_bars_with_provenance"):
+        return provider.fetch_index_daily_bars_with_provenance(request)
+    return _bars_with_provenance(provider, request)
+
+
+def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp")
     serialized = json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=True)
-    tmp.write_text(serialized + "\n", encoding="utf-8")
-    os.fsync(tmp.open("w", encoding="utf-8").fileno()) if False else None
     with tmp.open("w", encoding="utf-8") as fh:
-        fh.write(serialized); fh.write("\n"); fh.flush(); os.fsync(fh.fileno())
+        fh.write(serialized)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
     os.replace(tmp, path)
-    return str(path)
