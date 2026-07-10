@@ -58,6 +58,7 @@ from quantpilot_core.real_data_provider.tushare_adapter import (
     detect_tushare_dependency,
     normalize_tushare_daily_bars,
 )
+from quantpilot_core.real_data_provider.snapshot_adapter import SnapshotDailyBarProvider
 
 __all__ = [
     "Adjustment",
@@ -83,6 +84,7 @@ __all__ = [
     "TradingCalendar",
     "TradingCalendarProvider",
     "TushareDailyBarProvider",
+    "SnapshotDailyBarProvider",
     "TushareIndexDailyProvider",
     "TushareDependencyStatus",
     "TusharePrimaryBaoStockCalendarProvider",

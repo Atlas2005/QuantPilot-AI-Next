@@ -11,6 +11,7 @@ from quantpilot_core.evaluation import (
     RealDataWalkForwardScaleupConfig,
     run_real_data_walk_forward_scaleup_v1,
 )
+from quantpilot_core.real_data_provider import ProviderError, SnapshotDailyBarProvider
 
 
 DEFAULT_ARTIFACT_PATH = Path("artifacts/real_data_walk_forward_scaleup/latest_report.json")
@@ -28,12 +29,22 @@ def main() -> int:
     parser.add_argument("--artifact-path", default=str(DEFAULT_ARTIFACT_PATH))
     parser.add_argument(
         "--symbols",
-        default=",".join(DEFAULT_REAL_DATA_SCALEUP_SYMBOLS),
-        help="comma-separated A-share symbols; defaults to the stock-first scale-up universe",
+        default=None,
+        help="comma-separated A-share symbols; defaults depend on provider mode",
     )
+    parser.add_argument("--snapshot-root", type=Path, help="validated PR #118 snapshot artifact root")
     args = parser.parse_args()
 
-    symbols = tuple(symbol.strip() for symbol in args.symbols.split(",") if symbol.strip())
+    try:
+        provider = SnapshotDailyBarProvider(args.snapshot_root) if args.snapshot_root else "baostock"
+    except ProviderError as exc:
+        parser.error(str(exc))
+    if args.symbols is not None:
+        symbols = tuple(symbol.strip() for symbol in args.symbols.split(",") if symbol.strip())
+    elif args.snapshot_root:
+        symbols = provider.daily_symbol_union(args.start_date, args.end_date)
+    else:
+        symbols = DEFAULT_REAL_DATA_SCALEUP_SYMBOLS
     report = run_real_data_walk_forward_scaleup_v1(
         RealDataWalkForwardScaleupConfig(
             symbols=symbols,
@@ -45,14 +56,16 @@ def main() -> int:
             max_windows=args.max_windows,
             min_symbols_required=args.min_symbols_required,
             artifact_path=args.artifact_path,
-            provider="baostock",
+            provider=provider,
             advisory_mode="disabled",
         )
     )
 
     print("QuantPilot real-data walk-forward scale-up v1")
-    print("mode: manual-only BaoStock provider run")
+    print("mode: manual-only snapshot run" if args.snapshot_root else "mode: manual-only BaoStock provider run")
     print(f"provider: {report.provider}")
+    if report.data_source_provenance:
+        print(f"snapshot provenance: {report.data_source_provenance}")
     print(f"symbols requested: {len(report.symbols)}")
     print(f"valid symbols: {len(report.valid_symbols)}")
     print(f"skipped symbols: {len(report.skipped_symbols)}")

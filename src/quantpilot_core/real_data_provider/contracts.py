@@ -19,6 +19,7 @@ class ProviderName(str, Enum):
     AKSHARE = "akshare"
     BAOSTOCK = "baostock"
     TUSHARE = "tushare"
+    SNAPSHOT = "all_a_share_snapshot"
 
 
 class ProviderError(Exception):
