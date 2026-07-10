@@ -24,6 +24,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip install -e ".[vectorbt]"
+          python -m pip install -e ".[all-a-share]"
 
       - name: Compile
         run: python -m compileall src
