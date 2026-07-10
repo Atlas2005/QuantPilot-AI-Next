@@ -13,7 +13,7 @@ import pytest
 from quantpilot_core.daily_paper_loop.state import payload_digest
 from quantpilot_core.walk_forward.canonical_baseline import (
     CanonicalBaselineConfig, ProductionWindowRunner, ProductionWindowRunnerFactory,
-    _build_walk_forward_windows_from_calendar, _compute_benchmark_return,
+    _build_walk_forward_windows_from_calendar, _code_revision, _compute_benchmark_return,
     _max_drawdown_from_series, run_canonical_cost_after_fee_baseline,
 )
 from quantpilot_core.walk_forward.contracts import OOSDailySessionResult, WindowRunnerFactory
@@ -232,6 +232,34 @@ class TestExecutionMetrics:
         r = run_canonical_cost_after_fee_baseline(cfg)
         assert r.fill_rate is not None
         assert 0.0 <= r.fill_rate <= 1.0
+
+    def test_report_has_cost_after_fee_identity_and_execution_fields(self, tmp_path: Path) -> None:
+        cfg = CanonicalBaselineConfig(
+            data_mode="fixture", output_dir=str(tmp_path / "out"), initial_capital=100_000.0,
+            train_window_days=60, test_window_days=20, max_windows=1,
+            fixture_symbols=("600000.SH",), fixture_num_sessions=200)
+        run_canonical_cost_after_fee_baseline(cfg)
+        report = json.loads((tmp_path / "out" / "baseline_report.json").read_text(encoding="utf-8"))
+        assert report["report_schema"] == "canonical_cost_after_fee_oos_v2"
+        assert report["strategy"]["initial_equity"] == 100_000.0
+        assert report["strategy"]["final_equity"] is not None
+        assert report["benchmark"]["start_value"] is not None
+        assert report["execution"]["fee_drag"] == report["fee_breakdown"]["total_cost"]
+        strategy = report["strategy"]
+        assert strategy["final_equity"] - strategy["initial_equity"] == pytest.approx(strategy["net_pnl"], abs=1e-6)
+        assert strategy["gross_pnl"] - report["fee_breakdown"]["total_cost"] == pytest.approx(strategy["net_pnl"], abs=1e-6)
+        assert strategy["net_return_after_fees"] == pytest.approx(strategy["net_pnl"] / strategy["initial_equity"], abs=1e-6)
+        assert report["excess_return"] == pytest.approx(strategy["net_return_after_fees"] - report["benchmark"]["total_return"], abs=1e-6)
+        assert report["execution"]["reconciliation_status"] == "passed"
+        assert report["no_profitability_claim"] is True
+        assert (tmp_path / "out" / "baseline_summary.md").is_file()
+
+    def test_code_revision_is_safely_nullable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def unavailable(*args: Any, **kwargs: Any) -> None:
+            raise OSError("git unavailable")
+
+        monkeypatch.setattr("quantpilot_core.walk_forward.canonical_baseline.subprocess.run", unavailable)
+        assert _code_revision() is None
 
 
 # ---------------------------------------------------------------------------
