@@ -927,7 +927,8 @@ def _symbols(symbols: Iterable[str]) -> tuple[str, ...]:
 
 
 def _rows_through_execution(rows: tuple[Mapping[str, Any], ...], execution: date) -> tuple[Mapping[str, Any], ...]:
-    return tuple(row for row in rows if date.fromisoformat(str(row["date"])) <= execution)
+    from quantpilot_core.walk_forward.pit_helpers import rows_through_execution
+    return rows_through_execution(rows, execution)
 
 
 def _signals_available_for_decision(signals: tuple[Any, ...], decision: date) -> tuple[Any, ...]:

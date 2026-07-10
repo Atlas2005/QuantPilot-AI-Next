@@ -16,16 +16,38 @@ from quantpilot_core.walk_forward.contracts import (
     WalkForwardInput,
     WalkForwardResult,
     WalkForwardWindow,
+    WalkForwardWindowContext,
+    WalkForwardWindowExecutionResult,
     WalkForwardWindowResult,
+    WindowRunnerFactory,
 )
 from quantpilot_core.walk_forward.leakage import LeakageGuard, _as_timestamp
 
 
 class WalkForwardEngine:
-    """Run deterministic train-before-test paper evaluation windows."""
+    """Run deterministic train-before-test paper evaluation windows.
 
-    def __init__(self, leakage_guard: LeakageGuard | None = None) -> None:
+    When *window_runner_factory* is provided the engine delegates
+    test-phase execution to a typed ``WindowRunner`` (PR #115).  When
+    *window_runner_factory* is ``None`` the legacy ``exec1→exec2→
+    proposal→run_paper_trading_loop`` path is used — fully backward
+    compatible.
+
+    The engine never touches temp directories, state files, or account
+    types — those belong to the runner factory and the caller.
+    """
+
+    def __init__(
+        self,
+        leakage_guard: LeakageGuard | None = None,
+        window_runner_factory: WindowRunnerFactory | None = None,
+    ) -> None:
         self.leakage_guard = leakage_guard or LeakageGuard()
+        self._runner_factory = window_runner_factory  # None → legacy default
+
+    # ------------------------------------------------------------------
+    # Public entry point
+    # ------------------------------------------------------------------
 
     def run(self, walk_input: WalkForwardInput) -> WalkForwardResult:
         if walk_input.advisory_mode not in {"disabled", "fallback_only", "evidence_only"}:
@@ -37,9 +59,76 @@ class WalkForwardEngine:
         accepted_updates: list[Mapping[str, Any]] = []
         rejected_updates: list[Mapping[str, Any]] = []
         leakage_checks: list[str] = []
-        account = PaperAccount(cash=float(walk_input.initial_cash))
         parameters = dict(walk_input.current_parameters)
 
+        # --- runner path (PR #115) ---
+        if self._runner_factory is not None:
+            runner = self._runner_factory.create_runner(
+                initial_capital=float(walk_input.initial_cash),
+            )
+            for window in walk_input.windows:
+                self.leakage_guard.check_window_order(window)
+                train_prices = _slice_train(walk_input.historical_price_frame, window)
+                test_prices = _slice_test(walk_input.historical_price_frame, window)
+                train_signals = _slice_train(walk_input.historical_signal_frame, window)
+                train_events = _slice_train(walk_input.information_events, window)
+                self.leakage_guard.assert_train_phase_data(train_prices, window, label="train_price_frame")
+                self.leakage_guard.assert_train_phase_data(train_signals, window, label="train_signal_frame")
+                self.leakage_guard.assert_train_phase_data(train_events, window, label="information_events")
+                self.leakage_guard.assert_paper_trading_data(test_prices, window, label="test_price_frame")
+                leakage_checks.append(f"{window.run_label}:train_and_test_slices_validated")
+
+                train_summary = _train_summary(train_prices, train_signals, train_events, window, walk_input.metadata)
+                advisory_summary = self._advisory_summary(walk_input, window, train_summary)
+
+                ctx = WalkForwardWindowContext(
+                    window=window,
+                    test_prices=test_prices,
+                    train_summary=train_summary,
+                    parameters=dict(parameters),
+                    metadata=dict(walk_input.metadata),
+                    initial_capital=float(walk_input.initial_cash),
+                )
+                exec_result = runner.run_window(ctx)
+
+                # Convert typed result to legacy-compatible dicts
+                perf = _runner_performance_metrics(exec_result)
+                param_update = _frozen_baseline_parameter_update(window.run_label)
+                rejected_updates.append(param_update)
+
+                window_results.append(
+                    WalkForwardWindowResult(
+                        window=window,
+                        train_summary=train_summary,
+                        order_intent_proposal=None,
+                        paper_trading_result={
+                            "runner": "production_window_runner",
+                            "daily_session_count": len(exec_result.daily_sessions),
+                            "daily_sessions": tuple(
+                                _daily_session_to_dict(s) for s in exec_result.daily_sessions
+                            ),
+                            "ending_equity": exec_result.ending_equity,
+                        },
+                        performance_metrics=perf,
+                        learning_desk_output=None,
+                        deepseek_advisory_summary=advisory_summary,
+                        leakage_warnings=(),
+                        parameter_update_recommendation=param_update,
+                    )
+                )
+
+            aggregate = _aggregate_metrics(window_results)
+            return WalkForwardResult(
+                window_results=tuple(window_results),
+                aggregate_metrics=aggregate,
+                accepted_parameter_updates=tuple(accepted_updates),
+                rejected_parameter_updates=tuple(rejected_updates),
+                leakage_checks=tuple(leakage_checks),
+                improvement_summary=_improvement_summary(window_results),
+            )
+
+        # --- legacy default path (fully backward compatible) ---
+        account = PaperAccount(cash=float(walk_input.initial_cash))
         for window in walk_input.windows:
             self.leakage_guard.check_window_order(window)
             train_prices = _slice_train(walk_input.historical_price_frame, window)
@@ -54,31 +143,21 @@ class WalkForwardEngine:
 
             train_summary = _train_summary(train_prices, train_signals, train_events, window, walk_input.metadata)
             advisory_summary = self._advisory_summary(walk_input, window, train_summary)
-            exec1_report = build_execution_candidate_report(
-                qlib_signals=train_signals if _has_rows(train_signals) else _signal_rows_from_prices(train_prices),
-                info_signals=_info_rows_from_events(train_events),
-                research_committee_output=_research_rows_from_train_summary(train_summary),
-                strategy_id=str(parameters.get("strategy_id", "walk_forward")),
-                top_n=int(parameters.get("top_n", 3)),
-                timestamp=_as_timestamp(window.train_end).to_pydatetime(),
+            proposal, paper_result, updated_account = _legacy_default_window_execution(
+                train_prices=train_prices,
+                test_prices=test_prices,
+                train_signals=train_signals if _has_rows(train_signals) else _signal_rows_from_prices(train_prices),
+                train_events=train_events,
+                train_summary=train_summary,
+                window=window,
+                account=account,
+                parameters=parameters,
+                walk_input=walk_input,
             )
-            last_train_prices = _latest_prices(train_prices)
-            assumptions = OptimizationAssumption(capital=float(parameters.get("capital", walk_input.initial_cash)))
-            exec2_plan = build_portfolio_allocation_plan(
-                exec1_report,
-                last_prices=last_train_prices,
-                assumptions=assumptions,
-            )
-            proposal = OrderIntentController(lot_size=int(parameters.get("lot_size", 100))).from_exec2_plan(
-                exec2_plan,
-                run_label=window.run_label,
-            )
-            paper_result = run_paper_trading_loop(proposal, test_prices, account)
-            account = paper_result.account
+            account = updated_account
             metrics = _metrics_mapping(paper_result.metrics)
             parameter_update = _parameter_update(metrics, parameters, window.run_label)
-            accepted = bool(parameter_update.get("accepted"))
-            if accepted:
+            if bool(parameter_update.get("accepted")):
                 accepted_updates.append(parameter_update)
                 parameters.update(parameter_update.get("recommended_parameters", {}))
             else:
@@ -107,6 +186,10 @@ class WalkForwardEngine:
             leakage_checks=tuple(leakage_checks),
             improvement_summary=_improvement_summary(window_results),
         )
+
+    # ------------------------------------------------------------------
+    # Advisory
+    # ------------------------------------------------------------------
 
     def _advisory_summary(
         self,
@@ -141,14 +224,118 @@ class WalkForwardEngine:
         }
 
 
+# ------------------------------------------------------------------
+# Registry wrapper
+# ------------------------------------------------------------------
+
+
 def run_walk_forward_paper_evaluation(
     walk_forward_input: WalkForwardInput | None = None,
     **kwargs: Any,
 ) -> WalkForwardResult:
     """Registry-safe wrapper for deterministic walk-forward paper evaluation."""
-
     payload = walk_forward_input or WalkForwardInput(**kwargs)
     return WalkForwardEngine().run(payload)
+
+
+# ------------------------------------------------------------------
+# Legacy default window execution (extracted, unchanged behavior)
+# ------------------------------------------------------------------
+
+
+def _legacy_default_window_execution(
+    *,
+    train_prices: Any,
+    test_prices: Any,
+    train_signals: Any,
+    train_events: Any,
+    train_summary: Mapping[str, Any],
+    window: WalkForwardWindow,
+    account: PaperAccount,
+    parameters: dict[str, Any],
+    walk_input: WalkForwardInput,
+) -> tuple[Any, Any, PaperAccount]:
+    """Legacy exec1→exec2→proposal→run_paper_trading_loop path.
+
+    Extracted from ``WalkForwardEngine.run()`` so the engine can
+    delegate to either this path or a typed ``WindowRunner``.
+    """
+    exec1_report = build_execution_candidate_report(
+        qlib_signals=train_signals if _has_rows(train_signals) else _signal_rows_from_prices(train_prices),
+        info_signals=_info_rows_from_events(train_events),
+        research_committee_output=_research_rows_from_train_summary(train_summary),
+        strategy_id=str(parameters.get("strategy_id", "walk_forward")),
+        top_n=int(parameters.get("top_n", 3)),
+        timestamp=_as_timestamp(window.train_end).to_pydatetime(),
+    )
+    last_train_prices = _latest_prices(train_prices)
+    assumptions = OptimizationAssumption(capital=float(parameters.get("capital", walk_input.initial_cash)))
+    exec2_plan = build_portfolio_allocation_plan(
+        exec1_report,
+        last_prices=last_train_prices,
+        assumptions=assumptions,
+    )
+    proposal = OrderIntentController(lot_size=int(parameters.get("lot_size", 100))).from_exec2_plan(
+        exec2_plan,
+        run_label=window.run_label,
+    )
+    paper_result = run_paper_trading_loop(proposal, test_prices, account)
+    return proposal, paper_result, paper_result.account
+
+
+# ------------------------------------------------------------------
+# Runner-path helpers (PR #115)
+# ------------------------------------------------------------------
+
+
+def _runner_performance_metrics(result: WalkForwardWindowExecutionResult) -> Mapping[str, Any]:
+    """Build a legacy-compatible ``performance_metrics`` dict from a typed result."""
+    return {
+        "net_pnl": result.net_pnl,
+        "gross_pnl": result.gross_pnl,
+        "ending_equity": result.ending_equity,
+        "fill_rate": result.fill_rate,
+        "trade_count": result.trade_count,
+        "rejected_count": result.rejected_count,
+        "turnover": result.turnover,
+        "commission": result.commission,
+        "transaction_tax": result.transaction_tax,
+        "transfer_or_exchange_fee": result.transfer_or_exchange_fee,
+        "slippage_cost": result.slippage_cost,
+        "total_cost": result.total_cost,
+        "daily_session_count": len(result.daily_sessions),
+        "window_label": result.window_label,
+        "intent_count": result.intent_count,
+        "filled_count": result.filled_count,
+        "partial_fill_count": result.partial_fill_count,
+        "requested_quantity": result.requested_quantity,
+        "filled_quantity": result.filled_quantity,
+    }
+
+
+def _daily_session_to_dict(session: Any) -> dict[str, Any]:
+    """Convert an OOSDailySessionResult to a plain dict for storage."""
+    from dataclasses import asdict
+    return asdict(session)
+
+
+def _frozen_baseline_parameter_update(run_label: str) -> Mapping[str, Any]:
+    """Parameter update record for frozen-baseline mode.
+
+    Parameters are never mutated across OOS windows — this is a
+    pure evidence record, not a control signal.
+    """
+    return {
+        "run_label": run_label,
+        "accepted": False,
+        "reason": "parameter_update_mode_frozen_baseline",
+        "recommended_parameters": {},
+    }
+
+
+# ------------------------------------------------------------------
+# Slice helpers
+# ------------------------------------------------------------------
 
 
 def _slice_train(payload: Any, window: WalkForwardWindow) -> Any:
