@@ -1,11 +1,15 @@
 from __future__ import annotations
+import importlib.util
 from pathlib import Path
 import json
 import shutil
 import pytest
 
 from quantpilot_core.all_a_share_snapshot.contracts import SnapshotConfig
-from quantpilot_core.all_a_share_snapshot.snapshot import SnapshotLoader, build_snapshot, validate_snapshot
+from quantpilot_core.all_a_share_snapshot.snapshot import (
+    ProviderCallError, SnapshotLoader, _CallPacer, _failure, _fetch,
+    build_snapshot, validate_snapshot,
+)
 
 class FakeProvider:
     provider_name="tushare"
@@ -83,7 +87,7 @@ def test_required_failure_is_explicit_incomplete(tmp_path: Path):
     manifest,_=build(tmp_path,FakeProvider(fail_daily=True)); assert manifest["status"]=="incomplete"; assert manifest["failed_partitions"]
 
 def test_optional_permission_failure_is_manifest_capability(tmp_path: Path):
-    manifest,_=build(tmp_path,FakeProvider(optional_permission=True)); assert manifest["status"]=="completed"; assert manifest["capabilities"]["limits"]=="unavailable_permission"
+    manifest,_=build(tmp_path,FakeProvider(optional_permission=True)); assert manifest["status"]=="completed"; assert manifest["capabilities"]["limits"]=="unavailable"
 
 def test_missing_official_session_and_manifest_tamper_are_detected(tmp_path: Path):
     manifest,_=build(tmp_path); raw=json.loads((tmp_path/"manifest.json").read_text()); raw["partitions"]=[x for x in raw["partitions"] if not (x["dataset"]=="daily" and x["trade_date"]=="20231010")]
@@ -120,7 +124,7 @@ def test_namechange_is_per_symbol_deduplicated_and_open_end_is_valid(tmp_path: P
 def test_namechange_cap_is_incomplete_not_canonical(tmp_path: Path):
     cap_rows=[{"ts_code":"600000.SH","name":"N","start_date":"20200101","end_date":None,"ann_date":"20200101","change_reason":"x"}] * 10000
     manifest,_=build(tmp_path,FakeProvider(namechange_rows={"600000.SH":cap_rows}))
-    assert manifest["status"] == "incomplete" and manifest["capabilities"]["namechange"] == "incomplete"
+    assert manifest["status"] == "completed" and manifest["capabilities"]["namechange"] == "unavailable"
 
 def test_optional_etf_and_unknown_rows_are_audited_without_contaminating_equity(tmp_path: Path):
     class Mixed(FakeProvider):
@@ -204,7 +208,7 @@ def test_suspend_null_structural_key_fails_validation(tmp_path: Path):
             if dataset == "suspend": rows[0]["suspend_type"] = None
             return rows
     manifest,_=build(tmp_path,BadSuspend())
-    assert manifest["status"] == "incomplete" and manifest["capabilities"]["suspend"] == "incomplete"
+    assert manifest["status"] == "completed" and manifest["capabilities"]["suspend"] == "unavailable"
     assert manifest["completed_at"] and validate_snapshot(tmp_path).ok
 
 def test_provider_duplicate_and_partition_date_mismatch_are_not_completed(tmp_path: Path):
@@ -218,7 +222,7 @@ def test_provider_duplicate_and_partition_date_mismatch_are_not_completed(tmp_pa
             if dataset == "limits": rows[0]["trade_date"] = "19900101"
             return rows
     wrong,_=build(tmp_path / "wrong-date",WrongDate())
-    assert wrong["status"] == "incomplete" and wrong["capabilities"]["limits"] == "incomplete"
+    assert wrong["status"] == "completed" and wrong["capabilities"]["limits"] == "unavailable"
 
 def test_empty_optional_daily_partition_is_valid_and_available(tmp_path: Path):
     class Empty(FakeProvider):
@@ -260,7 +264,7 @@ def test_failed_namechange_shard_keeps_prior_checkpoints_and_cap_is_detected(tmp
             return super().fetch_namechange_by_ts_code(code)
     config=SnapshotConfig(root=str(tmp_path),start_date="20231009",end_date="20231010",test_only=True,namechange_shard_size=1,retry_delay_seconds=0,max_retries=0)
     first=build_snapshot(config,Failing())
-    assert first["capabilities"]["namechange"] == "incomplete" and first["status"] == "incomplete"
+    assert first["capabilities"]["namechange"] == "incomplete" and first["status"] == "completed"
     assert len([p for p in first["partitions"] if p["dataset"] == "namechange_shard"]) >= 1
     resumed=FakeProvider(); build_snapshot(config,resumed)
     assert "000001.SZ" not in {call[1] for call in resumed.calls if call[0] == "namechange"}
@@ -273,3 +277,121 @@ def test_daily_coverage_and_partition_integrity_fail_validation(tmp_path: Path):
     target=next(p for p in raw["partitions"] if p["dataset"] == "daily_basic" and p["trade_date"] == "20231009"); target.update(info); raw["digest"]=digest(raw)
     (tmp_path/"manifest.json").write_text(json.dumps(raw))
     assert any("daily coverage missing from daily_basic" in item for item in validate_snapshot(tmp_path).errors)
+
+
+def test_truncated_calendar_is_replaced_and_only_new_sessions_are_fetched(tmp_path: Path):
+    class RangeProvider(FakeProvider):
+        def __init__(self, full): super().__init__(); self.full=full
+        def fetch_trade_cal(self,start,end):
+            self.calls.append(("trade_cal",start,end))
+            rows=[{"exchange":"SSE","cal_date":"20230101","is_open":0},{"exchange":"SSE","cal_date":"20230103","is_open":1},
+                  {"exchange":"SSE","cal_date":"20231229","is_open":1},{"exchange":"SSE","cal_date":"20231231","is_open":0}]
+            return rows + ([{"exchange":"SSE","cal_date":"20240101","is_open":0},{"exchange":"SSE","cal_date":"20240102","is_open":1},
+                            {"exchange":"SSE","cal_date":"20241231","is_open":1}] if self.full else [])
+        def fetch_index_daily(self,s,start,end):
+            return [self._bar(s, d) for d in ("20230103","20231229","20240102","20241231") if start <= d <= end]
+    first=build_snapshot(SnapshotConfig(root=str(tmp_path),start_date="2023-01-01",end_date="2023-12-31",include_optional=False,test_only=True),RangeProvider(False))
+    assert first["official_session_count"] == 2
+    resumed=RangeProvider(True)
+    final=build_snapshot(SnapshotConfig(root=str(tmp_path),start_date="2023-01-01",end_date="2024-12-31",include_optional=False,test_only=True),resumed)
+    assert final["status"] == "completed" and final["actual_date_range"] == {"start":"20230103","end":"20241231"}
+    assert final["official_session_count"] == 4 and [call for call in resumed.calls if call[0] == "daily"] == [("daily","20240102"),("daily","20241231")]
+    assert validate_snapshot(tmp_path).ok
+
+
+def test_truncated_calendar_response_is_not_committed_as_canonical(tmp_path: Path):
+    class Truncated(FakeProvider):
+        def fetch_trade_cal(self,start,end): return [{"exchange":"SSE","cal_date":"20230101","is_open":0},{"exchange":"SSE","cal_date":"20230103","is_open":1}]
+    manifest,_=build(tmp_path,Truncated())
+    assert manifest["status"] == "incomplete" and not [p for p in manifest["partitions"] if p["dataset"] == "calendar"]
+    evidence=manifest["failed_partitions"][-1]
+    assert evidence["dataset"] == "required" and evidence["attempt_count"] == 1 and evidence["reason"]
+
+
+def test_optional_retry_and_failure_evidence_are_safe_for_required_snapshot(tmp_path: Path):
+    class RetrySuspend(FakeProvider):
+        def __init__(self): super().__init__(); self.attempts=0
+        def fetch_optional(self,dataset,trade_date=None):
+            if dataset == "suspend":
+                self.attempts += 1
+                if self.attempts == 1: raise TimeoutError("token=should-not-appear")
+            return super().fetch_optional(dataset,trade_date)
+    provider=RetrySuspend()
+    manifest=build_snapshot(SnapshotConfig(root=str(tmp_path),start_date="20231009",end_date="20231010",test_only=True,max_retries=1,retry_delay_seconds=0),provider)
+    assert manifest["status"] == "completed" and manifest["capabilities"]["suspend"] == "available" and provider.attempts == 3
+    assert "should-not-appear" not in json.dumps(manifest)
+
+
+def test_namechange_continues_after_failed_shard_and_later_resume_clears_evidence(tmp_path: Path):
+    class MiddleFailure(FakeProvider):
+        def fetch_namechange_by_ts_code(self,code):
+            if code == "430001.BJ": raise RuntimeError("temporary shard failure")
+            return super().fetch_namechange_by_ts_code(code)
+    config=SnapshotConfig(root=str(tmp_path),start_date="20231009",end_date="20231010",test_only=True,namechange_shard_size=1,max_retries=0,retry_delay_seconds=0)
+    first=build_snapshot(config,MiddleFailure())
+    assert first["status"] == "completed" and first["capabilities"]["namechange"] == "incomplete"
+    assert first["namechange"]["completed_shard_count"] == 2 and first["namechange"]["failed_shards"][0]["shard_identity"] == "shard-00001"
+    resumed=FakeProvider(); final=build_snapshot(config,resumed)
+    assert final["capabilities"]["namechange"] == "available" and not final["namechange"]["failed_shards"]
+    assert [call for call in resumed.calls if call[0] == "namechange"] == [("namechange","430001.BJ")]
+
+
+def test_production_pacing_has_headroom_and_test_only_builds_do_not_sleep(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    import quantpilot_core.all_a_share_snapshot.snapshot as module
+    sleeps=[]; clock=iter((0.0, 0.10, 0.35))
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(clock)); monkeypatch.setattr(module.time, "sleep", sleeps.append)
+    production=SnapshotConfig(root=str(tmp_path))
+    assert production.min_request_interval_seconds >= 0.35
+    pacer=_CallPacer(production); pacer.wait("daily"); pacer.wait("daily")
+    assert sleeps == [pytest.approx(0.25)]
+    sleeps.clear(); monkeypatch.setattr(module.time, "monotonic", lambda: 0.0); test_pacer=_CallPacer(SnapshotConfig(root=str(tmp_path),test_only=True))
+    test_pacer.wait("daily"); test_pacer.wait("daily")
+    assert not sleeps
+
+
+def test_rate_limit_retries_with_bounded_cooldown_and_evidence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    import quantpilot_core.all_a_share_snapshot.snapshot as module
+    sleeps=[]; monkeypatch.setattr(module.time, "sleep", sleeps.append)
+    config=SnapshotConfig(root=str(tmp_path),min_request_interval_seconds=0,retry_delay_seconds=0.1,rate_limit_cooldown_seconds=12,max_retries=1)
+    manifest={"retry_count":0}; calls=[]
+    def eventually_available():
+        calls.append(1)
+        if len(calls) == 1: raise RuntimeError("daily_basic frequency exceeded: 200 requests/minute")
+        return []
+    assert _fetch(eventually_available,config,manifest,_CallPacer(config),endpoint="daily_basic") == []
+    assert manifest["retry_count"] == 1 and sleeps == [12]
+    with pytest.raises(ProviderCallError) as error:
+        _fetch(lambda: (_ for _ in ()).throw(RuntimeError("rate limit exceeded")),SnapshotConfig(root=str(tmp_path),max_retries=0),{"retry_count":0})
+    assert _failure("daily_basic",error.value,trade_date="20230103",required=False)["exception_category"] == "retryable_rate_limit"
+
+
+def test_nullable_suspend_timing_is_persisted_but_event_identity_remains_required(tmp_path: Path):
+    class NullTiming(FakeProvider):
+        def fetch_optional(self,dataset,trade_date=None):
+            rows=super().fetch_optional(dataset,trade_date)
+            if dataset == "suspend": rows[0]["suspend_timing"] = None
+            return rows
+    manifest,_=build(tmp_path,NullTiming()); assert manifest["capabilities"]["suspend"] == "available"
+    assert SnapshotLoader(tmp_path).optional("suspend","20231009")[0]["suspend_timing"] is None and validate_snapshot(tmp_path).ok
+    for field in ("ts_code","trade_date","suspend_type"):
+        class MissingIdentity(FakeProvider):
+            def fetch_optional(self,dataset,trade_date=None):
+                rows=super().fetch_optional(dataset,trade_date)
+                if dataset == "suspend": rows[0][field] = None
+                return rows
+        failed,_=build(tmp_path / field,MissingIdentity())
+        assert failed["capabilities"]["suspend"] == "unavailable"
+
+
+def test_cli_report_bounds_failure_records_without_losing_manifest_evidence():
+    path=Path(__file__).parents[2] / "scripts/all_a_share_snapshot_v1.py"
+    spec=importlib.util.spec_from_file_location("snapshot_cli_report",path); assert spec and spec.loader
+    module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    failures=[{"dataset":"daily_basic","required":False,"exception_category":"retryable_rate_limit","reason":"x"} for _ in range(540)]
+    failures += [{"dataset":"daily","required":True,"exception_category":"retryable_transport","reason":"y"} for _ in range(3)]
+    manifest={"status":"completed","failed_partitions":failures,"partition_counts":{},"namechange":{},"capabilities":{}}
+    report=module._report(manifest,"/snapshot")
+    assert len(manifest["failed_partitions"]) == 543 and report["failure_count"] == 543
+    assert report["required_failure_count"] == 3 and report["optional_failure_count"] == 540
+    assert report["failure_counts_by_dataset"] == {"daily":3,"daily_basic":540}
+    assert len(report["representative_failures"]) == 20 and report["failures_truncated"] is True

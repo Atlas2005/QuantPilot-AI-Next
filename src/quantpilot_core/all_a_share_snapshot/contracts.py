@@ -33,6 +33,10 @@ class SnapshotConfig:
     test_only: bool = False
     max_retries: int = 2
     retry_delay_seconds: float = 0.25
+    # Tushare's documented 200 requests/minute quota needs practical headroom.
+    min_request_interval_seconds: float = 0.35
+    retry_jitter_seconds: float = 0.0
+    rate_limit_cooldown_seconds: float = 60.0
     namechange_shard_size: int = 200
 
 
