@@ -23,7 +23,7 @@ from quantpilot_core.evaluation.ml_factor_training import (
     _normalize_price_frame,
     _provider_name,
     _slice_evaluation_frame,
-    _train_and_predict,
+    _train_and_predict_with_validation,
 )
 from quantpilot_core.evaluation.real_data_walk_forward_smoke import (
     DEFAULT_REAL_DATA_SCALEUP_SYMBOLS,
@@ -357,20 +357,23 @@ def _run_one_fold(
     dataset = replace(dataset, train_validation_test_split=split)
     purged_dataset, audit = apply_label_boundary_purge(dataset, split, target_label=config.target_label, horizon=horizon)
     try:
-        status, predictions, _ = _train_and_predict(
+        status, predictions, validation_predictions, _ = _train_and_predict_with_validation(
             purged_dataset,
             training_config,
             model_backend_factory=model_backend_factory,
             lightgbm_importer=lightgbm_importer,
         )
     except ImportError:
-        status, predictions = (
+        status, predictions, validation_predictions = (
             {"model_backend": "lightgbm_unavailable", "lightgbm_available": False, "model_trained": False, "fallback_reason": "lightgbm_not_installed"},
+            {},
             {},
         )
 
     records = build_ml_prediction_records(purged_dataset, predictions)
     valid_records = tuple(record for record in records if _is_finite_number(record.prediction_score))
+    validation_records = build_ml_prediction_records(purged_dataset, validation_predictions)
+    valid_validation_records = tuple(record for record in validation_records if _is_finite_number(record.prediction_score))
     invalid_prediction_count = len(records) - len(valid_records)
     if not status.get("model_trained") or not valid_records:
         reason = f"model_training_skipped:{status.get('fallback_reason')}" if not status.get("model_trained") else "no_finite_prediction_score_records"
@@ -392,7 +395,33 @@ def _run_one_fold(
             data_warnings=data_warnings,
             cost_multiplier=float(multiplier),
         )
-        scenario = _scenario_row(fold_index, fold, multiplier, ml_report, rule_report)
+        validation_report = None
+        if valid_validation_records:
+            validation_report, _ = _evaluate_prediction_records(
+                fold=fold,
+                records=valid_validation_records,
+                price_frame=price_frame,
+                config=config,
+                provider_name=provider_name,
+                data_warnings=data_warnings,
+                cost_multiplier=float(multiplier),
+                evaluation_end=fold["validation_end"],
+            )
+        scenario = _scenario_row(
+            fold_index,
+            fold,
+            multiplier,
+            ml_report,
+            rule_report,
+                validation_result=_portfolio_result(
+                    validation_report,
+                    evaluation_end=fold["validation_end"],
+                ),
+        )
+        scenario = {
+            **scenario,
+            "ranking_evidence": _ranking_evidence(fold, valid_records, status, ml_report, rule_report),
+        }
         scenario_rows.append(scenario)
         if float(multiplier) == 1.0:
             base_row = _fold_row_from_scenario(
@@ -420,17 +449,24 @@ def _evaluate_prediction_records(
     provider_name: str,
     data_warnings: tuple[str, ...],
     cost_multiplier: float,
+    evaluation_end: str | None = None,
 ) -> tuple[Any, Any]:
     dates = tuple(sorted(str(value) for value in pd.to_datetime(price_frame["date"]).dt.date.dropna().unique()))
-    first_prediction = min(record.date for record in records)
-    first_index = dates.index(first_prediction)
-    start_index = max(0, first_index - int(config.train_window_days) + 1)
-    end_date = fold["test_end"]
-    end_index = min(len(dates) - 1, dates.index(end_date) + int(config.test_window_days))
+    # The scale-up executor builds its first test window immediately after its
+    # train slice.  Anchor that slice to the declared fold boundary instead of
+    # the first ML prediction, and never extend the frame beyond the fold.
+    # This is the same construction used by Full-A's fixed-rule folds.
+    test_start = fold["validation_start"] if evaluation_end is not None else fold["test_start"]
+    start_index = max(0, dates.index(test_start) - int(config.train_window_days))
+    end_date = evaluation_end or fold["test_end"]
+    end_index = dates.index(end_date)
     eval_start = dates[start_index]
     eval_end = dates[end_index]
     eval_frame = _slice_evaluation_frame(price_frame, eval_start, eval_end)
-    prediction_map = {f"{record.date}|{record.symbol}": float(record.prediction_score) for record in records}
+    prediction_map = {
+        (str(record.date), str(record.symbol)): float(record.prediction_score)
+        for record in records
+    }
     base_config = RealDataWalkForwardScaleupConfig(
         symbols=config.symbols,
         start_date=eval_start,
@@ -438,7 +474,7 @@ def _evaluate_prediction_records(
         initial_cash=config.initial_cash,
         train_window_days=config.train_window_days,
         test_window_days=config.test_window_days,
-        max_windows=config.max_windows_per_fold,
+        max_windows=1 if evaluation_end is not None else config.max_windows_per_fold,
         min_symbols_required=config.min_symbols_required,
         allow_partial_universe=config.allow_partial_universe,
         artifact_path=None,
@@ -459,6 +495,7 @@ def _evaluate_prediction_records(
             "fold_id": fold["fold_id"],
             "cost_multiplier": cost_multiplier,
             "ml_prediction_map": prediction_map,
+            "ml_ranking_input_source": "model_prediction_records_by_test_start",
         },
     )
     _validate_scaleup_config(base_config)
@@ -469,7 +506,7 @@ def _evaluate_prediction_records(
         initial_cash=config.initial_cash,
         train_window_days=config.train_window_days,
         test_window_days=config.test_window_days,
-        max_windows=config.max_windows_per_fold,
+        max_windows=1 if evaluation_end is not None else config.max_windows_per_fold,
         provider=provider_name,
         advisory_mode="disabled",
         allow_partial_universe=config.allow_partial_universe,
@@ -494,7 +531,39 @@ def _evaluate_prediction_records(
     return ml_report, rule_report
 
 
-def _scenario_row(fold_index: int, fold: Mapping[str, str], multiplier: float, ml_report: Any, rule_report: Any) -> Mapping[str, Any]:
+def _portfolio_result(
+    report: Any | None,
+    *,
+    evaluation_end: str | None = None,
+) -> Mapping[str, Any] | None:
+    if report is None or not report.windows_run:
+        return None
+    return {
+        "available": True,
+        "total_return": report.total_return,
+        "benchmark_total_return": report.benchmark_total_return,
+        "strategy_excess_return": report.strategy_excess_return,
+        "max_drawdown": report.max_drawdown,
+        "cost_total": report.cost_total,
+        "turnover": report.turnover,
+        "filled_trades": report.filled_trades,
+        "rejected_trades": report.rejected_trades,
+        "rejected_trade_ratio": report.rejected_trade_ratio,
+        "evaluation_end": _last_window_test_end(report.per_window_metrics),
+        "execution_windows": _execution_windows_from_scaleup(report),
+        "pretest_validation_evidence": evaluation_end is not None,
+    }
+
+
+def _scenario_row(
+    fold_index: int,
+    fold: Mapping[str, str],
+    multiplier: float,
+    ml_report: Any,
+    rule_report: Any,
+    *,
+    validation_result: Mapping[str, Any] | None,
+) -> Mapping[str, Any]:
     execution = _execution_metrics_from_scaleup(ml_report)
     rule_execution = _execution_metrics_from_scaleup(rule_report)
     return {
@@ -509,6 +578,8 @@ def _scenario_row(fold_index: int, fold: Mapping[str, str], multiplier: float, m
         "cost_total": ml_report.cost_total if ml_report.windows_run else None,
         "turnover": ml_report.turnover if ml_report.windows_run else None,
         "trade_count": ml_report.filled_trades if ml_report.windows_run else None,
+        "filled_trades": ml_report.filled_trades if ml_report.windows_run else None,
+        "rejected_trades": ml_report.rejected_trades if ml_report.windows_run else None,
         "attempted_order_count": execution["attempted_order_count"],
         "fill_ratio": execution["fill_ratio"],
         "partial_fill_count": execution["partial_fill_count"],
@@ -532,7 +603,82 @@ def _scenario_row(fold_index: int, fold: Mapping[str, str], multiplier: float, m
         "turnover_aware_attribution": getattr(ml_report, "turnover_aware_attribution", {}),
         "rule_turnover_aware_attribution": getattr(rule_report, "turnover_aware_attribution", {}),
         "ml_beats_rule": _gt(ml_report.strategy_excess_return, rule_report.strategy_excess_return),
+        "validation_result": validation_result,
     }
+
+
+def _ranking_evidence(
+    fold: Mapping[str, str],
+    records: tuple[MLFactorPredictionRecord, ...],
+    status: Mapping[str, Any],
+    ml_report: Any,
+    rule_report: Any,
+) -> Mapping[str, Any]:
+    selection_date = str(fold["test_start"])
+    scored = sorted(
+        (
+            (str(record.symbol), float(record.prediction_score))
+            for record in records
+            if str(record.date) == selection_date and _is_finite_number(record.prediction_score)
+        ),
+        key=lambda item: (-item[1], item[0]),
+    )
+    values = [score for _, score in scored]
+    mean = sum(values) / len(values) if values else None
+    std = (
+        round(math.sqrt(sum((value - mean) ** 2 for value in values) / len(values)), 12)
+        if mean is not None else None
+    )
+    ml_selected = _candidate_symbols_from_scaleup(ml_report)
+    rule_selected = _candidate_symbols_from_scaleup(rule_report)
+    overlap = len(set(ml_selected) & set(rule_selected))
+    fallback_reason = _ml_ranking_fallback_reason(ml_report)
+    return {
+        "model_backend": status.get("model_backend"),
+        "training_row_count": status.get("training_row_count"),
+        "prediction_count": len(records),
+        "prediction_selection_date": selection_date,
+        "prediction_min": min(values) if values else None,
+        "prediction_max": max(values) if values else None,
+        "prediction_stddev": std,
+        "unique_prediction_count": len(set(values)),
+        "top_predicted_symbols": tuple({"symbol": symbol, "score": score} for symbol, score in scored[:10]),
+        "bottom_predicted_symbols": tuple({"symbol": symbol, "score": score} for symbol, score in sorted(scored, key=lambda item: (item[1], item[0]))[:10]),
+        "same_window_rule_selected_symbols": rule_selected,
+        "ml_selected_symbols": ml_selected,
+        "selection_overlap_count": overlap,
+        "selection_overlap_ratio": round(overlap / len(ml_selected), 6) if ml_selected else None,
+        "actual_filled_order_symbols": _filled_symbols_from_scaleup(ml_report),
+        "fallback_used": fallback_reason is not None,
+        "fallback_reason": fallback_reason,
+        "ranking_input_source": "model_prediction_records_by_test_start",
+    }
+
+
+def _candidate_symbols_from_scaleup(report: Any) -> tuple[str, ...]:
+    windows = tuple(getattr(report, "per_window_metrics", ()) or ())
+    return tuple(str(symbol) for symbol in (windows[0].get("candidate_symbols", ()) if windows else ()))
+
+
+def _filled_symbols_from_scaleup(report: Any) -> tuple[str, ...]:
+    symbols: list[str] = []
+    for window in tuple(getattr(report, "per_window_metrics", ()) or ()):
+        for outcome in tuple(window.get("execution_outcomes", ()) or ()):
+            if str(outcome.get("status")) == "filled" and int(outcome.get("filled_quantity", 0)) > 0:
+                symbols.append(str(outcome.get("symbol")))
+    return tuple(symbols)
+
+
+def _ml_ranking_fallback_reason(report: Any) -> str | None:
+    if getattr(report, "windows_run", 0):
+        return None
+    for value in (
+        *tuple(getattr(report, "data_quality_warnings", ()) or ()),
+        *tuple(getattr(report, "notes", ()) or ()),
+    ):
+        if str(value).startswith("ml_ranking_input_unavailable:"):
+            return str(value)
+    return "existing_scaleup_evaluator_returned_no_windows"
 
 
 def _fold_row_from_scenario(
@@ -550,7 +696,7 @@ def _fold_row_from_scenario(
         "fold_id": fold["fold_id"],
         "fold_index": fold_index,
         "status": "completed" if ml_report.windows_run else "failed",
-        "failure_reason": None if ml_report.windows_run else "existing_scaleup_evaluator_returned_no_windows",
+        "failure_reason": None if ml_report.windows_run else _ml_ranking_fallback_reason(ml_report),
         "training_range": (fold["training_start"], fold["training_end"]),
         "validation_range": (fold["validation_start"], fold["validation_end"]),
         "test_range": (fold["test_start"], fold["test_end"]),
@@ -559,7 +705,9 @@ def _fold_row_from_scenario(
         "model_trained": bool(status.get("model_trained")),
         "prediction_count": prediction_count,
         "invalid_prediction_count": invalid_prediction_count,
-        "ml_result": {key: scenario.get(key) for key in ("total_return", "benchmark_total_return", "strategy_excess_return", "max_drawdown", "cost_total", "turnover", "trade_count", "attempted_order_count", "fill_ratio", "partial_fill_count", "rejected_order_count", "deferred_order_count", "execution_rejection_reasons", "rejected_trade_ratio", "turnover_aware_attribution")},
+        "ml_result": {key: scenario.get(key) for key in ("total_return", "benchmark_total_return", "strategy_excess_return", "max_drawdown", "cost_total", "turnover", "trade_count", "filled_trades", "rejected_trades", "attempted_order_count", "fill_ratio", "partial_fill_count", "rejected_order_count", "deferred_order_count", "execution_rejection_reasons", "rejected_trade_ratio", "turnover_aware_attribution")},
+        "ml_ranking_evidence": scenario.get("ranking_evidence"),
+        "validation_result": scenario.get("validation_result"),
         "ml_execution_windows": _execution_windows_from_scaleup(ml_report),
         "same_window_rule_baseline": {
             "ranking_mode": rule_report.ranking_mode,
@@ -659,6 +807,9 @@ def _execution_windows_from_scaleup(report: Any) -> tuple[Mapping[str, Any], ...
         rows.append(
             {
                 "run_label": row.get("run_label"),
+                "test_start": row.get("test_start"),
+                "test_end": row.get("test_end"),
+                "candidate_symbols": row.get("candidate_symbols", ()),
                 "execution_reality": row.get("execution_reality"),
                 "attempted_order_count": row.get("attempted_order_count"),
                 "execution_fill_ratio": row.get("execution_fill_ratio"),
