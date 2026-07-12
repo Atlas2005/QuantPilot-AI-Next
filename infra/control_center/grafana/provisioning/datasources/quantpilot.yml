@@ -1,0 +1,11 @@
+apiVersion: 1
+datasources:
+  - name: QuantPilot PostgreSQL
+    uid: quantpilot-postgres
+    type: postgres
+    access: proxy
+    isDefault: true
+    url: postgres:5432
+    user: quantpilot
+    secureJsonData: {password: "${POSTGRES_PASSWORD}"}
+    jsonData: {database: quantpilot, sslmode: disable, postgresVersion: 1600}

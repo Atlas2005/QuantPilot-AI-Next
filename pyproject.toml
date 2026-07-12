@@ -29,6 +29,10 @@ replay = [
 ml = [
     "lightgbm>=4,<5",
 ]
+continuous-paper = [
+    "psycopg[binary]>=3.1,<4",
+    "prefect>=3,<4",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
