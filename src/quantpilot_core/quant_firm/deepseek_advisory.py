@@ -131,6 +131,52 @@ class DeepSeekClientConfig:
         object.__setattr__(self, "_model_normalization_warnings", normalized.warnings)
 
 
+class DeepSeekStructuredEvidenceClient:
+    """Structured-response adapter for explicitly enabled Quant Firm live calls."""
+
+    def __init__(self, config: DeepSeekClientConfig | None = None) -> None:
+        self.config = config or DeepSeekClientConfig(enable_live_call=True)
+
+    def __call__(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
+        credential = os.environ.get(self.config.api_key_env)
+        if not self.config.enable_live_call or not credential:
+            raise RuntimeError("live DeepSeek structured evidence requires enabled Quant Firm configuration")
+        try:
+            openai_module = import_module("openai")
+        except ImportError as exc:
+            raise RuntimeError("OpenAI-compatible runtime is unavailable") from exc
+        client = openai_module.OpenAI(
+            api_key=credential,
+            base_url=self.config.base_url,
+            timeout=self.config.timeout_seconds,
+        )
+        response = client.chat.completions.create(
+            model=request["model"],
+            messages=request["messages"],
+            response_format={"type": "json_object"},
+            reasoning_effort=request.get("reasoning_mode"),
+            extra_body={"enable_thinking": request.get("enable_thinking", False)},
+        )
+        choice = response.choices[0]
+        usage = getattr(response, "usage", None)
+        return {
+            "content": choice.message.content,
+            "finish_reason": choice.finish_reason,
+            "usage": {
+                "prompt_tokens": getattr(usage, "prompt_tokens", 0),
+                "prompt_cache_hit_tokens": getattr(usage, "prompt_cache_hit_tokens", 0),
+                "prompt_cache_miss_tokens": getattr(usage, "prompt_cache_miss_tokens", None),
+                "completion_tokens": getattr(usage, "completion_tokens", 0),
+            },
+        }
+
+
+def create_live_structured_evidence_client() -> DeepSeekStructuredEvidenceClient:
+    """Return the approved Quant Firm structured-response adapter for the CLI."""
+
+    return DeepSeekStructuredEvidenceClient()
+
+
 @dataclass(frozen=True)
 class QuantFirmDeepSeekModelSelection:
     """Resolved advisory model settings for a Quant Firm role."""
