@@ -10,9 +10,11 @@ import pytest
 import quantpilot_core.real_candidate_pipeline.pipeline as pipeline_module
 from quantpilot_core.a_share_market_reality_execution import SettlementLot
 from quantpilot_core.daily_paper_loop import initialize_daily_state, save_daily_state_atomic
+from quantpilot_core.daily_paper_loop.state import payload_digest
 from quantpilot_core.evaluation import FactorScore
 from quantpilot_core.information_agents import InformationAgentRole, InformationAgentSignal, InformationDirection, InformationHorizon
 from quantpilot_core.paper_trading import PaperAccount
+from quantpilot_core.production_candidate import build_production_candidate_manifest
 from quantpilot_core.real_candidate_pipeline import (
     RealCandidatePipelineConfig,
     build_real_candidate_daily_paper_input,
@@ -646,6 +648,42 @@ def test_pipeline_idempotent_replay_and_conflict_do_not_regenerate_from_mutated_
     with pytest.raises(PipelineIdempotencyConflictError):
         run_real_candidate_daily_paper(config(tmp_path, symbols=("000001.SZ", "600519.SH")))
     assert load_state_payload(tmp_path)["state_hash"] == state_after_first["state_hash"]
+
+
+def test_shadow_evidence_isolated_from_manifest_bound_production_identities(tmp_path: Path) -> None:
+    pr121 = tmp_path / "pr121.json"; pr121.write_text("{}")
+    pr122 = tmp_path / "pr122.json"; pr122.write_text("{}")
+    manifest = build_production_candidate_manifest(
+        created_at="2026-07-12T00:00:00+00:00",
+        code_revision="revision",
+        snapshot_digest="a" * 64,
+        benchmark={"symbol": "000300.SH"},
+        source_artifacts={"pr121": pr121, "pr122": pr122},
+        frozen_strategy_parameters={"initial_capital": 100000.0, "target_symbol_count": 2, "max_execution_symbols": 6, "strategy_id": "equal_weight_baseline"},
+        frozen_portfolio_parameters={"target_position_count": 2, "max_position_weight": .1, "reserve_cash_weight": .02},
+        frozen_execution_parameters={"min_order_lot": 100},
+        fee_profile_policy={"profile_id": "engineering-fallback-from-paper-fill-cost-assumptions", "required_provenance": "engineering_fallback"},
+        account_capability_policy={"capability_digest": payload_digest(None)},
+    )
+    common = dict(symbols=("600000.SH", "000001.SZ"), strategy_id="equal_weight_baseline", target_symbol_count=2, target_position_count=2, production_manifest=manifest)
+    first_evidence = {"packet": "one"}
+    second_evidence = {"packet": "two"}
+    first = run_real_candidate_daily_paper(config(tmp_path / "first", quant_firm_context={"shadow_desk_evidence": first_evidence}, shadow_desk_evidence=first_evidence, **common))
+    second = run_real_candidate_daily_paper(config(tmp_path / "second", quant_firm_context={"shadow_desk_evidence": second_evidence}, shadow_desk_evidence=second_evidence, **common))
+
+    first_pipeline = first.candidate_pipeline_report
+    second_pipeline = second.candidate_pipeline_report
+    first_daily = first.daily_paper_loop_result.report
+    second_daily = second.daily_paper_loop_result.report
+    assert first_pipeline["pipeline_request_digest"] == second_pipeline["pipeline_request_digest"]
+    assert first_pipeline["digests"]["loop_input"] == second_pipeline["digests"]["loop_input"]
+    assert first_daily["input_digest"] == second_daily["input_digest"]
+    assert first_daily["session_id"] == second_daily["session_id"]
+    for key in ("candidate_report", "allocation_sizing", "order_intents", "fills", "ledger_after", "reconciliation_audit"):
+        assert first_daily[key] == second_daily[key]
+    assert first_daily["order_intents"]["intents"] == second_daily["order_intents"]["intents"]
+    assert load_state_payload(tmp_path / "first")["state_hash"] == load_state_payload(tmp_path / "second")["state_hash"]
+    assert first_daily["ai_shadow_report"]["ai_shadow_evidence_digest"] != second_daily["ai_shadow_report"]["ai_shadow_evidence_digest"]
 
 
 def test_reordered_symbols_replay_without_digest_conflict_or_duplicate_fill(tmp_path: Path) -> None:

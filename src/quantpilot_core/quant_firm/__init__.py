@@ -61,12 +61,31 @@ from quantpilot_core.quant_firm.orchestrator import (
     QuantFirmOrchestrator,
     run_quant_firm_decision_cycle,
 )
-from quantpilot_core.quant_firm.role_skills import (
-    DEFAULT_ROLE_SKILLS,
-    QuantFirmRoleSkill,
-    QuantFirmRoleSkillRegistry,
-    build_default_role_skill_registry,
+from quantpilot_core.quant_firm.operating_contract import (
+    CANONICAL_DEEPSEEK_DESKS,
+    DeskOperatingContract,
+    QuantFirmOperatingContract,
+    build_quant_firm_operating_contract,
+    build_shadow_committee_report,
+    compact_dashboard_summary,
+    validate_cached_desk_evidence,
 )
+
+_ROLE_SKILL_EXPORTS = frozenset({
+    "DEFAULT_ROLE_SKILLS",
+    "QuantFirmRoleSkill",
+    "QuantFirmRoleSkillRegistry",
+    "build_default_role_skill_registry",
+})
+
+
+def __getattr__(name: str):
+    """Load optional role-skill bindings only when a caller requests them."""
+    if name in _ROLE_SKILL_EXPORTS:
+        from quantpilot_core.quant_firm import role_skills
+
+        return getattr(role_skills, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "AGENT_CLASSES",
@@ -124,4 +143,7 @@ __all__ = [
     "build_strategy_mutation_plan",
     "run_deepseek_advisory_fallback",
     "run_quant_firm_decision_cycle",
+    "CANONICAL_DEEPSEEK_DESKS", "DeskOperatingContract", "QuantFirmOperatingContract",
+    "build_quant_firm_operating_contract", "build_shadow_committee_report",
+    "compact_dashboard_summary", "validate_cached_desk_evidence",
 ]

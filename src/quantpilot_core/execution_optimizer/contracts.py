@@ -16,6 +16,8 @@ class OptimizationAssumption:
     slippage_bps: float = 2.0
     turnover_penalty_rate: float = 0.0005
     softmax_temperature: float = 1.0
+    allocation_mode: str = "score_weighted"
+    equal_target_weight: float | None = None
 
 
 @dataclass(frozen=True)

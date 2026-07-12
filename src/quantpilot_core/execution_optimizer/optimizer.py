@@ -99,7 +99,16 @@ class PortfolioOptimizer:
         current = current_weights or {}
         score_rows = tuple(_score_row(candidate) for candidate in report.candidates)
         normalized_scores = _normalized_scores(score_rows)
-        softmax_weights = _softmax_weights(score_rows, self.assumptions.softmax_temperature)
+        if self.assumptions.allocation_mode == "equal_weight_baseline":
+            longs = tuple(candidate for candidate in report.candidates if candidate.direction == "long")
+            target = self.assumptions.equal_target_weight
+            if target is None:
+                target = 1.0 / len(longs) if longs else 0.0
+            softmax_weights = {candidate.symbol: (float(target) if candidate.direction == "long" else 0.0) for candidate in report.candidates}
+        elif self.assumptions.allocation_mode == "score_weighted":
+            softmax_weights = _softmax_weights(score_rows, self.assumptions.softmax_temperature)
+        else:
+            raise ValueError(f"unsupported allocation_mode: {self.assumptions.allocation_mode}")
 
         allocations: list[PortfolioAllocation] = []
         for candidate, raw_score in score_rows:
@@ -113,7 +122,7 @@ class PortfolioOptimizer:
                 turnover_notional=turnover_notional,
                 liquidity_score=candidate.liquidity_score,
             )
-            cost_drag = cost.total_cost / self.assumptions.capital
+            cost_drag = 0.0 if self.assumptions.allocation_mode == "equal_weight_baseline" else cost.total_cost / self.assumptions.capital
             cost_adjusted_score = round(max(0.0, normalized_score - cost_drag), 6)
             cost_adjusted_weight = round(provisional_weight * max(0.0, 1.0 - cost_drag), 6)
 
@@ -255,6 +264,10 @@ def _validate_assumptions(assumptions: OptimizationAssumption) -> None:
         raise ValueError("cost assumptions must be non-negative")
     if assumptions.softmax_temperature <= 0:
         raise ValueError("softmax_temperature must be positive")
+    if assumptions.allocation_mode not in {"score_weighted", "equal_weight_baseline"}:
+        raise ValueError("unsupported allocation_mode")
+    if assumptions.equal_target_weight is not None and not 0 <= assumptions.equal_target_weight <= 1:
+        raise ValueError("equal_target_weight must be in [0, 1]")
 
 
 def _clamp(value: float, low: float, high: float) -> float:

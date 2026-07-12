@@ -48,6 +48,7 @@ from quantpilot_core.real_data_provider import (
     TusharePrimaryBaoStockFallbackProvider,
     provenance_warnings,
 )
+from quantpilot_core.strategy_selection import rank_equal_weight_baseline
 
 
 DEFAULT_REAL_DATA_SMOKE_SYMBOLS = ("000001.SZ", "000002.SZ", "600000.SH", "601318.SH")
@@ -1163,7 +1164,7 @@ def _rank_scaleup_candidates(
     ranking_date: str | None = None,
 ) -> tuple[tuple[int, str, float | None], ...]:
     if train_prices.empty or config.ranking_mode == "equal_weight_baseline":
-        return tuple((rank, symbol, 0.0) for rank, symbol in enumerate(sorted(start_prices), start=1))
+        return rank_equal_weight_baseline(start_prices)
     if config.ranking_mode == "ml_prediction_score":
         prediction_map = config.metadata.get("ml_prediction_map", {})
         as_of_date = ranking_date or str(pd.Timestamp(train_prices["date"].max()).date())

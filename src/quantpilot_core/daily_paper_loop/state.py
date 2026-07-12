@@ -52,7 +52,7 @@ def load_daily_state(path: str | Path, *, initial_capital: float) -> DailyPaperL
     except json.JSONDecodeError as exc:
         raise DailyPaperStateError("daily paper state is not valid JSON") from exc
     state = state_from_payload(payload)
-    expected = _payload_hash(_state_payload(state, include_hash=False))
+    expected = _payload_hash(_production_state_identity_payload(state))
     if state.state_hash != expected:
         raise DailyPaperStateError("daily paper state hash mismatch")
     if round(float(state.initial_capital), 6) != round(float(initial_capital), 6):
@@ -257,9 +257,28 @@ def _state_payload(state: DailyPaperLoopState, *, include_hash: bool) -> Mapping
     return payload
 
 
+def _production_state_identity_payload(state: DailyPaperLoopState) -> Mapping[str, Any]:
+    """State payload for production identity, excluding advisory-only shadow data."""
+    return _without_shadow_data(_state_payload(state, include_hash=False))
+
+
+def _without_shadow_data(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            key: _without_shadow_data(item)
+            for key, item in value.items()
+            if key not in {"shadow_desk_evidence", "ai_shadow_report", "dashboard_summary"}
+        }
+    if isinstance(value, tuple):
+        return tuple(_without_shadow_data(item) for item in value)
+    if isinstance(value, list):
+        return [_without_shadow_data(item) for item in value]
+    return value
+
+
 def _with_hash(state: DailyPaperLoopState) -> DailyPaperLoopState:
     _validate_state(state)
-    digest = _payload_hash(_state_payload(state, include_hash=False))
+    digest = _payload_hash(_production_state_identity_payload(state))
     return DailyPaperLoopState(
         schema_version=state.schema_version,
         initial_capital=state.initial_capital,

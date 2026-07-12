@@ -25,6 +25,12 @@ class RealCandidatePipelineConfig:
     state_path: str | Path = ".cache/real_candidate_daily_paper/state.json"
     report_path: str | Path | None = ".cache/real_candidate_daily_paper/latest_report.json"
     strategy_id: str = "real-candidate-defensive-composite-v1"
+    production_strategy_id: str | None = None
+    target_position_count: int | None = None
+    max_position_weight: float = 0.10
+    reserve_cash_weight: float = 0.02
+    min_order_lot: int = 100
+    capital_profile_id: str = "default_paper_capital"
     max_execution_symbols: int = 6
     target_symbol_count: int = 1
     live_market_data: bool = False
@@ -39,6 +45,9 @@ class RealCandidatePipelineConfig:
     advisory_provenance: Mapping[str, Any] = field(default_factory=dict)
     quant_firm_context: Mapping[str, Any] = field(default_factory=dict)
     account_capabilities: AccountCapabilities | None = None
+    # Optional PR #123 binding.  Mapping is accepted to keep JSON callers compatible.
+    production_manifest: Any | None = None
+    shadow_desk_evidence: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

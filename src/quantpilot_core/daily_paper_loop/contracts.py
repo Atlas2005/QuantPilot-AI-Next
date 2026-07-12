@@ -49,6 +49,8 @@ class DailyPaperLoopConfig:
     account_capabilities: AccountCapabilities | None = None
     broker_returned_account_fee_profile: BrokerFeeProfile | None = None
     persisted_user_account_fee_profile: BrokerFeeProfile | None = None
+    # Optional PR #123 contract.  It only enriches reports/shadow evidence.
+    production_manifest: Any | None = None
 
 
 @dataclass(frozen=True)
