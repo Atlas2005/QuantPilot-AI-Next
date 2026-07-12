@@ -266,6 +266,22 @@ def test_cost_sensitivity_scenarios_are_reported(tmp_path: Path) -> None:
     )
 
 
+def test_ml_validation_portfolio_evidence_is_capped_before_the_test_period(tmp_path: Path) -> None:
+    report = run_ml_ranking_robustness_walkforward_v1(
+        config(tmp_path, fold_count=3),
+        price_frame=fixture_frame(days=170),
+        model_backend_factory=CountingRegressor,
+    )
+
+    for row in report.fold_results:
+        if row["status"] != "completed":
+            continue
+        validation = row["validation_result"]
+        assert validation is not None
+        assert validation["pretest_validation_evidence"] is True
+        assert validation["evaluation_end"] <= row["validation_range"][1]
+
+
 def test_concentration_diagnostics_use_existing_evaluation_artifacts(tmp_path: Path) -> None:
     report = run_ml_ranking_robustness_walkforward_v1(
         config(tmp_path, fold_count=3),

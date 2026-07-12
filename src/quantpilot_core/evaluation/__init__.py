@@ -46,6 +46,16 @@ from quantpilot_core.evaluation.turnover_aware_rebalance_optimization import (
     TurnoverAwareRebalanceOptimizationReport,
     run_turnover_aware_rebalance_optimization_v1,
 )
+from quantpilot_core.evaluation.full_a_strategy_ml_oos_ablation import (
+    DEFAULT_FIXED_RULE_MODES,
+    DEFAULT_FULL_A_STRATEGY_ML_OOS_ABLATION_ARTIFACT_PATH,
+    DynamicSelectorPolicy,
+    FullAStrategyMLOOSAblationConfig,
+    FullAStrategyMLOOSAblationReport,
+    ProvisionalCandidateThresholds,
+    run_full_a_strategy_ml_oos_ablation_v1,
+    score_dynamic_candidates,
+)
 from quantpilot_core.evaluation.a_share_market_reality_execution import (
     DEFAULT_A_SHARE_MARKET_REALITY_EXECUTION_REPORT_ARTIFACT_PATH,
     AShareMarketRealityExecutionConfig,
@@ -82,6 +92,8 @@ from quantpilot_core.evaluation.real_data_walk_forward_smoke import (
 
 __all__ = [
     "DEFAULT_FACTOR_RANKING_BASELINE_ARTIFACT_PATH",
+    "DEFAULT_FIXED_RULE_MODES",
+    "DEFAULT_FULL_A_STRATEGY_ML_OOS_ABLATION_ARTIFACT_PATH",
     "DEFAULT_A_SHARE_MARKET_REALITY_EXECUTION_REPORT_ARTIFACT_PATH",
     "DEFAULT_A_SHARE_TRADABILITY_METADATA_ENRICHMENT_REPORT_ARTIFACT_PATH",
     "DEFAULT_FACTOR_RANKING_SWEEP_INTEGRATION_ARTIFACT_PATH",
@@ -99,6 +111,10 @@ __all__ = [
     "FactorRankingSweepIntegrationConfig",
     "FactorRankingSweepIntegrationReport",
     "FactorScore",
+    "DynamicSelectorPolicy",
+    "FullAStrategyMLOOSAblationConfig",
+    "FullAStrategyMLOOSAblationReport",
+    "ProvisionalCandidateThresholds",
     "AShareMarketRealityExecutionConfig",
     "AShareMarketRealityExecutionReport",
     "AShareTradabilityMetadataEnrichmentConfig",
@@ -142,6 +158,8 @@ __all__ = [
     "run_real_data_walk_forward_scaleup_v1",
     "run_real_data_walk_forward_smoke",
     "run_factor_ranking_baseline_v1",
+    "run_full_a_strategy_ml_oos_ablation_v1",
     "run_ml_factor_training_v1",
     "run_profitability_smoke_test",
+    "score_dynamic_candidates",
 ]

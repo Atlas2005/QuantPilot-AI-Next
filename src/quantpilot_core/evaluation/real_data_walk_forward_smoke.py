@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Hashable, Mapping, MutableMapping, Sequence
 
 import pandas as pd
 
@@ -814,6 +814,9 @@ def _run_scaleup_with_loaded_price_frame(
     provider_name: str,
     price_frame: pd.DataFrame,
     data_warnings: tuple[str, ...],
+    benchmark_metrics: Mapping[str, Any] | None = None,
+    benchmark_cache: MutableMapping[Hashable, Mapping[str, Any]] | None = None,
+    benchmark_cache_key: Hashable | None = None,
 ) -> RealDataWalkForwardScaleupReport:
     if price_frame.empty:
         unavailable = _unavailable_report(smoke_config, provider_name, "provider returned no usable OHLCV rows", data_warnings)
@@ -833,9 +836,20 @@ def _run_scaleup_with_loaded_price_frame(
         unavailable = _unavailable_report(smoke_config, provider_name, "not enough trading dates for configured windows", data_warnings)
         return _scaleup_report_from_smoke(unavailable, config)
 
+    ml_input_issue = _ml_ranking_input_issue(price_frame, windows, config)
+    if ml_input_issue is not None:
+        unavailable = _unavailable_report(smoke_config, provider_name, ml_input_issue, data_warnings)
+        return _scaleup_report_from_smoke(unavailable, config)
+
     per_window, final_account = _run_scaleup_rebalance_windows(price_frame, windows, config)
     final_equity = _final_equity(per_window)
-    benchmark = _benchmark_metrics(price_frame, windows, float(config.initial_cash), config.benchmark_mode)
+    benchmark = benchmark_metrics
+    if benchmark is None and benchmark_cache is not None and benchmark_cache_key is not None:
+        benchmark = benchmark_cache.get(benchmark_cache_key)
+    if benchmark is None:
+        benchmark = _benchmark_metrics(price_frame, windows, float(config.initial_cash), config.benchmark_mode)
+        if benchmark_cache is not None and benchmark_cache_key is not None:
+            benchmark_cache[benchmark_cache_key] = benchmark
     strategy_return = _total_return(config.initial_cash, final_equity)
     valid_symbols = tuple(sorted(str(symbol) for symbol in price_frame["symbol"].dropna().unique()))
     expected_symbols = tuple(canonicalize_a_share_symbol(symbol) for symbol in config.symbols)
@@ -974,7 +988,9 @@ def _run_scaleup_rebalance_windows(
         start_market_rows = _first_market_rows_for_window(price_frame, window.test_start, window.test_end, config.metadata)
         end_prices = _latest_prices_for_window(price_frame, window.test_start, window.test_end)
         starting_equity = _account_equity(account, start_prices)
-        ranked_candidates = _rank_scaleup_candidates(train_prices, start_prices, config)
+        ranked_candidates = _rank_scaleup_candidates(
+            train_prices, start_prices, config, ranking_date=str(window.test_start),
+        )
         selected = tuple(symbol for _, symbol, _ in ranked_candidates[: int(config.target_position_count)])
         policy_notes = _turnover_aware_selection_notes()
         if config.turnover_aware_rebalance.enabled:
@@ -1143,12 +1159,14 @@ def _rank_scaleup_candidates(
     train_prices: pd.DataFrame,
     start_prices: Mapping[str, float],
     config: RealDataWalkForwardScaleupConfig,
+    *,
+    ranking_date: str | None = None,
 ) -> tuple[tuple[int, str, float | None], ...]:
     if train_prices.empty or config.ranking_mode == "equal_weight_baseline":
         return tuple((rank, symbol, 0.0) for rank, symbol in enumerate(sorted(start_prices), start=1))
     if config.ranking_mode == "ml_prediction_score":
         prediction_map = config.metadata.get("ml_prediction_map", {})
-        as_of_date = str(pd.Timestamp(train_prices["date"].max()).date())
+        as_of_date = ranking_date or str(pd.Timestamp(train_prices["date"].max()).date())
         scores: list[tuple[float, str, float | None]] = []
         for symbol in sorted(start_prices):
             score = prediction_map.get((as_of_date, symbol))
@@ -1184,6 +1202,35 @@ def _rank_scaleup_candidates(
         scores.append((round(score, 12), str(symbol)))
     ranked = sorted(scores, key=lambda item: (-item[0], item[1]))
     return tuple((rank, symbol, score) for rank, (score, symbol) in enumerate(ranked, start=1))
+
+
+def _ml_ranking_input_issue(
+    price_frame: pd.DataFrame,
+    windows: Sequence[Any],
+    config: RealDataWalkForwardScaleupConfig,
+) -> str | None:
+    """Reject absent or tied ML inputs rather than executing a lexical fallback."""
+    if config.ranking_mode != "ml_prediction_score":
+        return None
+    prediction_map = config.metadata.get("ml_prediction_map", {})
+    for window in windows:
+        start_prices = _first_prices_for_window(price_frame, window.test_start, window.test_end)
+        scores = []
+        for symbol in sorted(start_prices):
+            value = prediction_map.get((str(window.test_start), symbol))
+            if value is None:
+                value = prediction_map.get(f"{window.test_start}|{symbol}")
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            if not pd.isna(numeric) and numeric not in (float("inf"), float("-inf")):
+                scores.append(numeric)
+        if len(scores) < int(config.target_position_count):
+            return f"ml_ranking_input_unavailable:insufficient_finite_scores:{len(scores)}"
+        if len(set(scores)) <= 1:
+            return "ml_ranking_input_unavailable:constant_or_tied_scores"
+    return None
 
 
 def _ranking_score(group: pd.DataFrame, ranking_mode: str) -> float:
@@ -2545,9 +2592,19 @@ def _buy_and_hold_benchmark(
     end_date = str(windows[-1].test_end) if windows else str(frame["date"].max())
     ordered = frame.sort_values(["date", "symbol"], kind="stable")
     symbols = tuple(sorted(str(symbol) for symbol in ordered["symbol"].dropna().unique()))
+    # `ordered` establishes the exact row ordering used by the previous
+    # per-symbol boolean mask implementation.  Group it once rather than
+    # scanning the full symbol column for every benchmark constituent.
+    grouped = ordered.groupby("symbol", sort=False)
     valid: list[tuple[str, float, float]] = []
     for symbol in symbols:
-        group = ordered.loc[ordered["symbol"] == symbol].copy()
+        try:
+            group = grouped.get_group(symbol)
+        except KeyError:
+            # Keep the old behavior for unusual non-string source labels:
+            # `symbols` contains their string representation, while the old
+            # equality comparison would have found no matching rows.
+            continue
         start_rows = group.loc[group["date"] >= start_date]
         end_rows = group.loc[group["date"] <= end_date]
         if start_rows.empty or end_rows.empty:

@@ -454,7 +454,7 @@ def run_ml_ranking_scaleup_evaluation_v1(
         str(window_bounds["evaluation_frame_end"]),
     )
     prediction_map = {
-        f"{record.date}|{record.symbol}": float(record.prediction_score)
+        (str(record.date), str(record.symbol)): float(record.prediction_score)
         for record in valid_records
     }
     base_scaleup_config = _scaleup_config_for_ml_evaluation(
@@ -470,6 +470,7 @@ def run_ml_ranking_scaleup_evaluation_v1(
             **dict(base_scaleup_config.metadata),
             "ml_prediction_map": prediction_map,
             "ml_prediction_record_count": len(valid_records),
+            "ml_ranking_input_source": "model_prediction_records_by_test_start",
         },
     )
     rule_config = replace(base_scaleup_config, ranking_mode=payload.same_window_rule_ranking_mode)
@@ -971,6 +972,35 @@ def _train_and_predict(
     model_backend_factory: Callable[[], Any] | None,
     lightgbm_importer: Callable[[str], Any] | None,
 ) -> tuple[Mapping[str, Any], Mapping[tuple[str, str], float], tuple[Mapping[str, Any], ...]]:
+    """Train once and return held-out test predictions (legacy API)."""
+
+    status, test_predictions, _validation_predictions, importance = _train_and_predict_with_validation(
+        dataset,
+        config,
+        model_backend_factory=model_backend_factory,
+        lightgbm_importer=lightgbm_importer,
+    )
+    return status, test_predictions, importance
+
+
+def _train_and_predict_with_validation(
+    dataset: MLFactorDataset,
+    config: MLFactorTrainingConfig,
+    *,
+    model_backend_factory: Callable[[], Any] | None,
+    lightgbm_importer: Callable[[str], Any] | None,
+) -> tuple[
+    Mapping[str, Any],
+    Mapping[tuple[str, str], float],
+    Mapping[tuple[str, str], float],
+    tuple[Mapping[str, Any], ...],
+]:
+    """Train once and expose both pre-test validation and test predictions.
+
+    The established callers retain ``_train_and_predict``.  Walk-forward
+    orchestration may additionally consume validation predictions to evaluate
+    a selector without ever consulting test-period outcomes.
+    """
     backend_factory = model_backend_factory
     lightgbm_available = False
     fallback_reason = None
@@ -998,6 +1028,7 @@ def _train_and_predict(
         return (
             {"model_backend": model_backend, "lightgbm_available": False, "model_trained": False, "fallback_reason": fallback_reason},
             {},
+            {},
             (),
         )
     train_rows = _rows_for_split(dataset, "train", config.target_label)
@@ -1011,6 +1042,7 @@ def _train_and_predict(
                 "model_trained": False,
                 "fallback_reason": "insufficient_training_or_prediction_rows",
             },
+            {},
             {},
             (),
         )
@@ -1026,6 +1058,11 @@ def _train_and_predict(
         (str(row["date"]), str(row["symbol"])): _finite_or_none(score)
         for row, score in zip(test_rows, predicted)
     }
+    validation_predicted = model.predict(x_validation)
+    validation_predictions = {
+        (str(row["date"]), str(row["symbol"])): _finite_or_none(score)
+        for row, score in zip(validation_rows, validation_predicted)
+    }
     importance_values = getattr(model, "feature_importances_", None)
     if importance_values is None:
         importance = tuple({"feature": feature, "importance": None} for feature in dataset.features)
@@ -1040,8 +1077,12 @@ def _train_and_predict(
             "lightgbm_available": lightgbm_available,
             "model_trained": True,
             "fallback_reason": None,
+            "training_row_count": len(train_rows),
+            "validation_row_count": len(validation_rows),
+            "prediction_row_count": len(test_rows),
         },
         predictions,
+        validation_predictions,
         importance,
     )
 
