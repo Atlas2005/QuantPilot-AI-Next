@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from datetime import date, datetime, timedelta
 import re
 from typing import Any, Iterable, Mapping
@@ -26,7 +26,9 @@ from quantpilot_core.daily_paper_loop.provider_market_input import load_provider
 from quantpilot_core.daily_paper_loop.report import write_report_atomic
 from quantpilot_core.daily_paper_loop.state import payload_digest
 from quantpilot_core.evaluation import FactorRankingBaselineConfig, run_factor_ranking_baseline_v1
+from quantpilot_core.strategy_selection import rank_equal_weight_baseline
 from quantpilot_core.execution_candidate import ExecutionCandidate, ExecutionCandidateReport
+from quantpilot_core.production_candidate import load_runtime_manifest, effective_parameter_digest, effective_parameter_payload, manifest_payload
 from quantpilot_core.real_candidate_pipeline.contracts import PipelineIdempotencyConflictError, RealCandidatePipelineConfig, RealCandidatePipelineResult
 from quantpilot_core.real_data_provider import (
     ProviderName,
@@ -51,7 +53,21 @@ def build_real_candidate_daily_paper_input(
     calendar_provider: Any | None = None,
     bar_provider: Any | None = None,
 ) -> RealCandidatePipelineResult:
+    if config.production_manifest is not None:
+        bound = load_runtime_manifest(config.production_manifest)
+        if config.production_strategy_id is not None and config.production_strategy_id != bound.strategy_candidate_id:
+            raise ValueError("explicit production_strategy_id conflicts with manifest")
+        if config.strategy_id != REAL_CANDIDATE_STRATEGY_ID and config.strategy_id != bound.strategy_candidate_id:
+            raise ValueError("explicit strategy_id conflicts with manifest")
+        # The caller object remains untouched; only the local effective contract is resolved.
+        config = replace(config, strategy_id=bound.strategy_candidate_id)
     decision = _validate_config(config)
+    production_manifest = load_runtime_manifest(config.production_manifest) if config.production_manifest is not None else None
+    runtime_parameters = _runtime_parameters(config)
+    effective_parameters = (effective_parameter_payload(production_manifest, runtime_parameters=runtime_parameters)
+                            if production_manifest is not None else runtime_parameters)
+    effective_parameter_hash = (effective_parameter_digest(production_manifest, runtime_parameters=runtime_parameters)
+                                if production_manifest is not None else payload_digest(effective_parameters))
     request_digest = _pipeline_request_digest(config, decision)
     state = load_daily_state(config.state_path, initial_capital=config.initial_capital)
     replay = _completed_pipeline_replay(state, config, decision, request_digest)
@@ -128,32 +144,33 @@ def build_real_candidate_daily_paper_input(
     )
     factor_symbols = _unique_symbols(row["symbol"] for row in factor_rows)
     factor_frame = pd.DataFrame(factor_rows)
-    factor_report = run_factor_ranking_baseline_v1(
-        factor_frame,
-        FactorRankingBaselineConfig(
-            ranking_mode="defensive_composite_v1",
-            target_symbol_count=max(1, int(config.target_symbol_count)),
-            as_of_date=decision.isoformat(),
-            artifact_path=None,
-            metadata={
-                "provider": market_provenance.get("provider_chain", market_provenance.get("mode", "in_memory")),
-                "symbols_requested": raw_universe,
-                "date_range": (factor_start.isoformat(), decision.isoformat()),
-                "run_context": "manual_real_provider" if config.live_market_data else "fixture",
-                "notes": ("pit_factor_window_61_sessions_through_decision",),
-            },
-        ),
-    )
-
+    ranking_mode = production_manifest.execution_ranking_mode if production_manifest is not None else "defensive_composite_v1"
+    if ranking_mode not in {"equal_weight_baseline", "low_volatility_v1", "low_volatility_with_trend_filter", "low_volatility_with_liquidity_filter", "defensive_composite_v1", "momentum_reversal_guarded"}:
+        raise ValueError(f"unsupported ranking_mode: {ranking_mode}")
     decision_rows, execution_rows = _split_market_rows(rows, decision, execution)
-    ranked_scores = _ranked_factor_scores(factor_report.factor_scores)
-    score_by_symbol = {score.symbol: score for score in ranked_scores}
-    rank_by_symbol = {score.symbol: index for index, score in enumerate(ranked_scores, start=1)}
-    factor_selected_set = set(factor_report.selected_symbols)
-    selected_symbols = tuple(score.symbol for score in ranked_scores if score.symbol in factor_selected_set)
+    if ranking_mode == "equal_weight_baseline":
+        equal_ranked = rank_equal_weight_baseline(factor_symbols)
+        equal_order = tuple(symbol for _, symbol, _ in equal_ranked)
+        selected_equal = equal_order[: max(1, int(config.target_symbol_count))]
+        factor_report = None
+        ranked_scores = ()
+        score_by_symbol = {symbol: None for symbol in equal_order}
+        rank_by_symbol = {symbol: rank for rank, symbol, _ in equal_ranked}
+        factor_selected_set = set(selected_equal)
+        rejected_by_symbol = {symbol: ("not_selected_lower_rank",) for symbol in equal_order if symbol not in factor_selected_set}
+    else:
+        factor_report = run_factor_ranking_baseline_v1(
+            factor_frame,
+            FactorRankingBaselineConfig(ranking_mode=ranking_mode, target_symbol_count=max(1, int(config.target_symbol_count)), as_of_date=decision.isoformat(), artifact_path=None),
+        )
+        ranked_scores = _ranked_factor_scores(factor_report.factor_scores)
+        score_by_symbol = {score.symbol: score for score in ranked_scores}
+        rank_by_symbol = {score.symbol: index for index, score in enumerate(ranked_scores, start=1)}
+        factor_selected_set = set(factor_report.selected_symbols)
+        rejected_by_symbol = _factor_rejections(factor_report.rejected_symbols_with_reasons)
+    selected_symbols = tuple(symbol for symbol in (equal_order if ranking_mode == "equal_weight_baseline" else tuple(score.symbol for score in ranked_scores)) if symbol in factor_selected_set)
     original_selected_symbols = selected_symbols
-    rejected_by_symbol = _factor_rejections(factor_report.rejected_symbols_with_reasons)
-    eligible_ranked_symbols = tuple(score.symbol for score in ranked_scores if not _hard_factor_rejection_reasons(rejected_by_symbol, score.symbol))
+    eligible_ranked_symbols = tuple(symbol for symbol in (equal_order if ranking_mode == "equal_weight_baseline" else tuple(score.symbol for score in ranked_scores)) if not _hard_factor_rejection_reasons(rejected_by_symbol, symbol))
     forwarded_standby_symbols: tuple[str, ...] = ()
     if config.account_capabilities is not None:
         account_pool = _capacity_limited_account_pool(
@@ -178,6 +195,7 @@ def build_real_candidate_daily_paper_input(
         calendar=calendar,
         state_holdings=holdings,
         state=state,
+        ranking_mode=ranking_mode,
     )
     candidate_events = _candidate_events_with_factor_rejections(candidate_events, rejected_by_symbol, score_by_symbol)
     execution_relevant_symbols = _unique_symbols((*holdings, *(candidate.symbol for candidate in candidates)))
@@ -227,7 +245,13 @@ def build_real_candidate_daily_paper_input(
                 "forwarded_standby_symbols": forwarded_standby_symbols,
                 "forwarded_pool_count": len(selected_symbols),
                 "target_symbol_count": int(config.target_symbol_count),
+                "max_execution_symbols": int(config.max_execution_symbols),
+                "effective_ranking_mode": ranking_mode,
             },
+            "production_manifest": manifest_payload(production_manifest) if production_manifest is not None else None,
+            "effective_parameters": effective_parameters,
+            "effective_parameter_digest": effective_parameter_hash,
+            "shadow_desk_evidence": dict(config.shadow_desk_evidence),
         },
     )
     pipeline_report = _pipeline_report(
@@ -467,6 +491,7 @@ def _build_candidates(
     calendar: TradingCalendar,
     state_holdings: tuple[str, ...],
     state: Any,
+    ranking_mode: str,
 ) -> tuple[tuple[ExecutionCandidate, ...], Mapping[str, Any]]:
     original_selected_set = set(original_selected_symbols)
     forwarded_standby_set = set(forwarded_standby_symbols)
@@ -492,6 +517,7 @@ def _build_candidates(
                         timestamp=timestamp,
                         expected_return=LONG_EXPECTED_RETURN_PRIOR,
                         score=score,
+                        ranking_mode=ranking_mode,
                         metadata={
                             **_candidate_metadata(
                                 config=config,
@@ -501,6 +527,7 @@ def _build_candidates(
                                 symbol=symbol,
                                 direction="long",
                                 score=score,
+                                ranking_mode=ranking_mode,
                                 factor_rank=rank_by_symbol.get(symbol),
                                 decision_row=decision_rows.get(symbol, {}),
                                 calendar=calendar,
@@ -520,7 +547,7 @@ def _build_candidates(
             events["rejected"].append({"symbol": symbol, "reason": "max_execution_symbol_cap"})
             continue
         score = score_by_symbol.get(symbol)
-        valid, reason = _valid_factor_and_market_evidence(symbol, score, rejected_by_symbol, decision_rows)
+        valid, reason = _valid_factor_and_market_evidence(symbol, score, rejected_by_symbol, decision_rows, ranking_mode=ranking_mode)
         if not valid:
             events["rejected"].append({"symbol": symbol, "reason": reason})
             continue
@@ -537,6 +564,7 @@ def _build_candidates(
                 timestamp=timestamp,
                 expected_return=LONG_EXPECTED_RETURN_PRIOR,
                 score=score,
+                ranking_mode=ranking_mode,
                 metadata={
                     **_candidate_metadata(
                         config=config,
@@ -546,6 +574,7 @@ def _build_candidates(
                         symbol=symbol,
                         direction="long",
                         score=score,
+                        ranking_mode=ranking_mode,
                         factor_rank=rank_by_symbol.get(symbol),
                         decision_row=decision_rows[symbol],
                         calendar=calendar,
@@ -555,11 +584,11 @@ def _build_candidates(
                 },
             )
         )
-        events["entries"].append({"symbol": symbol, "reason": "selected_factor_candidate", "pipeline_role": pipeline_role})
+        events["entries"].append({"symbol": symbol, "reason": f"selected_{ranking_mode}", "pipeline_role": pipeline_role})
 
     for symbol in state_holdings:
         score = score_by_symbol.get(symbol)
-        valid, reason = _valid_factor_and_market_evidence(symbol, score, rejected_by_symbol, decision_rows)
+        valid, reason = _valid_factor_and_market_evidence(symbol, score, rejected_by_symbol, decision_rows, ranking_mode=ranking_mode)
         if not valid:
             events["holds"].append({"symbol": symbol, "reason": f"hold_no_decision_{reason}"})
             continue
@@ -574,6 +603,7 @@ def _build_candidates(
                 timestamp=timestamp,
                 expected_return=EXIT_EXPECTED_RETURN_PRIOR,
                 score=score,
+                ranking_mode=ranking_mode,
                 metadata={
                     **_candidate_metadata(
                         config=config,
@@ -583,6 +613,7 @@ def _build_candidates(
                         symbol=symbol,
                         direction="short",
                         score=score,
+                        ranking_mode=ranking_mode,
                         factor_rank=rank_by_symbol.get(symbol),
                         decision_row=decision_rows[symbol],
                         calendar=calendar,
@@ -606,9 +637,10 @@ def _candidate(
     timestamp: datetime,
     expected_return: float,
     score: Any,
+    ranking_mode: str,
     metadata: Mapping[str, Any],
 ) -> ExecutionCandidate:
-    composite = _composite_score(score)
+    composite = 0.5 if ranking_mode == "equal_weight_baseline" else _composite_score(score)
     return ExecutionCandidate(
         symbol=symbol,
         direction=direction,
@@ -631,6 +663,7 @@ def _candidate_metadata(
     symbol: str,
     direction: str,
     score: Any,
+    ranking_mode: str,
     factor_rank: int | None,
     decision_row: Mapping[str, Any],
     calendar: TradingCalendar,
@@ -645,16 +678,16 @@ def _candidate_metadata(
         "strategy_id": config.strategy_id,
         "source": REAL_CANDIDATE_PIPELINE_VERSION,
         "expected_return_semantics": EXPECTED_RETURN_SEMANTICS,
-        "factor_model": "defensive_composite_v1",
+        "factor_model": ranking_mode,
         "factor_window_start": factor_start.isoformat(),
         "factor_window_end": decision.isoformat(),
         "pit_cutoff": f"{decision.isoformat()}T15:00:00+08:00",
         "execution_session": execution.isoformat(),
         "direction": direction,
         "factor_rank": factor_rank,
-        "factor_composite_score": _composite_score(score),
-        "factor_evidence": _json_ready(score.factor_evidence),
-        **_execution_liquidity_metadata(score, decision_row),
+        "factor_composite_score": None if ranking_mode == "equal_weight_baseline" else _composite_score(score),
+        "factor_evidence": {} if ranking_mode == "equal_weight_baseline" else _json_ready(score.factor_evidence),
+        **_execution_liquidity_metadata(score, decision_row, ranking_mode=ranking_mode),
         "d_close": float(decision_row["close"]),
         "d_volume": float(decision_row.get("volume", 0.0)),
         "provider": decision_row.get("provider"),
@@ -676,7 +709,10 @@ def _valid_factor_and_market_evidence(
     score: Any | None,
     rejected_by_symbol: Mapping[str, tuple[str, ...]],
     decision_rows: Mapping[str, Mapping[str, Any]],
+    *, ranking_mode: str,
 ) -> tuple[bool, str]:
+    if ranking_mode == "equal_weight_baseline":
+        return _valid_market_evidence(symbol, decision_rows)
     if score is None:
         return False, "missing_factor_evidence"
     if score.factor_evidence.get("missing_factors"):
@@ -686,6 +722,20 @@ def _valid_factor_and_market_evidence(
     canonical_rejections = tuple(reason for reason in rejected_by_symbol.get(symbol, ()) if reason != "not_selected_lower_rank")
     if canonical_rejections:
         return False, "factor_rejected"
+    row = decision_rows.get(symbol)
+    if row is None:
+        return False, "missing_d_market_evidence"
+    if bool(row.get("is_suspended", False)):
+        return False, "invalid_d_market_evidence_suspended"
+    _, volume_reason = _d_volume_evidence(row)
+    if volume_reason is not None:
+        return False, volume_reason
+    if float(row.get("close", 0.0)) <= 0:
+        return False, "invalid_d_market_evidence_close"
+    return True, "valid"
+
+
+def _valid_market_evidence(symbol: str, decision_rows: Mapping[str, Mapping[str, Any]]) -> tuple[bool, str]:
     row = decision_rows.get(symbol)
     if row is None:
         return False, "missing_d_market_evidence"
@@ -816,7 +866,7 @@ def _d_volume_evidence(row: Mapping[str, Any]) -> tuple[float, str | None]:
     return volume, None
 
 
-def _execution_liquidity_metadata(score: Any, decision_row: Mapping[str, Any]) -> Mapping[str, Any]:
+def _execution_liquidity_metadata(score: Any, decision_row: Mapping[str, Any], *, ranking_mode: str = "defensive_composite_v1") -> Mapping[str, Any]:
     _, volume_reason = _d_volume_evidence(decision_row)
     if bool(decision_row.get("is_suspended", False)) or volume_reason is not None or float(decision_row.get("close", 0.0)) <= 0:
         execution_score = 0.0
@@ -825,8 +875,8 @@ def _execution_liquidity_metadata(score: Any, decision_row: Mapping[str, Any]) -
         execution_score = EXECUTION_LIQUIDITY_NEUTRAL_FALLBACK
         neutral_fallback_used = True
     return {
-        "factor_normalized_liquidity": _factor_normalized_liquidity(score),
-        "raw_liquidity_proxy": _raw_liquidity_proxy(score),
+        "factor_normalized_liquidity": _factor_normalized_liquidity(score) if score is not None else None,
+        "raw_liquidity_proxy": _raw_liquidity_proxy(score) if score is not None else None,
         "execution_liquidity_score": execution_score,
         "execution_liquidity_semantics": EXECUTION_LIQUIDITY_SEMANTICS,
         "execution_liquidity_neutral_fallback_used": neutral_fallback_used,
@@ -910,6 +960,12 @@ def _pipeline_report(
         "pipeline_version": REAL_CANDIDATE_PIPELINE_VERSION,
         "pipeline_request_digest": request_digest,
         "strategy_id": config.strategy_id,
+        "production_binding": {
+            "production_manifest": loop_input.quant_firm_context.get("production_manifest"),
+            "effective_ranking_mode": loop_input.quant_firm_context.get("candidate_pipeline", {}).get("effective_ranking_mode", "defensive_composite_v1"),
+            "effective_parameters": loop_input.quant_firm_context.get("effective_parameters", {}),
+            "effective_parameter_digest": loop_input.quant_firm_context.get("effective_parameter_digest"),
+        },
         "sessions": {"decision": decision.isoformat(), "execution": execution.isoformat()},
         "cutoff": f"{decision.isoformat()}T15:00:00+08:00",
         "factor_window": {
@@ -938,8 +994,8 @@ def _pipeline_report(
         "evidence": {
             symbol: {
                 "factor_rank": index,
-                "composite_score": _composite_score(score),
-                "factor_evidence": _json_ready(score.factor_evidence),
+                "composite_score": None if score is None else _composite_score(score),
+                "factor_evidence": {} if score is None else _json_ready(score.factor_evidence),
             }
             for index, (symbol, score) in enumerate(score_by_symbol.items(), start=1)
         },
@@ -951,7 +1007,7 @@ def _pipeline_report(
         "digests": {
             "pipeline_request": request_digest,
             "loop_input": payload_digest(_loop_input_payload(loop_input)),
-            "factor_report": payload_digest(_json_ready(factor_report)),
+            "factor_report": None if factor_report is None else payload_digest(_json_ready(factor_report)),
         },
         "limitations": (
             "expected_return_is_fixed_unscaled_sizing_prior_not_calibrated_return",
@@ -995,7 +1051,7 @@ def _loop_input_payload(loop_input: DailyPaperLoopInput) -> Mapping[str, Any]:
         "calendar_provenance": _json_ready(loop_input.calendar_provenance),
         "information_provenance": _json_ready(loop_input.information_provenance),
         "advisory_provenance": _json_ready(loop_input.advisory_provenance),
-        "quant_firm_context": _json_ready(loop_input.quant_firm_context),
+        "quant_firm_context": _production_quant_firm_context(loop_input.quant_firm_context),
     }
 
 
@@ -1125,11 +1181,21 @@ def _canonical_request_payload(config: RealCandidatePipelineConfig, decision: da
         "information_signals": _canonical_information_signals(config.information_signals),
         "information_provenance": _json_ready(config.information_provenance),
         "advisory_provenance": _json_ready(config.advisory_provenance),
-        "quant_firm_context": _json_ready(config.quant_firm_context),
+        "quant_firm_context": _production_quant_firm_context(config.quant_firm_context),
+        "production_manifest": _json_ready(config.production_manifest),
     }
     if config.account_capabilities is not None:
         payload["account_capabilities"] = _json_ready(config.account_capabilities)
     return payload
+
+
+def _production_quant_firm_context(context: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return the production-only context used by identity digests.
+
+    Cached shadow evidence is retained separately for the PR #123 advisory
+    report, but must never affect a production execution identity.
+    """
+    return _json_ready({key: value for key, value in context.items() if key != "shadow_desk_evidence"})
 
 
 def _canonical_request_bars(rows: Iterable[Mapping[str, Any]]) -> tuple[Mapping[str, Any], ...]:
@@ -1173,8 +1239,12 @@ def _daily_loop_config(config: RealCandidatePipelineConfig, *, report_path: str 
         report_path=report_path,
         live_market_data=config.live_market_data,
         live_symbol_cap=config.max_execution_symbols,
-        target_position_count=int(config.target_symbol_count),
+        target_position_count=int(config.target_position_count or config.target_symbol_count),
+        max_position_weight=float(config.max_position_weight),
+        reserve_cash_weight=float(config.reserve_cash_weight),
+        min_order_lot=int(config.min_order_lot),
         account_capabilities=config.account_capabilities,
+        production_manifest=config.production_manifest,
     )
 
 
@@ -1197,6 +1267,21 @@ def _validate_config(config: RealCandidatePipelineConfig) -> date:
     if config.live_market_data and not config.symbols:
         raise ValueError("live mode requires an explicit symbol universe")
     return decision
+
+
+def _runtime_parameters(config: RealCandidatePipelineConfig) -> Mapping[str, Any]:
+    """Parameters actually consumed by the existing candidate/order pipeline."""
+    return {
+        "initial_capital": round(float(config.initial_capital), 6),
+        "max_execution_symbols": int(config.max_execution_symbols),
+        "target_symbol_count": int(config.target_symbol_count),
+        "target_position_count": int(config.target_position_count or config.target_symbol_count),
+        "strategy_id": config.strategy_id,
+        "max_position_weight": float(config.max_position_weight),
+        "reserve_cash_weight": float(config.reserve_cash_weight),
+        "min_order_lot": int(config.min_order_lot),
+        "capital_profile_id": config.capital_profile_id,
+    }
 
 
 def _validate_local_pit_inputs(config: RealCandidatePipelineConfig, decision: date) -> None:

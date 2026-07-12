@@ -52,6 +52,9 @@ from quantpilot_core.order_intent import (
 )
 from quantpilot_core.paper_trading import PaperAccount, PaperFillCostAssumptions, account_symbol_pnl_breakdown
 from quantpilot_core.quant_firm import DeepSeekClientConfig, QuantFirmDecisionReport, is_quant_firm_approved, run_quant_firm_decision_cycle
+from quantpilot_core.quant_firm import build_shadow_committee_report, compact_dashboard_summary
+from quantpilot_core.production_candidate import load_runtime_manifest, effective_parameter_digest, effective_parameter_payload, manifest_payload
+from quantpilot_core.strategy_selection import equal_weight_target_weights
 from quantpilot_core.real_data_provider import ProviderName, TradingCalendar
 from quantpilot_core.runtime_account import (
     BrokerFeeProfile,
@@ -166,7 +169,67 @@ def run_daily_paper_loop(
         include_deepseek_advisory=False,
         deepseek_config=DeepSeekClientConfig(enable_live_call=False),
     )
-    allocation_plan = _allocation_plan(account_candidate_report, account_before, prices_for_sizing, config, allocation_buy_prices=executable_buy_prices)
+    supplied_manifest = config.production_manifest if config.production_manifest is not None else loop_input.quant_firm_context.get("production_manifest")
+    production_manifest = load_runtime_manifest(supplied_manifest) if supplied_manifest is not None else None
+    if production_manifest is not None:
+        if loop_input.candidate_report.strategy_id != production_manifest.strategy_candidate_id:
+            raise ValueError("production manifest strategy_candidate_id does not match candidate_report.strategy_id")
+        candidate_pipeline = dict(loop_input.quant_firm_context.get("candidate_pipeline", {}) or {})
+        if not {"effective_ranking_mode", "target_symbol_count", "max_execution_symbols"}.issubset(candidate_pipeline):
+            raise ValueError("manifest-bound daily run requires candidate ranking provenance")
+        candidate_mode = str(candidate_pipeline["effective_ranking_mode"])
+        if candidate_mode != production_manifest.execution_ranking_mode:
+            raise ValueError("production manifest execution_ranking_mode does not match candidate provenance")
+        fee_policy = dict(production_manifest.fee_profile_policy)
+        if fee_policy.get("profile_id") != fee_resolution.profile.profile_id or fee_policy.get("required_provenance") != fee_resolution.provenance.value:
+            raise ValueError("fee profile policy does not match resolved fee profile")
+        capability_policy = dict(production_manifest.account_capability_policy)
+        capability_digest = payload_digest(_json_ready(config.account_capabilities))
+        if capability_policy and capability_policy.get("capability_digest") != capability_digest:
+            raise ValueError("account capability policy does not match effective capabilities")
+        for candidate in loop_input.candidate_report.candidates:
+            metadata = dict(candidate.metadata)
+            if metadata.get("strategy_id") != production_manifest.strategy_candidate_id or metadata.get("factor_model") != production_manifest.execution_ranking_mode:
+                raise ValueError("candidate metadata does not bind manifest strategy/ranking")
+        runtime_parameters = {
+            "initial_capital": round(float(config.initial_capital), 6),
+            "target_position_count": int(config.target_position_count),
+            "target_symbol_count": int(candidate_pipeline["target_symbol_count"]),
+            "max_execution_symbols": int(candidate_pipeline["max_execution_symbols"]),
+            "max_position_weight": float(config.max_position_weight),
+            "reserve_cash_weight": float(config.reserve_cash_weight),
+            "min_order_lot": int(config.min_order_lot),
+            "strategy_id": config.strategy_id,
+            "capital_profile_id": production_manifest.capital_profile_id,
+        }
+        pipeline_parameters = dict(loop_input.quant_firm_context.get("effective_parameters", {}) or {})
+        expected_effective = effective_parameter_payload(production_manifest, runtime_parameters=runtime_parameters)
+        if set(pipeline_parameters) != set(expected_effective):
+            raise ValueError("pipeline effective_parameters must have the complete runtime key set")
+        for key in expected_effective:
+            if pipeline_parameters[key] != expected_effective[key]:
+                raise ValueError(f"effective runtime parameter mismatch: {key}")
+        if loop_input.quant_firm_context.get("effective_parameter_digest") != effective_parameter_digest(production_manifest, runtime_parameters=runtime_parameters):
+            raise ValueError("pipeline and daily effective parameter digests differ")
+        effective_parameters = expected_effective
+        effective_parameter_hash = effective_parameter_digest(production_manifest, runtime_parameters=runtime_parameters)
+        shadow_report = build_shadow_committee_report(
+            evidence=loop_input.quant_firm_context.get("shadow_desk_evidence"),
+            execution_timestamp=f"{execution_session.isoformat()}T09:30:00+08:00",
+            production_final_recommendation=quant_decision.final_recommendation,
+        )
+        dashboard_summary = compact_dashboard_summary(
+            production_manifest=manifest_payload(production_manifest),
+            effective_parameters=effective_parameters,
+            desk_shadow_report=shadow_report,
+            production_decision=quant_decision.final_recommendation,
+        )
+    else:
+        effective_parameters = {}
+        effective_parameter_hash = None
+        shadow_report = {"status": "not_configured", "production_execution_mutation": False, "account_state_mutation": False, "order_mutation": False}
+        dashboard_summary = None
+    allocation_plan = _allocation_plan(account_candidate_report, account_before, prices_for_sizing, config, allocation_buy_prices=executable_buy_prices, production_manifest=production_manifest)
     proposal, order_provenance, skipped_orders, sizing_decisions, fee_assumptions_by_order_id = _build_order_proposal(
         candidate_report=account_candidate_report,
         account_filter=candidate_filter,
@@ -236,6 +299,11 @@ def run_daily_paper_loop(
         "account_capabilities": _account_capabilities_payload(config.account_capabilities),
         "fee_resolution": _fee_resolution_payload(fee_resolution),
         "quant_firm_decision": _json_ready(quant_decision),
+        "production_manifest": manifest_payload(production_manifest) if production_manifest is not None else None,
+        "effective_parameters": effective_parameters,
+        "effective_parameter_digest": effective_parameter_hash,
+        "ai_shadow_report": shadow_report,
+        "dashboard_summary": dashboard_summary,
         "quant_firm_candidate_actions": _quant_firm_candidate_actions(account_candidate_report, quant_decision, loop_input.quant_firm_context),
         "allocation_plan": _json_ready(allocation_plan),
         "sizing_decisions": tuple(sizing_decisions),
@@ -353,6 +421,7 @@ def _allocation_plan(
     config: DailyPaperLoopConfig,
     *,
     allocation_buy_prices: Mapping[str, float] | None = None,
+    production_manifest: Any | None = None,
 ) -> Any | None:
     long_candidates = tuple(candidate for candidate in report.candidates if candidate.direction == "long" and candidate.symbol in prices_for_sizing)
     if not long_candidates:
@@ -370,6 +439,12 @@ def _allocation_plan(
         aggregate_score=report.aggregate_score,
         strategy_id=report.strategy_id,
     )
+    equal_mode = production_manifest is not None and production_manifest.execution_ranking_mode == "equal_weight_baseline"
+    equal_weights = equal_weight_target_weights(
+        tuple(candidate.symbol for candidate in long_report.candidates),
+        investable_weight=max(0.0, 1.0 - float(config.reserve_cash_weight)),
+        max_position_weight=float(config.max_position_weight),
+    ) if equal_mode else {}
     return build_portfolio_allocation_plan(
         long_report,
         last_prices=optimizer_prices,
@@ -378,6 +453,8 @@ def _allocation_plan(
             lot_size=1,
             fee_rate=config.cost_assumptions.fee_rate,
             slippage_bps=config.cost_assumptions.slippage_bps,
+            allocation_mode="equal_weight_baseline" if equal_mode else "score_weighted",
+            equal_target_weight=next(iter(equal_weights.values()), None),
         ),
     )
 
@@ -1402,6 +1479,19 @@ def _session_report(
         "account_capabilities": session_record.get("account_capabilities", {}),
         "fee_resolution": session_record.get("fee_resolution", {}),
         "quant_firm_report": session_record["quant_firm_decision"],
+        "production_candidate_id": (session_record.get("production_manifest") or {}).get("production_candidate_id"),
+        "production_candidate_version": (session_record.get("production_manifest") or {}).get("production_candidate_version"),
+        "production_candidate_digest": (session_record.get("production_manifest") or {}).get("manifest_digest"),
+        "effective_strategy_candidate_id": (session_record.get("production_manifest") or {}).get("strategy_candidate_id"),
+        "effective_ranking_mode": (session_record.get("production_manifest") or {}).get("execution_ranking_mode"),
+        "effective_parameters": session_record.get("effective_parameters", {}),
+        "effective_parameter_digest": session_record.get("effective_parameter_digest"),
+        "production_execution_arm": (session_record.get("production_manifest") or {}).get("production_execution_arm"),
+        "ai_firm_mode": (session_record.get("production_manifest") or {}).get("ai_firm_mode"),
+        "multi_agent_mode": (session_record.get("production_manifest") or {}).get("multi_agent_mode"),
+        "ai_shadow_status": session_record.get("ai_shadow_report", {}).get("status"),
+        "ai_shadow_report": session_record.get("ai_shadow_report", {}),
+        "dashboard_summary": session_record.get("dashboard_summary"),
         "quant_firm_candidate_actions": session_record.get("quant_firm_candidate_actions", ()),
         "allocation_sizing": session_record["allocation_plan"],
         "sizing_decisions": session_record.get("sizing_decisions", ()),
@@ -1492,12 +1582,13 @@ def _input_digest(loop_input: DailyPaperLoopInput, config: DailyPaperLoopConfig,
         "market_data_provenance": dict(loop_input.market.market_data_provenance),
         "information_provenance": dict(loop_input.information_provenance),
         "advisory_provenance": dict(loop_input.advisory_provenance),
-        "quant_firm_context": dict(loop_input.quant_firm_context),
+        "quant_firm_context": {key: value for key, value in dict(loop_input.quant_firm_context).items() if key != "shadow_desk_evidence"},
         "mode": {"live_market_data": bool(config.live_market_data), "live_symbol_cap": config.live_symbol_cap},
         "execution_config": {"max_participation_rate": 0.10},
         "cost_assumptions": _json_ready(config.cost_assumptions),
         "broker_returned_account_fee_profile": _json_ready(config.broker_returned_account_fee_profile),
         "persisted_user_account_fee_profile": _json_ready(config.persisted_user_account_fee_profile),
+        "production_manifest": _json_ready(config.production_manifest),
         "sizing": {
             "max_position_weight": config.max_position_weight,
             "target_position_count": config.target_position_count,
