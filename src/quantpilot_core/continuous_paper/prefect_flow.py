@@ -21,6 +21,11 @@ def retryable_exception(exc: BaseException) -> bool:
     return any(word in str(exc).lower() for word in ("connection", "timeout", "temporar", "postgres", "network"))
 
 
+def prefect_retry_condition(_task: Any, _task_run: Any, state: Any) -> bool:
+    """Apply the cycle retry policy using Prefect 3's task callback signature."""
+    return retryable_exception(state.result(raise_on_failure=False))
+
+
 def run_continuous_paper_flow(*, production_manifest_path: str, decision_session: str, state_path: str, report_path: str, run_id: str, dsn_env_var: str = "QUANTPILOT_POSTGRES_DSN", active_shadow: dict[str, Any] | None = None, **pipeline_options: Any) -> Any:
     """Construct all runtime objects from serializable scheduled-flow parameters."""
     dsn = os.environ.get(dsn_env_var)
@@ -33,7 +38,40 @@ def run_continuous_paper_flow(*, production_manifest_path: str, decision_session
 
 
 try:
-    from prefect import flow
-    continuous_paper_flow = flow(name="quantpilot-continuous-paper-v1", retries=2, retry_condition_fn=lambda _task, _state, _run: retryable_exception(_state.result(raise_on_failure=False)))(run_continuous_paper_flow)
-except ImportError:
+    from prefect import flow, task
+except ModuleNotFoundError as exc:
+    if exc.name != "prefect":
+        raise
     continuous_paper_flow = run_continuous_paper_flow
+else:
+    # Prefect 3 applies retry conditions to tasks, not flow decorators.  Keep
+    # construction import-only; serving remains the explicit script action.
+    _run_continuous_paper_task = task(
+        name="quantpilot-continuous-paper-cycle-v1",
+        retries=2,
+        retry_condition_fn=prefect_retry_condition,
+    )(run_continuous_paper_flow)
+
+    @flow(name="quantpilot-continuous-paper-v1")
+    def continuous_paper_flow(
+        *,
+        production_manifest_path: str,
+        decision_session: str,
+        state_path: str,
+        report_path: str,
+        run_id: str,
+        dsn_env_var: str = "QUANTPILOT_POSTGRES_DSN",
+        active_shadow: dict[str, Any] | None = None,
+        pipeline_options: dict[str, Any] | None = None,
+    ) -> Any:
+        """Prefect-visible parameters plus an explicit serializable option mapping."""
+        return _run_continuous_paper_task(
+            production_manifest_path=production_manifest_path,
+            decision_session=decision_session,
+            state_path=state_path,
+            report_path=report_path,
+            run_id=run_id,
+            dsn_env_var=dsn_env_var,
+            active_shadow=active_shadow,
+            **(pipeline_options or {}),
+        )

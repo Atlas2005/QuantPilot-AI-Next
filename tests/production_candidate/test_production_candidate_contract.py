@@ -97,9 +97,12 @@ def test_cli_missing_benchmark_json_fails(tmp_path) -> None:
 
 
 def test_cli_rejects_malformed_empty_and_nonobject_benchmark(tmp_path) -> None:
-    for value in ("{", "{}", "[]", '"x"', "1", "null"):
-        args, _ = _cli_args(tmp_path / value.replace("{", "bad"), value)
-        assert subprocess.run(args, capture_output=True, text=True).returncode != 0
+    for case_index, value in enumerate(("{", "{}", "[]", '"x"', "1", "null")):
+        args, _ = _cli_args(tmp_path / f"case_{case_index}", value)
+        assert args[args.index("--benchmark-json") + 1] == value
+        result = subprocess.run(args, capture_output=True, text=True)
+        assert result.returncode != 0
+        assert "--benchmark-json must be" in result.stderr
 
 
 def test_cli_writes_exact_benchmark_and_strict_manifest(tmp_path) -> None:

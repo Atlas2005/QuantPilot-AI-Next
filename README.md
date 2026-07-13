@@ -2,6 +2,8 @@
 
 QuantPilot-AI-Next is the official next-generation project for QuantPilot-AI 2.0.
 
+For the Windows runtime-node bootstrap (with QMT deliberately deferred), see [Windows Runtime](docs/windows_runtime.md).
+
 QuantPilot-AI 2.0 is planned as a profit-first, integration-first, adapter-first, contract-first, A-share-first AI quant research and trading decision platform. The project is designed to move toward controlled capital testing through evidence-gated research, realistic A-share market modeling, reproducible validation, paper feedback, and formal readiness review.
 
 ## Current Phase

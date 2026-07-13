@@ -31,7 +31,15 @@ ml = [
 ]
 continuous-paper = [
     "psycopg[binary]>=3.1,<4",
-    "prefect>=3,<4",
+    "prefect>=3.1.16,<4",
+]
+windows-runtime = [
+    "psycopg[binary]>=3.1,<4",
+    "prefect>=3.1.16,<4",
+    "pandas>=2,<3",
+    "pyarrow>=24,<25",
+    "tushare>=1.4,<2",
+    "tzdata>=2025.2; platform_system == 'Windows'",
 ]
 
 [tool.setuptools.packages.find]
