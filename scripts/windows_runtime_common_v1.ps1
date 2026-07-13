@@ -50,11 +50,49 @@ function Initialize-QPRuntimeDirectories {
 }
 
 function Move-QPFileAtomically([string]$TemporaryPath, [string]$DestinationPath) {
-    if (Test-Path $DestinationPath -PathType Leaf) {
-        [IO.File]::Replace($TemporaryPath, $DestinationPath, $null)
+    if ([string]::IsNullOrWhiteSpace($TemporaryPath) -or [string]::IsNullOrWhiteSpace($DestinationPath)) {
+        throw "Atomic runtime file replacement requires non-empty temporary and destination paths."
+    }
+    try {
+        $fullTemporaryPath = [IO.Path]::GetFullPath($TemporaryPath)
+        $fullDestinationPath = [IO.Path]::GetFullPath($DestinationPath)
+    }
+    catch {
+        throw "Atomic runtime file replacement received an invalid path: $($_.Exception.Message)"
+    }
+    if (-not (Test-Path $fullTemporaryPath -PathType Leaf)) {
+        throw "Atomic runtime file replacement temporary source does not exist."
+    }
+    if (-not [string]::Equals([IO.Path]::GetPathRoot($fullTemporaryPath), [IO.Path]::GetPathRoot($fullDestinationPath), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Atomic runtime file replacement requires temporary and destination paths on the same volume."
+    }
+    $destinationDirectory = Split-Path -Parent $fullDestinationPath
+    if (-not (Test-Path $destinationDirectory -PathType Container)) {
+        throw "Atomic runtime file replacement destination directory does not exist."
+    }
+    if (Test-Path $fullDestinationPath -PathType Container) {
+        throw "Atomic runtime file replacement destination must be a file."
+    }
+    if (Test-Path $fullDestinationPath -PathType Leaf) {
+        $backupFileName = "." + [IO.Path]::GetFileName($fullDestinationPath) + "." + [Guid]::NewGuid().ToString("N") + ".bak"
+        $backupPath = Join-Path $destinationDirectory $backupFileName
+        try {
+            [IO.File]::Replace($fullTemporaryPath, $fullDestinationPath, $backupPath)
+        }
+        catch {
+            throw "Atomic runtime file replacement failed; the existing destination was preserved. $($_.Exception.Message)"
+        }
+        try {
+            if (Test-Path $backupPath -PathType Leaf) {
+                Remove-Item -LiteralPath $backupPath -Force -ErrorAction Stop
+            }
+        }
+        catch {
+            throw "Atomic runtime file replacement succeeded, but backup cleanup failed: $backupPath. $($_.Exception.Message)"
+        }
     }
     else {
-        [IO.File]::Move($TemporaryPath, $DestinationPath)
+        [IO.File]::Move($fullTemporaryPath, $fullDestinationPath)
     }
 }
 

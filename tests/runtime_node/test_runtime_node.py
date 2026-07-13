@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 from quantpilot_core.runtime_node import BrokerProvider, RuntimeConfig, RuntimePaths, ServiceReadiness, collect_runtime_diagnostics
 from quantpilot_core.runtime_node.doctor import DoctorCheck, diagnostics_payload
@@ -179,6 +185,95 @@ def test_powershell_scripts_do_not_assign_or_declare_automatic_variables() -> No
                     violations.append(f"{path.name}: parameter ${variable_match.group('name')}")
 
     assert violations == []
+
+
+def test_atomic_replace_script_contract_uses_real_backup_paths() -> None:
+    root = Path(__file__).parents[2]
+    scripts = {path.name: path.read_text(encoding="utf-8") for path in (root / "scripts").glob("*.ps1")}
+    content = scripts["windows_runtime_common_v1.ps1"]
+    all_content = "\n".join(scripts.values())
+
+    assert "[IO.File]::Replace($fullTemporaryPath, $fullDestinationPath, $backupPath)" in content
+    assert "$backupPath = Join-Path $destinationDirectory $backupFileName" in content
+    assert "[Guid]::NewGuid().ToString(\"N\")" in content
+    assert "Remove-Item -LiteralPath $backupPath -Force -ErrorAction Stop" in content
+    assert "[IO.File]::Move($fullTemporaryPath, $fullDestinationPath)" in content
+    assert not re.search(r"(?is)\[(?:IO|System\.IO)\.File\]::Replace\s*\([^)]*,[^)]*,\s*(?:\$null|['\"]\s*['\"])", all_content)
+    assert not re.search(r"(?im)^\s*Remove-Item\b[^\n]*(?:\$DestinationPath|\$fullDestinationPath)", all_content)
+
+
+def _powershell_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1 file replacement")
+def test_windows_powershell_atomic_replacement_preserves_existing_destination(tmp_path: Path) -> None:
+    root = Path(__file__).parents[2]
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    if not powershell:
+        pytest.skip("Windows PowerShell executable is unavailable")
+
+    isolated_home = tmp_path / "runtime home with spaces"
+    file_directory = tmp_path / "atomic files with spaces"
+    script_path = tmp_path / "exercise atomic replace.ps1"
+    common_script = root / "scripts" / "windows_runtime_common_v1.ps1"
+    script_path.write_text(
+        "\n".join(
+            (
+                "$ErrorActionPreference = 'Stop'",
+                f"$env:QUANTPILOT_RUNTIME_HOME = {_powershell_literal(str(isolated_home))}",
+                f". {_powershell_literal(str(common_script))}",
+                f"$fileDirectory = {_powershell_literal(str(file_directory))}",
+                "New-Item -ItemType Directory -Force -Path $fileDirectory | Out-Null",
+                "$destination = Join-Path $fileDirectory 'runtime file.txt'",
+                "$temporary = Join-Path $fileDirectory 'runtime file.txt.tmp'",
+                "[IO.File]::WriteAllText($destination, 'old content')",
+                "[IO.File]::WriteAllText($temporary, 'new content')",
+                "Move-QPFileAtomically -TemporaryPath $temporary -DestinationPath $destination",
+                "if ([IO.File]::ReadAllText($destination) -ne 'new content') { throw 'first replacement content mismatch' }",
+                "if (Test-Path $temporary -PathType Leaf) { throw 'temporary file remained after first replacement' }",
+                "if (Get-ChildItem -LiteralPath $fileDirectory -Filter '*.bak') { throw 'backup file remained after first replacement' }",
+                "[IO.File]::WriteAllText($temporary, 'newer content')",
+                "Move-QPFileAtomically -TemporaryPath $temporary -DestinationPath $destination",
+                "if ([IO.File]::ReadAllText($destination) -ne 'newer content') { throw 'second replacement content mismatch' }",
+                "if (Test-Path $temporary -PathType Leaf) { throw 'temporary file remained after second replacement' }",
+                "if (Get-ChildItem -LiteralPath $fileDirectory -Filter '*.bak') { throw 'backup file remained after second replacement' }",
+                "Write-QPRuntimeConfig",
+                "Write-QPRuntimeConfig",
+                "$configPath = Get-QPRuntimeConfigPath",
+                "if (-not (Test-Path $configPath -PathType Leaf)) { throw 'repeated configuration write did not create runtime config' }",
+                "if (Get-ChildItem -LiteralPath (Split-Path -Parent $configPath) -Filter '*.bak') { throw 'backup file remained after repeated configuration write' }",
+                "$failureRaised = $false",
+                "try { Move-QPFileAtomically -TemporaryPath (Join-Path $fileDirectory 'missing.tmp') -DestinationPath $destination } catch { $failureRaised = $true }",
+                "if (-not $failureRaised) { throw 'missing temporary source did not fail' }",
+                "if ([IO.File]::ReadAllText($destination) -ne 'newer content') { throw 'destination changed after failed replacement' }",
+                "$staleTemporary = Join-Path $fileDirectory 'stale temporary.tmp'",
+                "$invalidDestination = Join-Path $fileDirectory 'destination directory'",
+                "[IO.File]::WriteAllText($staleTemporary, 'recovered content')",
+                "New-Item -ItemType Directory -Force -Path $invalidDestination | Out-Null",
+                "$invalidDestinationRaised = $false",
+                "try { Move-QPFileAtomically -TemporaryPath $staleTemporary -DestinationPath $invalidDestination } catch { $invalidDestinationRaised = $true }",
+                "if (-not $invalidDestinationRaised) { throw 'directory destination did not fail' }",
+                "if (-not (Test-Path $staleTemporary -PathType Leaf)) { throw 'stale temporary was unexpectedly deleted after failure' }",
+                "if ([IO.File]::ReadAllText($destination) -ne 'newer content') { throw 'valid destination changed after invalid destination failure' }",
+                "Move-QPFileAtomically -TemporaryPath $staleTemporary -DestinationPath $destination",
+                "if ([IO.File]::ReadAllText($destination) -ne 'recovered content') { throw 'stale temporary did not recover on a later write' }",
+                "if (Test-Path $staleTemporary -PathType Leaf) { throw 'stale temporary remained after recovery' }",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path)],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_windows_lifecycle_uses_scoped_environment_and_read_only_status() -> None:
