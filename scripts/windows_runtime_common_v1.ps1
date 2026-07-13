@@ -43,9 +43,9 @@ function Get-QPSecretPath([string]$Name) {
 
 function Initialize-QPRuntimeDirectories {
     Assert-QPRuntimeHomeOutsideRepository
-    $home = Get-QPRuntimeHome
+    $runtimeHome = Get-QPRuntimeHome
     foreach ($name in @("config", "secrets", "logs", "state", "reports", "cache")) {
-        New-Item -ItemType Directory -Force -Path (Join-Path $home $name) | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $runtimeHome $name) | Out-Null
     }
 }
 
@@ -60,7 +60,7 @@ function Move-QPFileAtomically([string]$TemporaryPath, [string]$DestinationPath)
 
 function Write-QPRuntimeConfig {
     Initialize-QPRuntimeDirectories
-    $home = Get-QPRuntimeHome
+    $runtimeHome = Get-QPRuntimeHome
     $payload = [ordered]@{
         schema_version = 1
         platform = "windows"
@@ -69,16 +69,16 @@ function Write-QPRuntimeConfig {
         reporting_enabled = $true
         grafana_enabled = $true
         deepseek_live_calls_enabled = $false
-        runtime_home = $home
+        runtime_home = $runtimeHome
         postgres_dsn_env_var = "QUANTPILOT_POSTGRES_DSN"
         grafana_url = "http://localhost:3000"
         paths = [ordered]@{
-            config = (Join-Path $home "config")
-            secrets = (Join-Path $home "secrets")
-            logs = (Join-Path $home "logs")
-            state = (Join-Path $home "state")
-            reports = (Join-Path $home "reports")
-            cache = (Join-Path $home "cache")
+            config = (Join-Path $runtimeHome "config")
+            secrets = (Join-Path $runtimeHome "secrets")
+            logs = (Join-Path $runtimeHome "logs")
+            state = (Join-Path $runtimeHome "state")
+            reports = (Join-Path $runtimeHome "reports")
+            cache = (Join-Path $runtimeHome "cache")
         }
     }
     $configPath = Get-QPRuntimeConfigPath

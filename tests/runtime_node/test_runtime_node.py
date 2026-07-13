@@ -9,6 +9,21 @@ from quantpilot_core.runtime_node.doctor import DoctorCheck, diagnostics_payload
 from scripts.runtime_doctor_v1 import diagnostics_payload as runtime_diagnostics_payload
 from scripts.runtime_doctor_v1 import main
 
+RESERVED_POWERSHELL_AUTOMATIC_VARIABLES = {
+    "home",
+    "pid",
+    "host",
+    "error",
+    "input",
+    "args",
+    "matches",
+    "myinvocation",
+    "psscriptroot",
+    "lastexitcode",
+    "pwd",
+    "psversiontable",
+}
+
 
 def _create_runtime_layout(home: Path) -> None:
     for name in ("config", "secrets", "logs", "state", "reports", "cache"):
@@ -143,6 +158,27 @@ def test_windows_runtime_scripts_are_portable_secret_safe_and_ps51_compatible() 
     assert "broker_provider = \"none\"" in content
     assert "SetEnvironmentVariable" not in content and "EnvironmentVariableTarget" not in content
     assert not any(pattern in content for pattern in ("??", "?.", "ForEach-Object -Parallel", "$IsWindows"))
+
+
+def test_powershell_scripts_do_not_assign_or_declare_automatic_variables() -> None:
+    root = Path(__file__).parents[2]
+    violations: list[str] = []
+    assignment_pattern = re.compile(r"(?im)^\s*\$(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)")
+    parameter_block_pattern = re.compile(r"(?is)\bparam\s*\((?P<body>.*?)\)")
+    function_parameter_pattern = re.compile(r"(?is)\bfunction\s+[A-Za-z0-9_-]+\s*\((?P<body>.*?)\)")
+    variable_pattern = re.compile(r"\$(?P<name>[A-Za-z_][A-Za-z0-9_]*)")
+
+    for path in sorted((root / "scripts").glob("*.ps1")):
+        content = path.read_text(encoding="utf-8")
+        for match in assignment_pattern.finditer(content):
+            if match.group("name").lower() in RESERVED_POWERSHELL_AUTOMATIC_VARIABLES:
+                violations.append(f"{path.name}: assignment to ${match.group('name')}")
+        for parameter_match in (*parameter_block_pattern.finditer(content), *function_parameter_pattern.finditer(content)):
+            for variable_match in variable_pattern.finditer(parameter_match.group("body")):
+                if variable_match.group("name").lower() in RESERVED_POWERSHELL_AUTOMATIC_VARIABLES:
+                    violations.append(f"{path.name}: parameter ${variable_match.group('name')}")
+
+    assert violations == []
 
 
 def test_windows_lifecycle_uses_scoped_environment_and_read_only_status() -> None:

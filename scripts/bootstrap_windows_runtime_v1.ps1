@@ -52,11 +52,11 @@ function Test-QPPersistentComposeVolume([string]$VolumeName) {
     if ($SkipDocker) {
         return $false
     }
-    $matches = & docker volume ls --quiet --filter "label=com.docker.compose.project=control_center" --filter "label=com.docker.compose.volume=$VolumeName" 2>$null
+    $volumeMatches = & docker volume ls --quiet --filter "label=com.docker.compose.project=control_center" --filter "label=com.docker.compose.volume=$VolumeName" 2>$null
     if ($LASTEXITCODE -ne 0) {
         throw "Docker could not inspect existing QuantPilot volumes (exit $LASTEXITCODE). Ensure Docker Desktop is running."
     }
-    return -not [string]::IsNullOrWhiteSpace(($matches | Out-String))
+    return -not [string]::IsNullOrWhiteSpace(($volumeMatches | Out-String))
 }
 
 function Initialize-QPLocalServiceSecret([string]$Name, [string]$VolumeName) {
