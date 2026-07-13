@@ -31,3 +31,29 @@ jobs:
 
       - name: Test
         run: python -m pytest
+
+  windows-runtime:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install runtime test dependencies
+        run: python -m pip install -e ".[dev,windows-runtime]"
+      - name: Validate bootstrap prerequisites with Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\bootstrap_windows_runtime_v1.ps1 -ValidateOnly -NonInteractive -SkipDocker
+      - name: Validate bootstrap prerequisites with PowerShell 7
+        shell: pwsh
+        run: .\scripts\bootstrap_windows_runtime_v1.ps1 -ValidateOnly -NonInteractive -SkipDocker
+      - name: Provision isolated runtime twice without Docker or provider calls
+        shell: powershell
+        env:
+          QUANTPILOT_BOOTSTRAP_TUSHARE_TOKEN: ci-synthetic-placeholder
+        run: |
+          $env:QUANTPILOT_RUNTIME_HOME = Join-Path ([IO.Path]::GetTempPath()) "quantpilot-runtime-ci"
+          .\scripts\bootstrap_windows_runtime_v1.ps1 -NonInteractive -SkipDocker
+          .\scripts\bootstrap_windows_runtime_v1.ps1 -NonInteractive -SkipDocker
+      - name: Runtime and continuous-paper tests
+        run: python -m pytest -q tests/runtime_node tests/continuous_paper
