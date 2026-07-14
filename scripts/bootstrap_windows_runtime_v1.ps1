@@ -207,7 +207,11 @@ try {
             throw "PostgreSQL schema initialization failed (exit $LASTEXITCODE). Run status_windows_runtime_v1.ps1 for diagnostics."
         }
     }
-    $doctorArguments = @((Join-Path $root "scripts\runtime_doctor_v1.py"), "--strict")
+    $doctorArguments = @(
+        (Join-Path $root "scripts\runtime_doctor_v1.py"),
+        "--strict",
+        "--allow-missing-qmt-snapshot-during-provisioning"
+    )
     if ($SkipDocker) {
         $doctorArguments += "--skip-services"
     }

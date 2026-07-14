@@ -559,6 +559,126 @@ def test_windows_lifecycle_uses_scoped_environment_and_read_only_status() -> Non
     assert '"--skip-services"' in bootstrap
 
 
+def test_missing_qmt_snapshot_provisioning_flag_is_bootstrap_only() -> None:
+    root = Path(__file__).parents[2]
+    flag = "--allow-missing-qmt-snapshot-during-provisioning"
+    bootstrap = (root / "scripts" / "bootstrap_windows_runtime_v1.ps1").read_text(encoding="utf-8")
+    start = (root / "scripts" / "start_windows_runtime_v1.ps1").read_text(encoding="utf-8")
+    status = (root / "scripts" / "status_windows_runtime_v1.ps1").read_text(encoding="utf-8")
+    inspect_powershell = (root / "scripts" / "inspect_qmt_builtin_bridge_v1.ps1").read_text(encoding="utf-8")
+    inspect_python = (root / "scripts" / "inspect_qmt_builtin_bridge_v1.py").read_text(encoding="utf-8")
+    doctor_python = (root / "scripts" / "runtime_doctor_v1.py").read_text(encoding="utf-8")
+    docs = (root / "docs" / "windows_runtime.md").read_text(encoding="utf-8")
+
+    assert bootstrap.count(flag) == 1
+    provisioning_sequence = (
+        "Resolve-QPRuntimeConfigPayload -Overrides $runtimeConfigArguments",
+        "Write-QPRuntimeConfig @runtimeConfigArguments",
+        "    Initialize-QPAccountBindingKey -BridgeRoot",
+        '    Initialize-QPLocalServiceSecret -Name "postgres_password"',
+        "    Initialize-QPApiSecrets\n",
+        '        Invoke-QPCompose -ComposeArguments @("up", "-d")',
+        flag,
+        "& $venvPython @doctorArguments",
+    )
+    assert [bootstrap.index(marker) for marker in provisioning_sequence] == sorted(
+        bootstrap.index(marker) for marker in provisioning_sequence
+    )
+    assert flag in doctor_python
+    assert all(flag not in content for content in (start, status, inspect_powershell, inspect_python))
+    assert "provisioning exception is bootstrap-only" in docs.lower()
+    assert "provider=none` is unchanged" in docs
+    assert "malformed, stale, or unsafe snapshot" in docs
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1 bootstrap diagnostic invocation")
+def test_windows_bootstrap_diagnostic_allows_only_missing_first_qmt_snapshot(tmp_path: Path) -> None:
+    root = Path(__file__).parents[2]
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    if not powershell:
+        pytest.skip("Windows PowerShell executable is unavailable")
+
+    runtime_home = tmp_path / "provisioning runtime"
+    bridge_root = tmp_path / "provisioning bridge"
+    stub_root = tmp_path / "required package stubs"
+    for package_name in ("prefect", "psycopg", "pandas", "tushare", "pyarrow"):
+        package = stub_root / package_name
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text('__version__ = "offline-windows-test"\n', encoding="utf-8")
+    script_path = tmp_path / "exercise provisioning doctor boundary.ps1"
+    common_script = root / "scripts" / "windows_runtime_common_v1.ps1"
+    doctor_script = root / "scripts" / "runtime_doctor_v1.py"
+    script_path.write_text(
+        "\n".join(
+            (
+                "$ErrorActionPreference = 'Stop'",
+                f"$pythonExecutable = {_powershell_literal(sys.executable)}",
+                f"$doctorScript = {_powershell_literal(str(doctor_script))}",
+                f"$repositoryRoot = {_powershell_literal(str(root))}",
+                f"$env:QUANTPILOT_RUNTIME_HOME = {_powershell_literal(str(runtime_home))}",
+                f"$bridgeRoot = {_powershell_literal(str(bridge_root))}",
+                f"$stubRoot = {_powershell_literal(str(stub_root))}",
+                f". {_powershell_literal(str(common_script))}",
+                "Initialize-QPRuntimeDirectories",
+                "Initialize-QPAccountBindingKey -BridgeRoot $bridgeRoot",
+                "$env:PYTHONPATH = $stubRoot + [IO.Path]::PathSeparator + (Join-Path $repositoryRoot 'src')",
+                "$env:QUANTPILOT_REPOSITORY_ROOT = $repositoryRoot",
+                "$env:QUANTPILOT_RUNTIME_PLATFORM = 'windows'",
+                "$env:QUANTPILOT_TIMEZONE = 'Asia/Shanghai'",
+                "$env:QUANTPILOT_BROKER_PROVIDER = 'qmt_builtin_bridge'",
+                "$env:QUANTPILOT_QMT_BRIDGE_ROOT = $bridgeRoot",
+                "$env:QUANTPILOT_QMT_MAX_SNAPSHOT_AGE_SECONDS = '120'",
+                "$env:QUANTPILOT_QMT_EXPECTED_ACCOUNT_TYPE = 'STOCK'",
+                "$env:QUANTPILOT_QMT_POLL_INTERVAL_SECONDS = '5'",
+                "$env:QUANTPILOT_QMT_HEARTBEAT_INTERVAL_SECONDS = '30'",
+                "$env:QUANTPILOT_QMT_PROVIDER_MODE = 'simulation_signal'",
+                "$env:QUANTPILOT_REPORTING_ENABLED = 'false'",
+                "$env:QUANTPILOT_GRAFANA_ENABLED = 'false'",
+                "$env:QUANTPILOT_DEEPSEEK_LIVE_CALLS_ENABLED = 'false'",
+                "$env:TUSHARE_TOKEN = 'synthetic-offline-token'",
+                "Remove-Item Env:QUANTPILOT_QMT_EXPECTED_REDACTED_ACCOUNT_ID -ErrorAction SilentlyContinue",
+                "function Invoke-QPDoctor([string[]]$CommandArguments) {",
+                "    $doctorOutput = @(& $pythonExecutable $doctorScript @CommandArguments 2>&1)",
+                "    $doctorExitCode = $LASTEXITCODE",
+                "    $doctorPayload = (($doctorOutput -join [Environment]::NewLine) | ConvertFrom-Json)",
+                "    return [pscustomobject]@{ ExitCode = $doctorExitCode; Payload = $doctorPayload }",
+                "}",
+                "$provisioningArguments = @('--format', 'json', '--strict', '--skip-services', '--allow-missing-qmt-snapshot-during-provisioning')",
+                "$freshProvisioning = Invoke-QPDoctor -CommandArguments $provisioningArguments",
+                "$repeatedProvisioning = Invoke-QPDoctor -CommandArguments $provisioningArguments",
+                "foreach ($result in @($freshProvisioning, $repeatedProvisioning)) {",
+                "    if ([int]$result.ExitCode -ne 0 -or -not [bool]$result.Payload.ok) { throw 'bootstrap provisioning doctor rejected a missing first snapshot' }",
+                "    $snapshotCheck = @($result.Payload.checks | Where-Object { $_.name -eq 'qmt_builtin_bridge.snapshot' })",
+                "    if ($snapshotCheck.Count -ne 1 -or [string]$snapshotCheck[0].status -cne 'EXPECTED') { throw 'missing first snapshot was not narrowly reported as EXPECTED' }",
+                "}",
+                "$strictQmt = Invoke-QPDoctor -CommandArguments @('--format', 'json', '--strict', '--skip-services')",
+                "if ([int]$strictQmt.ExitCode -eq 0 -or [bool]$strictQmt.Payload.ok) { throw 'ordinary status semantics accepted a missing QMT snapshot' }",
+                "$env:QUANTPILOT_BROKER_PROVIDER = 'none'",
+                "$noneStrict = Invoke-QPDoctor -CommandArguments @('--format', 'json', '--strict', '--skip-services')",
+                "$noneProvisioning = Invoke-QPDoctor -CommandArguments $provisioningArguments",
+                "foreach ($result in @($noneStrict, $noneProvisioning)) {",
+                "    if ([int]$result.ExitCode -ne 0 -or -not [bool]$result.Payload.ok) { throw 'provider=none behavior was weakened' }",
+                "    $brokerCheck = @($result.Payload.checks | Where-Object { $_.name -eq 'broker' })",
+                "    $qmtChecks = @($result.Payload.checks | Where-Object { $_.name -like 'qmt_builtin_bridge.*' })",
+                "    if ($brokerCheck.Count -ne 1 -or [string]$brokerCheck[0].status -cne 'EXPECTED' -or $qmtChecks.Count -ne 0) { throw 'provider=none diagnostics changed under provisioning flag' }",
+                "}",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path)],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=45,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_compose_and_windows_ci_cover_runtime_contract() -> None:
     root = Path(__file__).parents[2]
     compose = (root / "infra" / "control_center" / "docker-compose.yml").read_text(encoding="utf-8")
