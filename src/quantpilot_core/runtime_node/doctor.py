@@ -96,6 +96,105 @@ def _layout_status(config: RuntimeConfig) -> DoctorCheck:
     return DoctorCheck("runtime_layout", "READY", "runtime directories exist outside the repository", True)
 
 
+def _qmt_builtin_bridge_checks(config: RuntimeConfig) -> list[DoctorCheck]:
+    """Validate one completed snapshot; never load QMT or call a provider API."""
+    bridge = config.qmt_builtin_bridge
+    read_only_check = DoctorCheck(
+        "qmt_builtin_bridge.read_only",
+        "EXPECTED",
+        "read_only=true; order_submission_enabled=false; cancel_enabled=false; provider calls are absent",
+        True,
+    )
+    if bridge.bridge_root is None:
+        return [
+            DoctorCheck("qmt_builtin_bridge.directory", "NOT_READY", "bridge root is not configured", True),
+            DoctorCheck("qmt_builtin_bridge.snapshot", "NOT_CHECKED", "completed snapshot was not inspected", True),
+            read_only_check,
+            DoctorCheck("broker", "NOT_READY", "provider=qmt_builtin_bridge; bridge root is not configured", True),
+        ]
+    if not bridge.bridge_root.is_dir():
+        return [
+            DoctorCheck("qmt_builtin_bridge.directory", "NOT_READY", "configured bridge directory does not exist", True),
+            DoctorCheck("qmt_builtin_bridge.snapshot", "NOT_CHECKED", "completed snapshot was not inspected", True),
+            read_only_check,
+            DoctorCheck("broker", "NOT_READY", "provider=qmt_builtin_bridge; bridge directory is unavailable", True),
+        ]
+
+    checks = [DoctorCheck("qmt_builtin_bridge.directory", "READY", "configured bridge directory exists", True)]
+    from quantpilot_core.qmt_builtin_bridge import QmtBuiltinBridgeError
+
+    from .qmt_bridge_status import QmtBridgeInspectionError, qmt_builtin_bridge_status_payload
+
+    try:
+        status = qmt_builtin_bridge_status_payload(config)
+    except (QmtBuiltinBridgeError, QmtBridgeInspectionError, OSError) as exc:
+        checks.extend(
+            (
+                DoctorCheck(
+                    "qmt_builtin_bridge.snapshot",
+                    "NOT_READY",
+                    f"completed snapshot validation failed: {type(exc).__name__}: {exc}",
+                    True,
+                ),
+                read_only_check,
+                DoctorCheck("broker", "NOT_READY", "provider=qmt_builtin_bridge; no valid completed snapshot", True),
+            )
+        )
+        return checks
+
+    snapshot_status = "READY" if status["ok"] else "NOT_READY"
+    checks.append(
+        DoctorCheck(
+            "qmt_builtin_bridge.snapshot",
+            snapshot_status,
+            "generated_at={}; age_seconds={}; sequence={}".format(
+                status["snapshot_timestamp"], status["snapshot_age_seconds"], status["sequence"]
+            ),
+            True,
+        )
+    )
+    account_query_ok = bool(status["query_status"]["account"]["ok"])
+    checks.append(
+        DoctorCheck(
+            "qmt_builtin_bridge.account",
+            "READY" if account_query_ok else "NOT_READY",
+            "status={}; trading_date={}".format(status["account_status"], status["trading_date"]),
+            True,
+        )
+    )
+    record_queries_ok = all(bool(status["query_status"][name]["ok"]) for name in ("positions", "orders", "trades"))
+    checks.append(
+        DoctorCheck(
+            "qmt_builtin_bridge.records",
+            "READY" if record_queries_ok else "NOT_READY",
+            "positions={}; orders={}; trades={}".format(
+                status["position_count"], status["order_count"], status["trade_count"]
+            ),
+            True,
+        )
+    )
+    if status["read_only"]:
+        checks.append(read_only_check)
+    else:
+        checks.append(
+            DoctorCheck(
+                "qmt_builtin_bridge.read_only",
+                "NOT_READY",
+                "snapshot safety flags do not prove the bridge is read-only",
+                True,
+            )
+        )
+    checks.append(
+        DoctorCheck(
+            "broker",
+            "READY" if status["ok"] else "NOT_READY",
+            "provider=qmt_builtin_bridge; validated local snapshot only; no broker mutation is available",
+            True,
+        )
+    )
+    return checks
+
+
 def collect_runtime_diagnostics(
     config: RuntimeConfig | None = None,
     *,
@@ -119,7 +218,6 @@ def collect_runtime_diagnostics(
     else:
         checks.append(DoctorCheck("project_import", "READY", "quantpilot_core import succeeded", True))
     checks.extend(_package_status(name, required=True) for name in REQUIRED_RUNTIME_PACKAGES)
-    checks.append(_package_status("xtquant"))
 
     if probe_services:
         docker = shutil.which("docker")
@@ -156,9 +254,9 @@ def collect_runtime_diagnostics(
     )
     if config.broker_provider is BrokerProvider.NONE:
         broker_status, broker_detail = "EXPECTED", "provider=none; broker connectivity and order submission are disabled"
+        checks.append(DoctorCheck("broker", broker_status, broker_detail, True))
     else:
-        broker_status, broker_detail = "NOT_READY", f"provider={config.broker_provider.value}; only provider=none is permitted in this runtime"
-    checks.append(DoctorCheck("broker", broker_status, broker_detail, True))
+        checks.extend(_qmt_builtin_bridge_checks(config))
     return tuple(checks)
 
 

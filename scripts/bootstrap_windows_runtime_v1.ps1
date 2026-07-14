@@ -3,7 +3,15 @@ param(
     [switch]$NonInteractive,
     [switch]$SkipDocker,
     [switch]$ValidateOnly,
-    [switch]$ForceSecretRefresh
+    [switch]$ForceSecretRefresh,
+    [ValidateSet("none", "qmt_builtin_bridge")][string]$BrokerProvider = "none",
+    [string]$QmtBridgeRoot,
+    [ValidateRange(1, 86400)][double]$QmtMaxSnapshotAgeSeconds = 120,
+    [string]$QmtExpectedAccountType = "STOCK",
+    [string]$QmtExpectedRedactedAccountId,
+    [ValidateRange(1, 3600)][double]$QmtPollingIntervalSeconds = 5,
+    [ValidateRange(1, 86400)][double]$QmtHeartbeatIntervalSeconds = 30,
+    [ValidateSet("simulation_signal")][string]$QmtProviderMode = "simulation_signal"
 )
 . (Join-Path $PSScriptRoot "windows_runtime_common_v1.ps1")
 
@@ -138,8 +146,26 @@ if ($NonInteractive) {
     }
 }
 
+$runtimeConfigArguments = @{}
+foreach ($parameterName in @(
+    "BrokerProvider",
+    "QmtBridgeRoot",
+    "QmtMaxSnapshotAgeSeconds",
+    "QmtExpectedAccountType",
+    "QmtExpectedRedactedAccountId",
+    "QmtPollingIntervalSeconds",
+    "QmtHeartbeatIntervalSeconds",
+    "QmtProviderMode"
+)) {
+    if ($PSBoundParameters.ContainsKey($parameterName)) {
+        $runtimeConfigArguments[$parameterName] = $PSBoundParameters[$parameterName]
+    }
+}
+
 $runtimeEnvironment = $null
 try {
+    $resolvedRuntimeConfig = Resolve-QPRuntimeConfigPayload -Overrides $runtimeConfigArguments
+    Assert-QPAccountBindingKeyState -BridgeRoot ([string]$resolvedRuntimeConfig.qmt_builtin_bridge.bridge_root) -AllowMissing
     $root = Get-QPRepositoryRoot
     Initialize-QPRuntimeDirectories
     $venv = Join-Path $root ".venv"
@@ -164,7 +190,9 @@ try {
         throw "Failed to install the QuantPilot Windows runtime project extra (exit $LASTEXITCODE)."
     }
 
-    Write-QPRuntimeConfig
+    Write-QPRuntimeConfig @runtimeConfigArguments
+    $persistedRuntimeConfig = Read-QPRuntimeConfig
+    Initialize-QPAccountBindingKey -BridgeRoot ([string]$persistedRuntimeConfig.qmt_builtin_bridge.bridge_root)
     Initialize-QPLocalServiceSecret -Name "postgres_password" -VolumeName "pgdata"
     Initialize-QPLocalServiceSecret -Name "grafana_password" -VolumeName "grafana_data"
     Initialize-QPApiSecrets
