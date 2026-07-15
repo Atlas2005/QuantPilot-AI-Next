@@ -59,6 +59,7 @@ class _ExporterState(object):
     def __init__(self):
         self.account_id = None
         self.account_type = None
+        self.snapshot_account_type = None
         self.redacted_account_id = None
         self.sequence = 0
         self.last_attempt_monotonic = 0.0
@@ -609,13 +610,12 @@ def _query_failure(section, exc):
 
 
 def _query_section(section, qmt_data_type, normalizer, provenance, failures):
-    query = globals().get("get_trade_detail_data")
-    if not callable(query):
-        exc = RuntimeError("QMT query function unavailable")
-        failures.append(_query_failure(section, exc))
-        return [], {"ok": False, "error": "qmt_query_failed"}
     try:
-        raw = query(G.account_id, G.account_type, qmt_data_type)
+        raw = get_trade_detail_data(
+            G.account_id,
+            G.account_type,
+            qmt_data_type,
+        )
         records = []
         for item in _bounded_records(raw):
             records.append(normalizer(item, provenance))
@@ -661,7 +661,7 @@ def _build_snapshot(sequence):
         "account",
         "account",
         lambda item, fields: _normalize_account(
-            item, G.redacted_account_id, G.account_type, fields
+            item, G.redacted_account_id, G.snapshot_account_type, fields
         ),
         provenance["account"],
         failures,
@@ -697,7 +697,7 @@ def _build_snapshot(sequence):
         "provider": PROVIDER,
         "environment": ENVIRONMENT,
         "redacted_account_id": G.redacted_account_id,
-        "account_type": _bounded_string(G.account_type, 32),
+        "account_type": G.snapshot_account_type,
         "account_status": account_record["provider_status"] if account_record else None,
         "account": account_record,
         "positions": positions,
@@ -960,13 +960,15 @@ def init(ContextInfo):
         del binding_key
         sequence = _load_last_sequence(paths["snapshot"])
         G.account_id = raw_account
-        G.account_type = normalized_account_type.upper()
+        G.account_type = raw_account_type
+        G.snapshot_account_type = normalized_account_type.upper()
         G.redacted_account_id = redacted_account_id
         G.sequence = sequence
     except Exception:
         _release_writer_lock()
         G.account_id = None
         G.account_type = None
+        G.snapshot_account_type = None
         G.redacted_account_id = None
         G.sequence = 0
         G.stopped = True

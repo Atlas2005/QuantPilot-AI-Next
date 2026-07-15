@@ -62,7 +62,7 @@ The tracked strategy source is `scripts/qmt_builtin_readonly_exporter_v1.py`. In
 4. Select simulation-signal mode. Do not select a live-trading mode. Start the strategy only while signed in to the intended broker test environment.
 5. Confirm that the initial heartbeat appears, followed by bounded periodic snapshots. The strategy uses QMT `run_time` when available and a bounded `handlebar` fallback.
 
-The exporter calls `get_trade_detail_data` for `account`, `position`, `order`, and `deal`. It never calls an order-submission or cancellation function. A failed section query is recorded in the heartbeat instead of stopping the other read-only queries.
+The exporter invokes the QMT built-in `get_trade_detail_data` system function directly by its injected global name because the broker runtime injects that function into the QMT strategy namespace. It queries `account`, `position`, `order`, and `deal` in that order. It never calls an order-submission or cancellation function. A failed section query is recorded in the heartbeat instead of stopping the other read-only queries.
 
 To stop exporting, stop this strategy in the QMT UI. Its `stop` lifecycle handler releases the single-writer lock and clears the in-memory raw account value. QuantPilot never starts or stops QMT automatically.
 

@@ -83,6 +83,57 @@ def test_qmt_source_is_ascii_gbk_declared_and_python36_compatible() -> None:
     }
 
 
+def test_qmt_query_uses_injected_system_function_directly_without_alias() -> None:
+    source = EXPORTER_PATH.read_text(encoding="gbk")
+    tree = ast.parse(source, filename=str(EXPORTER_PATH), feature_version=(3, 6))
+    query_section = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_query_section"
+    )
+    direct_calls = [
+        node
+        for node in ast.walk(query_section)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "get_trade_detail_data"
+    ]
+
+    assert len(direct_calls) == 1
+    direct_call = direct_calls[0]
+    references = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id == "get_trade_detail_data"
+    ]
+    assert len(references) == 1
+    assert references[0] is direct_call.func
+    assert not any(
+        isinstance(node, ast.Constant) and node.value == "get_trade_detail_data"
+        for node in ast.walk(tree)
+    )
+    raw_assignments = [
+        node
+        for node in ast.walk(query_section)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "raw" for target in node.targets)
+    ]
+    assert len(raw_assignments) == 1
+    assert raw_assignments[0].value is direct_call
+    assert len(direct_call.args) == 3
+    assert isinstance(direct_call.args[0], ast.Attribute)
+    assert isinstance(direct_call.args[0].value, ast.Name)
+    assert direct_call.args[0].value.id == "G"
+    assert direct_call.args[0].attr == "account_id"
+    assert isinstance(direct_call.args[1], ast.Attribute)
+    assert isinstance(direct_call.args[1].value, ast.Name)
+    assert direct_call.args[1].value.id == "G"
+    assert direct_call.args[1].attr == "account_type"
+    assert isinstance(direct_call.args[2], ast.Name)
+    assert direct_call.args[2].id == "qmt_data_type"
+    assert direct_call.keywords == []
+
+
 def test_qmt_source_has_no_broker_mutation_call() -> None:
     source = EXPORTER_PATH.read_text(encoding="gbk")
     tree = ast.parse(source, filename=str(EXPORTER_PATH), feature_version=(3, 6))
@@ -611,6 +662,7 @@ def test_snapshot_is_written_even_when_one_query_fails_and_never_contains_secret
     raw_account = "raw-account-secret"
     exporter.G.account_id = raw_account
     exporter.G.account_type = "STOCK"
+    exporter.G.snapshot_account_type = "STOCK"
     exporter.G.redacted_account_id = exporter._redact_account_id(raw_account, BINDING_KEY)
     calls = []
 
@@ -627,7 +679,9 @@ def test_snapshot_is_written_even_when_one_query_fails_and_never_contains_secret
                 )
             ]
         if data_type == "position":
-            raise RuntimeError("provider details intentionally suppressed")
+            raise AttributeError(
+                "provider details intentionally suppressed for {0}".format(raw_account)
+            )
         return []
 
     exporter.get_trade_detail_data = fake_query
@@ -652,9 +706,15 @@ def test_snapshot_is_written_even_when_one_query_fails_and_never_contains_secret
             "section": "positions",
             "code": "qmt_query_failed",
             "message": "QMT read-only positions query failed",
-            "exception_type": "RuntimeError",
+            "exception_type": "AttributeError",
         }
     ]
+    assert snapshot["account"]["total_assets"] == 1000.0
+    assert snapshot["positions"] == []
+    assert snapshot["orders"] == []
+    assert snapshot["trades"] == []
+    assert snapshot["query_status"]["orders"] == {"ok": True, "error": None}
+    assert snapshot["query_status"]["trades"] == {"ok": True, "error": None}
     assert snapshot["safety"] == {
         "order_submission_enabled": False,
         "cancel_enabled": False,
@@ -664,6 +724,7 @@ def test_snapshot_is_written_even_when_one_query_fails_and_never_contains_secret
     payload = output.read_bytes() if isinstance(output, Path) else Path(output).read_bytes()
     assert raw_account.encode() not in payload
     assert b"raw-account-key" not in payload
+    assert b"provider details intentionally suppressed" not in payload
     assert BINDING_KEY_HEX not in payload
     assert BINDING_KEY not in payload
     assert not (tmp_path / "snapshots" / "latest_snapshot_v1.json.tmp").exists()
@@ -724,8 +785,18 @@ def test_qmt_lifecycle_uses_injected_values_timer_fallback_and_clean_stop(tmp_pa
     exporter.after_init(context)
     snapshot_path = tmp_path / "snapshots" / "latest_snapshot_v1.json"
     assert snapshot_path.is_file()
-    assert len(queried) == 4
-    assert json.loads(snapshot_path.read_text(encoding="utf-8"))["sequence"] == 1
+    assert queried == [
+        ("injected-account", "stock", "account"),
+        ("injected-account", "stock", "position"),
+        ("injected-account", "stock", "order"),
+        ("injected-account", "stock", "deal"),
+    ]
+    payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert payload["sequence"] == 1
+    assert payload["account_type"] == "STOCK"
+    assert payload["query_status"]["positions"] == {"ok": True, "error": None}
+    assert payload["query_status"]["orders"] == {"ok": True, "error": None}
+    assert payload["query_status"]["trades"] == {"ok": True, "error": None}
 
     exporter.stop(context)
     assert exporter.G.stopped is True
