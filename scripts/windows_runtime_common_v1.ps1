@@ -470,6 +470,23 @@ function Assert-QPAccountBindingKeyState([string]$BridgeRoot, [switch]$AllowMiss
     }
 }
 
+function Import-QPWindowsSecurityModule {
+    $securityModuleImported = $false
+    try {
+        $securityModuleManifestPath = Join-Path $PSHOME "Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
+        if (Test-Path -LiteralPath $securityModuleManifestPath -PathType Leaf -ErrorAction Stop) {
+            Import-Module -Name $securityModuleManifestPath -ErrorAction Stop | Out-Null
+            $securityModuleImported = $true
+        }
+    }
+    catch {
+        $securityModuleImported = $false
+    }
+    if (-not $securityModuleImported) {
+        throw "Built-in Windows security module is unavailable for QMT account-binding key protection."
+    }
+}
+
 function Protect-QPAccountBindingKeyForCurrentUser([string]$KeyPath) {
     $currentWindowsIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
     if ($null -eq $currentWindowsIdentity -or [string]::IsNullOrWhiteSpace($currentWindowsIdentity.Name)) {
@@ -478,6 +495,7 @@ function Protect-QPAccountBindingKeyForCurrentUser([string]$KeyPath) {
     $currentAccountName = $currentWindowsIdentity.Name
     $currentWindowsIdentity.Dispose()
     $currentAccount = New-Object -TypeName Security.Principal.NTAccount -ArgumentList @($currentAccountName)
+    Import-QPWindowsSecurityModule
     $fileSecurity = Get-Acl -LiteralPath $KeyPath -ErrorAction Stop
     $fileSecurity.SetAccessRuleProtection($true, $false)
     foreach ($existingAccessRule in @($fileSecurity.Access)) {

@@ -342,8 +342,114 @@ def test_windows_account_binding_key_contract_is_random_atomic_private_and_never
     )
 
 
+def test_windows_security_module_import_is_absolute_explicit_and_fail_closed() -> None:
+    root = Path(__file__).parents[2]
+    common = (root / "scripts" / "windows_runtime_common_v1.ps1").read_text(encoding="utf-8")
+    import_start = common.index("function Import-QPWindowsSecurityModule")
+    protect_start = common.index("function Protect-QPAccountBindingKeyForCurrentUser", import_start)
+    initialize_start = common.index("function Initialize-QPAccountBindingKey", protect_start)
+    import_function = common[import_start:protect_start]
+    protect_function = common[protect_start:initialize_start]
+
+    manifest_assignment = (
+        '$securityModuleManifestPath = Join-Path $PSHOME '
+        '"Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1"'
+    )
+    manifest_check = "Test-Path -LiteralPath $securityModuleManifestPath -PathType Leaf -ErrorAction Stop"
+    explicit_import = "Import-Module -Name $securityModuleManifestPath -ErrorAction Stop | Out-Null"
+    safe_error = 'throw "Built-in Windows security module is unavailable for QMT account-binding key protection."'
+
+    assert manifest_assignment in import_function
+    assert manifest_check in import_function
+    assert explicit_import in import_function
+    assert import_function.index(manifest_assignment) < import_function.index(manifest_check) < import_function.index(explicit_import)
+    throw_statements = {line.strip() for line in import_function.splitlines() if line.strip().startswith("throw ")}
+    assert throw_statements == {safe_error}
+    assert "catch" in import_function
+    assert "$env:PSModulePath" not in import_function
+    assert "Get-Module" not in import_function and "Get-Command" not in import_function
+    assert "$_" not in import_function and ".Exception" not in import_function
+    assert protect_function.index("Import-QPWindowsSecurityModule") < protect_function.index("Get-Acl -LiteralPath $KeyPath")
+    assert protect_function.index("Import-QPWindowsSecurityModule") < protect_function.index("Set-Acl -LiteralPath $KeyPath")
+    assert common.count("Get-Acl") == 1
+    assert common.count("Set-Acl") == 1
+
+
 def _powershell_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1 security-module and ACL behavior")
+def test_windows_powershell_binding_key_acl_does_not_require_psmodulepath(tmp_path: Path) -> None:
+    root = Path(__file__).parents[2]
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    if not powershell:
+        pytest.skip("Windows PowerShell executable is unavailable")
+
+    bridge_root = tmp_path / "binding key bridge"
+    malformed_bridge_root = tmp_path / "malformed binding key bridge"
+    script_path = tmp_path / "exercise binding key without module path.ps1"
+    common_script = root / "scripts" / "windows_runtime_common_v1.ps1"
+    script_path.write_text(
+        "\n".join(
+            (
+                "$ErrorActionPreference = 'Stop'",
+                "Import-Module -Name Microsoft.PowerShell.Management -ErrorAction Stop | Out-Null",
+                "Import-Module -Name Microsoft.PowerShell.Utility -ErrorAction Stop | Out-Null",
+                "Remove-Module -Name Microsoft.PowerShell.Security -Force -ErrorAction SilentlyContinue",
+                "if (Get-Module -Name Microsoft.PowerShell.Security) { throw 'security module remained loaded before regression exercise' }",
+                "$originalPSModulePath = $env:PSModulePath",
+                "try {",
+                "    $env:PSModulePath = [string]::Empty",
+                "    if (-not [string]::IsNullOrEmpty($env:PSModulePath)) { throw 'test child process did not clear PSModulePath' }",
+                f". {_powershell_literal(str(common_script))}",
+                f"$bridgeRoot = {_powershell_literal(str(bridge_root))}",
+                "Initialize-QPAccountBindingKey -BridgeRoot $bridgeRoot",
+                "if (-not (Get-Module -Name Microsoft.PowerShell.Security)) { throw 'explicit security module import did not load the module' }",
+                "$keyPath = Get-QPAccountBindingKeyPath -BridgeRoot $bridgeRoot",
+                "$keyBytesBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($keyPath))",
+                "$keyText = [IO.File]::ReadAllText($keyPath)",
+                "if ($keyText -cnotmatch '^[0-9a-f]{64}$') { throw 'account-binding key format is invalid' }",
+                "Initialize-QPAccountBindingKey -BridgeRoot $bridgeRoot",
+                "$keyBytesAfter = [Convert]::ToBase64String([IO.File]::ReadAllBytes($keyPath))",
+                "if ($keyBytesAfter -cne $keyBytesBefore) { throw 'repeated key initialization changed key bytes' }",
+                "$keyAcl = Get-Acl -LiteralPath $keyPath -ErrorAction Stop",
+                "if (-not $keyAcl.AreAccessRulesProtected) { throw 'account-binding key still inherits ACL rules' }",
+                "$currentAccountName = [Security.Principal.WindowsIdentity]::GetCurrent().Name",
+                "if ([string]$keyAcl.Owner -cne $currentAccountName) { throw 'account-binding key owner is not the current Windows user' }",
+                "$keyRules = @($keyAcl.Access)",
+                "if ($keyRules.Count -ne 1) { throw 'account-binding key ACL contains an unexpected rule count' }",
+                "$keyRule = $keyRules[0]",
+                "if ([string]$keyRule.IdentityReference.Value -cne $currentAccountName -or [string]$keyRule.AccessControlType -cne 'Allow' -or [int]$keyRule.FileSystemRights -ne [int][Security.AccessControl.FileSystemRights]::FullControl -or [bool]$keyRule.IsInherited) { throw 'account-binding key ACL is not current-user-only FullControl' }",
+                f"$malformedBridgeRoot = {_powershell_literal(str(malformed_bridge_root))}",
+                "$malformedKeyPath = Get-QPAccountBindingKeyPath -BridgeRoot $malformedBridgeRoot",
+                "New-Item -ItemType Directory -Force -Path (Split-Path -Parent $malformedKeyPath) | Out-Null",
+                "[IO.File]::WriteAllText($malformedKeyPath, ('A' * 64), (New-Object Text.UTF8Encoding($false)))",
+                "$malformedBytesBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($malformedKeyPath))",
+                "$malformedRaised = $false",
+                "try { Initialize-QPAccountBindingKey -BridgeRoot $malformedBridgeRoot } catch { $malformedRaised = $true }",
+                "if (-not $malformedRaised) { throw 'malformed existing key did not fail closed' }",
+                "$malformedBytesAfter = [Convert]::ToBase64String([IO.File]::ReadAllBytes($malformedKeyPath))",
+                "if ($malformedBytesAfter -cne $malformedBytesBefore) { throw 'malformed existing key bytes changed' }",
+                "}",
+                "finally {",
+                "    $env:PSModulePath = $originalPSModulePath",
+                "}",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path)],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1 file replacement")
