@@ -53,9 +53,23 @@ def _grafana_reachability(config: RuntimeConfig, timeout_seconds: float) -> Doct
     return DoctorCheck("grafana", "REACHABLE" if reachable else "NOT_READY", "configured and HTTP health check passed" if reachable else "HTTP health check did not return 200", True)
 
 
-def diagnostics_payload(*, probe_services: bool = True, timeout_seconds: float = 3.0) -> dict[str, object]:
+def diagnostics_payload(
+    *,
+    probe_services: bool = True,
+    timeout_seconds: float = 3.0,
+    allow_missing_qmt_snapshot_during_provisioning: bool = False,
+) -> dict[str, object]:
     config = RuntimeConfig.from_environment()
-    checks = list(collect_runtime_diagnostics(config, probe_services=probe_services, timeout_seconds=timeout_seconds))
+    checks = list(
+        collect_runtime_diagnostics(
+            config,
+            probe_services=probe_services,
+            timeout_seconds=timeout_seconds,
+            allow_missing_qmt_snapshot_during_provisioning=(
+                allow_missing_qmt_snapshot_during_provisioning
+            ),
+        )
+    )
     if probe_services:
         _replace(checks, _postgres_reachability(config, timeout_seconds))
         _replace(checks, _grafana_reachability(config, timeout_seconds))
@@ -74,8 +88,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--format", choices=("text", "json"), default="text")
     parser.add_argument("--strict", action="store_true", help="return nonzero when required runtime dependencies are unavailable")
     parser.add_argument("--skip-services", action="store_true", help="validate service configuration without Docker or network probes")
+    parser.add_argument(
+        "--allow-missing-qmt-snapshot-during-provisioning",
+        action="store_true",
+        help="allow only a missing first QMT exporter snapshot while provisioning",
+    )
     args = parser.parse_args(argv)
-    payload = diagnostics_payload(probe_services=not args.skip_services)
+    payload = diagnostics_payload(
+        probe_services=not args.skip_services,
+        allow_missing_qmt_snapshot_during_provisioning=(
+            args.allow_missing_qmt_snapshot_during_provisioning
+        ),
+    )
     if args.format == "json":
         print(json.dumps(payload, sort_keys=True))
     else:
