@@ -62,7 +62,10 @@ class _ExporterState(object):
         self.snapshot_account_type = None
         self.redacted_account_id = None
         self.sequence = 0
-        self.last_attempt_monotonic = 0.0
+        self.last_attempt_monotonic = None
+        self.query_due = False
+        self.query_due_after_current = False
+        self.query_in_progress = False
         self.timer_registered = False
         self.timer_error_type = None
         self.in_write = False
@@ -915,21 +918,41 @@ def _atomic_write(snapshot, root=None):
     return paths["snapshot"]
 
 
+def _mark_query_due():
+    if G.stopped:
+        return
+    if G.query_in_progress:
+        G.query_due_after_current = True
+        return
+    G.query_due = True
+
+
 def export_qmt_snapshot(ContextInfo):
     del ContextInfo
-    if G.stopped or G.in_write:
-        return
+    _mark_query_due()
+
+
+def _complete_due_query_cycle(now):
+    if G.stopped or G.query_in_progress or not G.query_due:
+        return False
     if G.lock_handle is None and G.lock_fd is None:
-        return
-    G.in_write = True
-    G.last_attempt_monotonic = time.monotonic()
+        return False
+    G.query_in_progress = True
+    G.last_attempt_monotonic = now
     try:
         next_sequence = G.sequence + 1
         snapshot = _build_snapshot(next_sequence)
-        _atomic_write(snapshot, G.bridge_root)
+        G.in_write = True
+        try:
+            _atomic_write(snapshot, G.bridge_root)
+        finally:
+            G.in_write = False
         G.sequence = next_sequence
+        G.query_due = G.query_due_after_current
+        G.query_due_after_current = False
+        return True
     finally:
-        G.in_write = False
+        G.query_in_progress = False
 
 
 def init(ContextInfo):
@@ -964,6 +987,11 @@ def init(ContextInfo):
         G.snapshot_account_type = normalized_account_type.upper()
         G.redacted_account_id = redacted_account_id
         G.sequence = sequence
+        G.last_attempt_monotonic = None
+        G.query_due = False
+        G.query_due_after_current = False
+        G.query_in_progress = False
+        G.in_write = False
     except Exception:
         _release_writer_lock()
         G.account_id = None
@@ -988,28 +1016,39 @@ def init(ContextInfo):
 
 
 def after_init(ContextInfo):
-    export_qmt_snapshot(ContextInfo)
+    del ContextInfo
+    _mark_query_due()
 
 
 def handlebar(ContextInfo):
-    if G.stopped:
+    if G.stopped or G.query_in_progress:
         return
     now = time.monotonic()
-    interval = HEARTBEAT_INTERVAL_SECONDS
-    if G.timer_registered:
-        interval = HEARTBEAT_INTERVAL_SECONDS * 2
-    if now - G.last_attempt_monotonic < interval:
+    if not G.query_due and G.last_attempt_monotonic is not None:
+        fallback_interval = HEARTBEAT_INTERVAL_SECONDS
+        if G.timer_registered:
+            fallback_interval = HEARTBEAT_INTERVAL_SECONDS * 2
+        if now - G.last_attempt_monotonic >= fallback_interval:
+            _mark_query_due()
+    if not G.query_due:
+        return
+    if (
+        G.last_attempt_monotonic is not None
+        and now - G.last_attempt_monotonic < HEARTBEAT_INTERVAL_SECONDS
+    ):
         return
     try:
         is_last = ContextInfo.is_last_bar()
     except Exception:
         is_last = True
     if is_last:
-        export_qmt_snapshot(ContextInfo)
+        _complete_due_query_cycle(now)
 
 
 def stop(ContextInfo):
     del ContextInfo
     G.stopped = True
+    G.query_due = False
+    G.query_due_after_current = False
     _release_writer_lock()
     G.account_id = None

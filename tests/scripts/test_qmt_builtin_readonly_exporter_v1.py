@@ -53,6 +53,49 @@ class NoTimerContext:
         return True
 
 
+class RecordingContext:
+    def __init__(self, timer_error=None, last_bar=True):
+        self.timer_error = timer_error
+        self.last_bar = last_bar
+        self.timer_calls = []
+
+    def run_time(self, *args):
+        self.timer_calls.append(args)
+        if self.timer_error is not None:
+            raise self.timer_error
+
+    def is_last_bar(self):
+        return self.last_bar
+
+
+def configure_exporter(
+    exporter,
+    root: Path,
+    account_id="injected-account",
+    account_type="stock",
+):
+    exporter.BRIDGE_ROOT = str(root)
+    exporter.account = account_id
+    exporter.accountType = account_type
+    write_binding_key(root)
+
+
+def successful_query(calls):
+    def fake_query(account_id, account_type, data_type):
+        calls.append((account_id, account_type, data_type))
+        if data_type == "account":
+            return [
+                SimpleNamespace(
+                    m_dBalance=1000.0,
+                    m_strStatus="connected",
+                    m_strTradingDate="20260714",
+                )
+            ]
+        return []
+
+    return fake_query
+
+
 def test_qmt_source_is_ascii_gbk_declared_and_python36_compatible() -> None:
     source_bytes = EXPORTER_PATH.read_bytes()
 
@@ -134,15 +177,88 @@ def test_qmt_query_uses_injected_system_function_directly_without_alias() -> Non
     assert direct_call.keywords == []
 
 
+def test_qmt_direct_query_call_is_statically_reachable_only_from_handlebar() -> None:
+    source = EXPORTER_PATH.read_text(encoding="gbk")
+    tree = ast.parse(source, filename=str(EXPORTER_PATH), feature_version=(3, 6))
+    functions = {
+        node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
+    }
+    call_graph = {
+        name: {
+            child.func.id
+            for child in ast.walk(function)
+            if isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id in functions
+        }
+        for name, function in functions.items()
+    }
+    direct_query_owners = {
+        name
+        for name, function in functions.items()
+        if any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id == "get_trade_detail_data"
+            for child in ast.walk(function)
+        )
+    }
+
+    def reaches_direct_query(name):
+        pending = [name]
+        visited = set()
+        while pending:
+            current = pending.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            if current in direct_query_owners:
+                return True
+            pending.extend(call_graph[current])
+        return False
+
+    query_reachable = {
+        name for name in functions if reaches_direct_query(name)
+    }
+    query_roots = {
+        name
+        for name in query_reachable
+        if not any(
+            name in call_graph[caller]
+            for caller in query_reachable
+        )
+    }
+
+    assert direct_query_owners == {"_query_section"}
+    assert query_roots == {"handlebar"}
+    assert {
+        name for name in ("init", "after_init", "export_qmt_snapshot", "stop")
+        if name in query_reachable
+    } == set()
+    assert "handlebar" in query_reachable
+
+
 def test_qmt_source_has_no_broker_mutation_call() -> None:
     source = EXPORTER_PATH.read_text(encoding="gbk")
     tree = ast.parse(source, filename=str(EXPORTER_PATH), feature_version=(3, 6))
     prohibited = {
         "passorder",
         "cancel",
+        "cancelorder",
         "cancel_order",
         "cancel_task",
         "algo_passorder",
+        "order_stock",
+        "order_volume",
+        "order_value",
+        "order_percent",
+        "order_target",
+        "order_target_value",
+        "order_target_percent",
+        "submit_order",
+        "place_order",
+        "insert_order",
+        "send_order",
         "buy",
         "sell",
     }
@@ -627,12 +743,11 @@ def test_init_invalid_final_never_replaces_it_and_releases_lock(tmp_path: Path) 
     verifier._release_writer_lock()
 
 
-def test_valid_final_with_stale_temp_resumes_and_replaces_only_after_init(tmp_path: Path) -> None:
+def test_valid_final_with_stale_temp_resumes_and_replaces_only_from_handlebar(
+    tmp_path: Path,
+) -> None:
     exporter = load_exporter("qmt_exporter_resume")
-    exporter.BRIDGE_ROOT = str(tmp_path)
-    exporter.account = "resume-account"
-    exporter.accountType = "STOCK"
-    write_binding_key(tmp_path)
+    configure_exporter(exporter, tmp_path, "resume-account", "STOCK")
     paths = exporter._bridge_paths(str(tmp_path))
     snapshot_path = Path(paths["snapshot"])
     temporary_path = Path(paths["temporary"])
@@ -640,7 +755,8 @@ def test_valid_final_with_stale_temp_resumes_and_replaces_only_after_init(tmp_pa
     original = completed_sequence_payload(exporter, 41)
     snapshot_path.write_bytes(original)
     temporary_path.write_bytes(b"stale-partial-data")
-    exporter.get_trade_detail_data = lambda account, account_type, data_type: []
+    queried = []
+    exporter.get_trade_detail_data = successful_query(queried)
 
     exporter.init(NoTimerContext())
     assert exporter.G.sequence == 41
@@ -648,26 +764,55 @@ def test_valid_final_with_stale_temp_resumes_and_replaces_only_after_init(tmp_pa
     assert temporary_path.read_bytes() == b"stale-partial-data"
 
     exporter.after_init(NoTimerContext())
+    assert exporter.G.query_due is True
+    assert queried == []
+    assert snapshot_path.read_bytes() == original
+    assert temporary_path.read_bytes() == b"stale-partial-data"
+
+    exporter.handlebar(NoTimerContext())
     payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
     assert payload["sequence"] == 42
     assert payload["snapshot_id"] == "qmt-42"
+    assert queried == [
+        ("resume-account", "STOCK", "account"),
+        ("resume-account", "STOCK", "position"),
+        ("resume-account", "STOCK", "order"),
+        ("resume-account", "STOCK", "deal"),
+    ]
     assert not temporary_path.exists()
     assert BINDING_KEY_HEX not in snapshot_path.read_bytes()
     assert BINDING_KEY not in snapshot_path.read_bytes()
     exporter.stop(NoTimerContext())
 
 
-def test_snapshot_is_written_even_when_one_query_fails_and_never_contains_secrets(tmp_path: Path) -> None:
-    exporter = load_exporter()
+@pytest.mark.parametrize(
+    ("failed_data_type", "failed_section"),
+    [
+        pytest.param("account", "account", id="account"),
+        pytest.param("position", "positions", id="position"),
+        pytest.param("order", "orders", id="order"),
+        pytest.param("deal", "trades", id="deal"),
+    ],
+)
+def test_attribute_error_is_isolated_by_section_and_completed_snapshot_consumes_due_cycle(
+    monkeypatch,
+    tmp_path: Path,
+    failed_data_type: str,
+    failed_section: str,
+) -> None:
+    exporter = load_exporter("qmt_exporter_section_failure_{0}".format(failed_data_type))
     raw_account = "raw-account-secret"
-    exporter.G.account_id = raw_account
-    exporter.G.account_type = "STOCK"
-    exporter.G.snapshot_account_type = "STOCK"
-    exporter.G.redacted_account_id = exporter._redact_account_id(raw_account, BINDING_KEY)
+    configure_exporter(exporter, tmp_path, raw_account, "STOCK")
     calls = []
+    now = [100.0]
+    monkeypatch.setattr(exporter, "time", SimpleNamespace(monotonic=lambda: now[0]))
 
     def fake_query(account_id, account_type, data_type):
         calls.append((account_id, account_type, data_type))
+        if data_type == failed_data_type:
+            raise AttributeError(
+                "provider details intentionally suppressed for {0}".format(raw_account)
+            )
         if data_type == "account":
             return [
                 SimpleNamespace(
@@ -678,15 +823,13 @@ def test_snapshot_is_written_even_when_one_query_fails_and_never_contains_secret
                     m_strTradingDate="20260714",
                 )
             ]
-        if data_type == "position":
-            raise AttributeError(
-                "provider details intentionally suppressed for {0}".format(raw_account)
-            )
         return []
 
     exporter.get_trade_detail_data = fake_query
-    snapshot = exporter._build_snapshot(7)
-    output = exporter._atomic_write(snapshot, str(tmp_path))
+    context = RecordingContext()
+    exporter.init(context)
+    exporter.after_init(context)
+    exporter.handlebar(context)
 
     assert calls == [
         (raw_account, "STOCK", "account"),
@@ -694,41 +837,54 @@ def test_snapshot_is_written_even_when_one_query_fails_and_never_contains_secret
         (raw_account, "STOCK", "order"),
         (raw_account, "STOCK", "deal"),
     ]
-    assert snapshot["snapshot_id"] == "qmt-7"
+    snapshot_path = tmp_path / "snapshots" / "latest_snapshot_v1.json"
+    payload = snapshot_path.read_bytes()
+    snapshot = json.loads(payload)
+    assert snapshot["snapshot_id"] == "qmt-1"
     assert snapshot["environment"] == "simulation_signal"
-    assert snapshot["query_status"]["account"] == {"ok": True, "error": None}
-    assert snapshot["query_status"]["positions"] == {
-        "ok": False,
-        "error": "qmt_query_failed",
-    }
+    for section in ("account", "positions", "orders", "trades"):
+        expected = (
+            {"ok": False, "error": "qmt_query_failed"}
+            if section == failed_section
+            else {"ok": True, "error": None}
+        )
+        assert snapshot["query_status"][section] == expected
     assert snapshot["failures"] == [
         {
-            "section": "positions",
+            "section": failed_section,
             "code": "qmt_query_failed",
-            "message": "QMT read-only positions query failed",
+            "message": "QMT read-only {0} query failed".format(failed_section),
             "exception_type": "AttributeError",
         }
     ]
-    assert snapshot["account"]["total_assets"] == 1000.0
+    if failed_section == "account":
+        assert snapshot["account"] is None
+    else:
+        assert snapshot["account"]["total_assets"] == 1000.0
     assert snapshot["positions"] == []
     assert snapshot["orders"] == []
     assert snapshot["trades"] == []
-    assert snapshot["query_status"]["orders"] == {"ok": True, "error": None}
-    assert snapshot["query_status"]["trades"] == {"ok": True, "error": None}
     assert snapshot["safety"] == {
         "order_submission_enabled": False,
         "cancel_enabled": False,
         "passorder_invoked": False,
         "cancel_invoked": False,
     }
-    payload = output.read_bytes() if isinstance(output, Path) else Path(output).read_bytes()
     assert raw_account.encode() not in payload
     assert b"raw-account-key" not in payload
     assert b"provider details intentionally suppressed" not in payload
+    assert b"Traceback" not in payload
     assert BINDING_KEY_HEX not in payload
     assert BINDING_KEY not in payload
     assert not (tmp_path / "snapshots" / "latest_snapshot_v1.json.tmp").exists()
-    assert json.loads(payload)["sequence"] == 7
+    assert snapshot["sequence"] == 1
+    assert exporter.G.sequence == 1
+    assert exporter.G.query_due is False
+
+    exporter.handlebar(context)
+    assert len(calls) == 4
+    assert exporter.G.sequence == 1
+    exporter.stop(context)
 
 
 def test_serialization_is_compact_sorted_and_deterministic() -> None:
@@ -757,49 +913,284 @@ def test_duplicate_writer_is_rejected_and_stop_releases_fallback_lock(tmp_path: 
     second._release_writer_lock()
 
 
-def test_qmt_lifecycle_uses_injected_values_timer_fallback_and_clean_stop(tmp_path: Path) -> None:
-    exporter = load_exporter()
-    exporter.BRIDGE_ROOT = str(tmp_path)
-    exporter.account = "injected-account"
-    exporter.accountType = "stock"
-    write_binding_key(tmp_path)
+def test_non_handlebar_lifecycle_callbacks_only_schedule_due_work(tmp_path: Path) -> None:
+    exporter = load_exporter("qmt_exporter_non_handlebar_lifecycle")
+    configure_exporter(exporter, tmp_path)
     queried = []
+    exporter.get_trade_detail_data = successful_query(queried)
+    context = RecordingContext()
+    snapshot_path = tmp_path / "snapshots" / "latest_snapshot_v1.json"
 
-    def fake_query(account_id, account_type, data_type):
-        queried.append((account_id, account_type, data_type))
-        return []
+    exporter.init(context)
+    assert queried == []
+    assert exporter.G.query_due is False
+    assert not snapshot_path.exists()
+    assert context.timer_calls == [
+        (
+            "export_qmt_snapshot",
+            "{0}nSecond".format(exporter.HEARTBEAT_INTERVAL_SECONDS),
+            "2019-10-14 13:20:00",
+        )
+    ]
 
-    class FakeContext:
-        def run_time(self, *args):
-            raise RuntimeError("timer unavailable in offline test")
+    exporter.handlebar(context)
+    assert queried == []
+    assert exporter.G.query_due is False
+    assert not snapshot_path.exists()
 
-        def is_last_bar(self):
-            return True
+    exporter.after_init(context)
+    assert queried == []
+    assert exporter.G.query_due is True
+    assert not snapshot_path.exists()
 
-    exporter.get_trade_detail_data = fake_query
-    context = FakeContext()
+    exporter.export_qmt_snapshot(context)
+    exporter.export_qmt_snapshot(context)
+    assert queried == []
+    assert exporter.G.query_due is True
+    assert not snapshot_path.exists()
+
+    exporter.stop(context)
+    assert queried == []
+    assert exporter.G.stopped is True
+    assert exporter.G.query_due is False
+    assert exporter.G.account_id is None
+    assert exporter.G.lock_handle is None
+    assert exporter.G.lock_fd is None
+
+
+def test_due_handlebar_queries_exact_order_with_raw_args_and_writes_once(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    exporter = load_exporter("qmt_exporter_exact_due_cycle")
+    raw_account = "  injected-account  "
+    raw_account_type = "stock"
+    configure_exporter(exporter, tmp_path, raw_account, raw_account_type)
+    queried = []
+    exporter.get_trade_detail_data = successful_query(queried)
+    context = RecordingContext()
+    now = [100.0]
+    monkeypatch.setattr(exporter, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    original_atomic_write = exporter._atomic_write
+    writes = []
+
+    def recording_atomic_write(snapshot, root=None):
+        writes.append((snapshot["sequence"], root))
+        return original_atomic_write(snapshot, root)
+
+    monkeypatch.setattr(exporter, "_atomic_write", recording_atomic_write)
+    exporter.init(context)
+    exporter.after_init(context)
+    exporter.export_qmt_snapshot(context)
+    exporter.export_qmt_snapshot(context)
+    exporter.handlebar(context)
+
+    assert queried == [
+        (raw_account, raw_account_type, "account"),
+        (raw_account, raw_account_type, "position"),
+        (raw_account, raw_account_type, "order"),
+        (raw_account, raw_account_type, "deal"),
+    ]
+    assert writes == [(1, str(tmp_path.resolve()))]
+    assert exporter.G.query_due is False
+    assert exporter.G.query_in_progress is False
+    assert exporter.G.sequence == 1
+    snapshot_path = tmp_path / "snapshots" / "latest_snapshot_v1.json"
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert snapshot["sequence"] == 1
+    assert snapshot["account_type"] == "STOCK"
+    assert snapshot["query_status"]["positions"] == {"ok": True, "error": None}
+    assert snapshot["query_status"]["orders"] == {"ok": True, "error": None}
+    assert snapshot["query_status"]["trades"] == {"ok": True, "error": None}
+    assert raw_account.encode() not in snapshot_path.read_bytes()
+    assert not (tmp_path / "snapshots" / "latest_snapshot_v1.json.tmp").exists()
+
+    exporter.handlebar(context)
+    assert len(queried) == 4
+    assert len(writes) == 1
+    exporter.stop(context)
+
+
+def test_scheduled_due_cycle_remains_interval_throttled(monkeypatch, tmp_path: Path) -> None:
+    exporter = load_exporter("qmt_exporter_throttled_due_cycle")
+    configure_exporter(exporter, tmp_path)
+    queried = []
+    exporter.get_trade_detail_data = successful_query(queried)
+    context = RecordingContext()
+    now = [100.0]
+    monkeypatch.setattr(exporter, "time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    exporter.init(context)
+    exporter.after_init(context)
+    exporter.handlebar(context)
+    assert len(queried) == 4
+    assert exporter.G.sequence == 1
+
+    exporter.export_qmt_snapshot(context)
+    assert exporter.G.query_due is True
+    assert len(queried) == 4
+
+    now[0] += exporter.HEARTBEAT_INTERVAL_SECONDS - 0.001
+    exporter.handlebar(context)
+    exporter.handlebar(context)
+    assert exporter.G.query_due is True
+    assert len(queried) == 4
+    assert exporter.G.sequence == 1
+
+    now[0] += 0.001
+    exporter.handlebar(context)
+    assert len(queried) == 8
+    assert exporter.G.query_due is False
+    assert exporter.G.sequence == 2
+    exporter.stop(context)
+
+
+def test_timer_unavailable_fallback_schedules_only_after_interval(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    exporter = load_exporter("qmt_exporter_timer_fallback")
+    configure_exporter(exporter, tmp_path)
+    queried = []
+    exporter.get_trade_detail_data = successful_query(queried)
+    context = RecordingContext(timer_error=RuntimeError("timer unavailable in offline test"))
+    now = [100.0]
+    monkeypatch.setattr(exporter, "time", SimpleNamespace(monotonic=lambda: now[0]))
 
     exporter.init(context)
     assert exporter.G.timer_registered is False
     assert exporter.G.timer_error_type == "RuntimeError"
     exporter.after_init(context)
-    snapshot_path = tmp_path / "snapshots" / "latest_snapshot_v1.json"
-    assert snapshot_path.is_file()
-    assert queried == [
-        ("injected-account", "stock", "account"),
-        ("injected-account", "stock", "position"),
-        ("injected-account", "stock", "order"),
-        ("injected-account", "stock", "deal"),
+    assert queried == []
+    exporter.handlebar(context)
+    assert len(queried) == 4
+
+    now[0] += exporter.HEARTBEAT_INTERVAL_SECONDS - 0.001
+    exporter.handlebar(context)
+    assert len(queried) == 4
+    assert exporter.G.query_due is False
+
+    now[0] += 0.001
+    exporter.handlebar(context)
+    assert len(queried) == 8
+    assert exporter.G.sequence == 2
+    assert exporter.G.query_due is False
+    exporter.stop(context)
+
+
+def test_snapshot_write_failure_preserves_due_cycle_for_later_handlebar_retry(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    exporter = load_exporter("qmt_exporter_write_retry")
+    configure_exporter(exporter, tmp_path)
+    queried = []
+    exporter.get_trade_detail_data = successful_query(queried)
+    context = RecordingContext()
+    now = [100.0]
+    monkeypatch.setattr(exporter, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    original_atomic_write = exporter._atomic_write
+    write_attempts = []
+
+    def fail_once(snapshot, root=None):
+        write_attempts.append(snapshot["sequence"])
+        if len(write_attempts) == 1:
+            raise OSError("synthetic atomic write failure")
+        return original_atomic_write(snapshot, root)
+
+    monkeypatch.setattr(exporter, "_atomic_write", fail_once)
+    exporter.init(context)
+    exporter.after_init(context)
+
+    with pytest.raises(OSError, match="synthetic atomic write failure"):
+        exporter.handlebar(context)
+
+    assert len(queried) == 4
+    assert write_attempts == [1]
+    assert exporter.G.sequence == 0
+    assert exporter.G.query_due is True
+    assert exporter.G.query_in_progress is False
+    assert exporter.G.in_write is False
+    assert not (tmp_path / "snapshots" / "latest_snapshot_v1.json").exists()
+
+    exporter.handlebar(context)
+    assert len(queried) == 4
+    assert exporter.G.query_due is True
+
+    now[0] += exporter.HEARTBEAT_INTERVAL_SECONDS
+    exporter.handlebar(context)
+    assert len(queried) == 8
+    assert write_attempts == [1, 1]
+    assert exporter.G.sequence == 1
+    assert exporter.G.query_due is False
+    assert (tmp_path / "snapshots" / "latest_snapshot_v1.json").is_file()
+    exporter.stop(context)
+
+
+def test_reentrant_handlebar_is_blocked_and_timer_due_is_not_lost(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    exporter = load_exporter("qmt_exporter_reentrant_cycle")
+    configure_exporter(exporter, tmp_path)
+    context = RecordingContext()
+    calls = []
+    writes = []
+    reentered = [False]
+    now = [100.0]
+    monkeypatch.setattr(exporter, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    original_atomic_write = exporter._atomic_write
+
+    def recording_atomic_write(snapshot, root=None):
+        writes.append(snapshot["sequence"])
+        return original_atomic_write(snapshot, root)
+
+    def reentrant_query(account_id, account_type, data_type):
+        calls.append((account_id, account_type, data_type))
+        if data_type == "account" and not reentered[0]:
+            reentered[0] = True
+            exporter.handlebar(context)
+            exporter.export_qmt_snapshot(context)
+        if data_type == "account":
+            return [SimpleNamespace(m_dBalance=1000.0)]
+        return []
+
+    monkeypatch.setattr(exporter, "_atomic_write", recording_atomic_write)
+    exporter.get_trade_detail_data = reentrant_query
+    exporter.init(context)
+    exporter.after_init(context)
+    exporter.handlebar(context)
+
+    assert [data_type for _, _, data_type in calls] == [
+        "account",
+        "position",
+        "order",
+        "deal",
     ]
-    payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    assert payload["sequence"] == 1
-    assert payload["account_type"] == "STOCK"
-    assert payload["query_status"]["positions"] == {"ok": True, "error": None}
-    assert payload["query_status"]["orders"] == {"ok": True, "error": None}
-    assert payload["query_status"]["trades"] == {"ok": True, "error": None}
+    assert writes == [1]
+    assert exporter.G.sequence == 1
+    assert exporter.G.query_in_progress is False
+    assert exporter.G.query_due_after_current is False
+    assert exporter.G.query_due is True
+
+    exporter.handlebar(context)
+    assert len(calls) == 4
+    assert writes == [1]
+
+    now[0] += exporter.HEARTBEAT_INTERVAL_SECONDS
+    exporter.handlebar(context)
+    assert [data_type for _, _, data_type in calls] == [
+        "account",
+        "position",
+        "order",
+        "deal",
+        "account",
+        "position",
+        "order",
+        "deal",
+    ]
+    assert writes == [1, 2]
+    assert exporter.G.sequence == 2
+    assert exporter.G.query_due is False
 
     exporter.stop(context)
-    assert exporter.G.stopped is True
-    assert exporter.G.account_id is None
-    assert exporter.G.lock_handle is None
-    assert exporter.G.lock_fd is None
