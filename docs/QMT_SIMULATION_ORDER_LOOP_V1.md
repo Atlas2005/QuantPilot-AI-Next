@@ -68,7 +68,7 @@ The existing `<bridge-root>\state\account_binding_key_v1.hex` is a local secret 
 
 ## Version 1 schemas
 
-All JSON is bounded, canonical, UTF-8 JSON with finite numeric values, sorted deterministic keys, and no provider object representations or tracebacks. Timestamps are UTC. Unknown and missing fields are rejected.
+All protocol JSON artifacts are bounded, canonical UTF-8 byte sequences with finite numeric values, sorted deterministic keys, and no provider object representations or tracebacks. Each artifact ends with exactly one LF (`0x0A`) terminator on Windows and POSIX. Writers must prevent text-mode CRLF translation; `CRLF` is not canonical protocol output. Existing malformed artifacts are evidence and are never automatically rewritten, normalized, or repaired. Timestamps are UTC. Unknown and missing fields are rejected.
 
 ### Intent
 

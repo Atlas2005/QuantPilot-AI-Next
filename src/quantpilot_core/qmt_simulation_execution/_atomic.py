@@ -101,7 +101,11 @@ def read_bounded_file(
     ):
         raise invalid("completed artifact is outside protocol bounds", path=target)
     try:
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_BINARY", 0)
+        )
         fd = os.open(str(target), flags)
     except OSError as exc:
         raise missing_error("completed artifact is unavailable", path=target) from exc
@@ -146,7 +150,12 @@ def _read_existing(target: Path, *, maximum: int) -> bytes | None:
     ):
         raise IntentConflictError("existing intent is not a regular file", path=target)
     try:
-        fd = os.open(str(target), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(
+            str(target),
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_BINARY", 0),
+        )
     except OSError as exc:
         raise AtomicWriteError("existing intent cannot be inspected safely", path=target) from exc
     try:
@@ -171,7 +180,11 @@ def _write_temp(target: Path, encoded: bytes) -> Path:
     temp = target.with_name("." + target.name + "." + secrets.token_hex(8) + ".tmp")
     fd = os.open(
         str(temp),
-        os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
+        os.O_CREAT
+        | os.O_EXCL
+        | os.O_WRONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_BINARY", 0),
         0o600,
     )
     try:

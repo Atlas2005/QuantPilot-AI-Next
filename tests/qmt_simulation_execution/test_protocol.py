@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import quantpilot_core.qmt_simulation_execution._atomic as atomic_files
 from quantpilot_core.order_intent import OrderIntent
 from quantpilot_core.qmt_simulation_execution import (
     AccountBindingMismatchError,
@@ -157,6 +158,54 @@ def test_atomic_immutable_write_read_and_repository_rejection(tmp_path: Path) ->
     (repo / ".git").mkdir(parents=True)
     with pytest.raises(RepositoryLocalPathError):
         write_intent_atomic(repo / "runtime", intent, binding_key=KEY, now=NOW)
+
+
+def test_atomic_artifact_descriptors_request_binary_mode_cross_platform(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _bridge(tmp_path)
+    intent = _intent()
+    sentinel = 1 << 29
+    real_open = atomic_files.os.open
+    real_binary = getattr(atomic_files.os, "O_BINARY", 0)
+    opened: list[tuple[Path, int]] = []
+
+    def recording_open(path: str, flags: int, mode: int = 0o777) -> int:
+        opened.append((Path(path), flags))
+        translated = flags & ~sentinel
+        if flags & sentinel:
+            translated |= real_binary
+        return real_open(path, translated, mode)
+
+    monkeypatch.setattr(atomic_files.os, "O_BINARY", sentinel, raising=False)
+    monkeypatch.setattr(atomic_files.os, "open", recording_open)
+
+    path = write_intent_atomic(root, intent, now=NOW)
+    assert write_intent_atomic(root, intent, now=NOW) == path
+    assert read_intent(root, intent.intent_id, now=NOW) == intent
+    assert path.read_bytes() == serialize_intent(intent)
+
+    temp_flags = [flags for observed, flags in opened if observed.suffix == ".tmp"]
+    artifact_flags = [flags for observed, flags in opened if observed == path]
+    lock_flags = [flags for observed, flags in opened if observed.suffix == ".lock"]
+    assert temp_flags and all(flags & sentinel for flags in temp_flags)
+    assert artifact_flags and all(flags & sentinel for flags in artifact_flags)
+    assert lock_flags and all(not flags & sentinel for flags in lock_flags)
+
+
+def test_existing_crlf_intent_conflicts_without_rewrite(tmp_path: Path) -> None:
+    root = _bridge(tmp_path)
+    intent = _intent()
+    path = intent_path(root, intent.intent_id)
+    path.parent.mkdir(parents=True)
+    canonical = serialize_intent(intent)
+    crlf = canonical[:-1] + b"\r\n"
+    path.write_bytes(crlf)
+
+    with pytest.raises(IntentConflictError):
+        write_intent_atomic(root, intent, now=NOW)
+
+    assert path.read_bytes() == crlf
 
 
 def test_execution_child_symlink_is_rejected(tmp_path: Path) -> None:

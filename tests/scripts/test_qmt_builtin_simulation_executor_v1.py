@@ -1357,6 +1357,35 @@ def test_invalid_authenticated_transport_never_queries_or_submits(
     assert not (root / "execution" / "state" / "intent_127.json").exists()
 
 
+def test_crlf_canonical_intent_is_rejected_as_noncanonical_and_untouched(
+    tmp_path: Path,
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    payload = write_intent(executor, root)
+    path = root / "execution" / "intents" / "intent_127.json"
+    canonical = path.read_bytes()
+    assert canonical.endswith(b"\n")
+    assert not canonical.endswith(b"\r\n")
+    crlf = canonical[:-1] + b"\r\n"
+    path.write_bytes(crlf)
+
+    decoded, encoded = executor._read_bounded_json(
+        str(path), executor.MAX_INTENT_BYTES
+    )
+    with pytest.raises(executor._SafeFailure) as error:
+        executor._validate_intent(
+            decoded,
+            encoded,
+            str(path),
+            executor._parse_utc_text(payload["created_at"]),
+        )
+
+    assert error.value.code == "noncanonical_intent"
+    assert path.read_bytes() == crlf
+
+
 def test_only_one_intent_is_accepted_per_model_run(tmp_path: Path) -> None:
     executor = load_executor()
     root = tmp_path / "bridge"

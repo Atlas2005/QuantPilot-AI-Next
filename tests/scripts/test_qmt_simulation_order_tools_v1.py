@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from quantpilot_core.qmt_simulation_execution import (
+    canonical_json_bytes,
     read_intent,
     reconcile_broker_records,
     redact_account_id,
@@ -15,6 +17,7 @@ from quantpilot_core.qmt_simulation_execution import (
 
 
 CREATE_PATH = Path("scripts/create_qmt_simulation_order_intent_v1.py")
+EXECUTOR_PATH = Path("scripts/qmt_builtin_simulation_executor_v1.py")
 INSPECT_PATH = Path("scripts/inspect_qmt_simulation_order_v1.py")
 KEY = bytes(range(32))
 RAW_ACCOUNT = "offline-cli-account"
@@ -88,6 +91,9 @@ def test_confirmed_create_is_one_immutable_authenticated_intent(
     tmp_path: Path, capsys
 ) -> None:
     create = _load(CREATE_PATH, "create_qmt_simulation_order_intent_confirmed")
+    executor = _load(
+        EXECUTOR_PATH, "qmt_builtin_simulation_executor_for_created_intent"
+    )
     root = _bridge(tmp_path)
 
     assert create.main(_create_args(root, confirm=True)) == 0
@@ -101,11 +107,54 @@ def test_confirmed_create_is_one_immutable_authenticated_intent(
     assert RAW_ACCOUNT not in intent_files[0].read_text(encoding="ascii")
     assert KEY.hex() not in intent_files[0].read_text(encoding="ascii")
 
+    raw = intent_files[0].read_bytes()
+    decoded = json.loads(raw.decode("utf-8"))
+    assert raw == canonical_json_bytes(decoded, trailing_newline=True)
+    assert raw == executor._file_bytes(decoded)
+    assert raw.endswith(b"\n")
+    assert not raw.endswith(b"\r\n")
+    assert not raw.startswith(b"\xef\xbb\xbf")
+    strict_payload, strict_raw = executor._read_bounded_json(
+        str(intent_files[0]), executor.MAX_INTENT_BYTES
+    )
+    assert strict_payload == decoded
+    assert strict_raw == raw
+    executor.G.binding_key = KEY
+    executor.G.redacted_account_id = BINDING
+    created_at = executor._parse_utc_text(decoded["created_at"])
+    assert (
+        executor._validate_intent(
+            strict_payload,
+            strict_raw,
+            str(intent_files[0]),
+            created_at,
+        )
+        is False
+    )
+
     repeated = create.main(_create_args(root, confirm=True))
     assert repeated in {0, 2}
     capsys.readouterr()
     assert _files(root) == first_files
     assert len(list((root / "execution" / "intents").glob("*.json"))) == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows newline persistence regression")
+def test_windows_production_writer_persists_exact_lf_bytes(
+    tmp_path: Path, capsys
+) -> None:
+    create = _load(CREATE_PATH, "create_qmt_simulation_order_intent_windows_bytes")
+    root = _bridge(tmp_path)
+
+    assert create.main(_create_args(root, confirm=True)) == 0
+    capsys.readouterr()
+    path = root / "execution" / "intents" / "cli_intent_127.json"
+    raw = path.read_bytes()
+    decoded = json.loads(raw.decode("utf-8"))
+
+    assert raw == canonical_json_bytes(decoded, trailing_newline=True)
+    assert raw.endswith(b"\n")
+    assert not raw.endswith(b"\r\n")
 
 
 def test_inspection_is_read_only_bounded_and_never_connects_to_qmt(
