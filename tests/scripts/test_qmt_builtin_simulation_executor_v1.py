@@ -29,6 +29,15 @@ class LastBarContext:
         return self.last_bar
 
 
+class ScheduledContext(LastBarContext):
+    def __init__(self, last_bar: bool = True):
+        super().__init__(last_bar=last_bar)
+        self.registrations = []
+
+    def run_time(self, *args) -> None:
+        self.registrations.append(args)
+
+
 def load_executor():
     name = "qmt_builtin_simulation_executor_v1_{0}".format(uuid4().hex)
     spec = importlib.util.spec_from_file_location(name, EXECUTOR_PATH)
@@ -38,14 +47,21 @@ def load_executor():
     return module
 
 
-def configure_executor(executor, root: Path, *, account_type: str = "STOCK") -> None:
+def configure_executor(
+    executor,
+    root: Path,
+    *,
+    account_type: str = "STOCK",
+    context=None,
+    raw_account=RAW_ACCOUNT,
+) -> None:
     key_dir = root / "state"
     key_dir.mkdir(parents=True)
     (key_dir / "account_binding_key_v1.hex").write_bytes(BINDING_KEY.hex().encode("ascii"))
     executor.BRIDGE_ROOT = str(root)
-    executor.account = RAW_ACCOUNT
+    executor.account = raw_account
     executor.accountType = account_type
-    executor.init(LastBarContext())
+    executor.init(context or LastBarContext())
 
 
 def write_intent(
@@ -108,6 +124,25 @@ def rewrite_signed_intent(executor, root: Path, payload: dict[str, object]) -> N
 def read_document(root: Path, section: str, intent_id: str = "intent_127") -> dict[str, object]:
     path = root / "execution" / section / (intent_id + ".json")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_diagnostics(root: Path) -> dict[str, object]:
+    path = root / "execution" / "diagnostics" / "executor_lifecycle_v1.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_result(
+    executor,
+    root: Path,
+    intent: dict[str, object],
+    **updates,
+) -> dict[str, object]:
+    paths = executor._bridge_paths(str(root))
+    payload = executor._result_payload(paths, intent, "received", False)
+    payload.update(updates)
+    path = root / "execution" / "acknowledgements" / (str(intent["intent_id"]) + ".json")
+    path.write_bytes(executor._file_bytes(payload))
+    return payload
 
 
 def query_from(orders, deals, calls):
@@ -180,6 +215,18 @@ def test_exact_passorder_shape_and_handlebar_only_reachability() -> None:
     ]
     assert len(calls) == 1
     call = calls[0]
+    passorder_loads = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id == "passorder"
+    ]
+    assert passorder_loads == [call.func]
+    assert not any(
+        isinstance(node, ast.Attribute) and node.attr == "passorder"
+        for node in ast.walk(tree)
+    )
     assert len(call.args) == 11
     assert call.keywords == []
     assert isinstance(call.args[0], ast.Name) and call.args[0].id == "operation_code"
@@ -209,17 +256,32 @@ def test_exact_passorder_shape_and_handlebar_only_reachability() -> None:
         "cancel",
         "cancelorder",
         "cancel_order",
+        "cancel_task",
         "algo_passorder",
         "smart_algo_passorder",
         "order_stock",
         "submit_order",
+        "buy",
+        "sell",
     }
     called_names = {
-        node.func.id
+        node.func.id if isinstance(node.func, ast.Name) else node.func.attr
         for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
     }
     assert called_names.isdisjoint(prohibited_calls)
+    prohibited_references = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id in prohibited_calls
+    }
+    prohibited_references.update(
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr in prohibited_calls
+    )
+    assert prohibited_references == set()
 
 
 def test_broker_queries_and_last_bar_guard_are_only_in_handlebar() -> None:
@@ -232,28 +294,35 @@ def test_broker_queries_and_last_bar_guard_are_only_in_handlebar() -> None:
         node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
     }
     query_owners = set()
+    last_bar_owners = set()
     query_lines = []
     passorder_line = None
     for name, function in functions.items():
         for node in ast.walk(function):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            if not isinstance(node, ast.Call):
                 continue
-            if node.func.id == "get_trade_detail_data":
-                query_owners.add(name)
-                query_lines.append(node.lineno)
-            elif node.func.id == "passorder":
-                passorder_line = node.lineno
+            if isinstance(node.func, ast.Name):
+                if node.func.id == "get_trade_detail_data":
+                    query_owners.add(name)
+                    query_lines.append(node.lineno)
+                elif node.func.id == "passorder":
+                    passorder_line = node.lineno
+            elif isinstance(node.func, ast.Attribute) and node.func.attr == "is_last_bar":
+                last_bar_owners.add(name)
     assert query_owners == {"handlebar"}
     assert len(query_lines) == 2
     assert passorder_line is not None and max(query_lines) < passorder_line
 
-    first = functions["handlebar"].body[0]
-    assert isinstance(first, ast.If)
-    assert isinstance(first.test, ast.UnaryOp) and isinstance(first.test.op, ast.Not)
-    assert isinstance(first.test.operand, ast.Call)
-    assert isinstance(first.test.operand.func, ast.Attribute)
-    assert first.test.operand.func.attr == "is_last_bar"
-    assert any(isinstance(item, ast.Return) for item in first.body)
+    assert last_bar_owners == {"handlebar"}
+    assert any(
+        isinstance(node, ast.If)
+        and isinstance(node.test, ast.UnaryOp)
+        and isinstance(node.test.op, ast.Not)
+        and isinstance(node.test.operand, ast.Name)
+        and node.test.operand.id == "is_last_bar"
+        and any(isinstance(item, ast.Return) for item in node.body)
+        for node in ast.walk(functions["handlebar"])
+    )
 
 
 def test_readonly_exporter_remains_byte_identical_and_mutation_free() -> None:
@@ -364,6 +433,38 @@ def test_query_failure_before_submission_stays_claimed_and_can_retry(tmp_path: P
     fail["value"] = False
     executor.handlebar(LastBarContext())
     assert len(submitted) == 1
+
+
+def test_bound_retry_fails_closed_if_a_second_executable_intent_appears(
+    tmp_path: Path,
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    write_intent(executor, root, intent_id="first")
+
+    def failing_query(*args):
+        del args
+        raise RuntimeError("transient")
+
+    submitted = []
+    executor.get_trade_detail_data = failing_query
+    executor.passorder = lambda *args: submitted.append(args)
+    executor.handlebar(LastBarContext())
+    assert read_document(root, "state", "first")["status"] == "claimed"
+
+    write_intent(executor, root, intent_id="second")
+    query_calls = []
+    executor.get_trade_detail_data = query_from([], [], query_calls)
+    executor.handlebar(LastBarContext())
+
+    assert submitted == []
+    assert query_calls == []
+    assert read_diagnostics(root)["intent_scan"] == {
+        "outcome": "multiple_executable_intents",
+        "executable_candidate_count": 2,
+        "reason_code": "multiple_executable_intents",
+    }
 
 
 @pytest.mark.parametrize(
@@ -480,6 +581,9 @@ def test_passorder_exception_is_uncertain_and_never_retried(tmp_path: Path) -> N
     assert first_state["status"] == first_result["status"] == "uncertain"
     assert first_state["passorder_attempted"] is True
     assert first_result["failure_code"] == "submission_uncertain"
+    assert read_diagnostics(root)["intent_scan"]["reason_code"] == (
+        "submission_uncertain"
+    )
     executor.handlebar(LastBarContext())
 
     assert len(attempts) == 1
@@ -496,6 +600,7 @@ def test_corrupt_received_state_cannot_clear_attempt_barrier(tmp_path: Path) -> 
     executor = load_executor()
     root = tmp_path / "bridge"
     configure_executor(executor, root)
+    paths = executor._bridge_paths(str(root))
     intent = write_intent(executor, root)
     corrupt = {
         "schema_version": executor.SCHEMA_VERSION,
@@ -513,6 +618,17 @@ def test_corrupt_received_state_cannot_clear_attempt_barrier(tmp_path: Path) -> 
     executor.get_trade_detail_data = lambda *args: calls.append(("query", args))
     executor.passorder = lambda *args: calls.append(("passorder", args))
 
+    scan = executor._scan_intents(paths)
+    # The authenticated intent is valid, while the corrupt state explicitly
+    # claims an attempted submission. Preserve the attempt barrier rather
+    # than allowing a later intent to become executable.
+    assert scan["selected_attempted"] is True
+    assert scan["outcome"] == "selected_reconciliation_intent"
+    assert scan["selected_kind"] == "barrier"
+    assert scan["selected_failure_code"] == "invalid_local_state"
+    assert scan["selected_status"] == "uncertain"
+    assert scan["executable_candidate_count"] == 0
+    assert scan["reason_code"] is None
     executor.handlebar(LastBarContext())
 
     assert intent["intent_id"] == "intent_127"
@@ -796,7 +912,7 @@ def test_expired_attempted_intent_still_reconciles_but_never_resubmits(tmp_path:
     assert read_document(root, "acknowledgements")["status"] == "broker_acknowledged"
 
 
-def test_fresh_expired_intent_queries_then_expires_without_submission(tmp_path: Path) -> None:
+def test_fresh_expired_intent_is_persisted_without_query_or_submission(tmp_path: Path) -> None:
     executor = load_executor()
     root = tmp_path / "bridge"
     configure_executor(executor, root)
@@ -814,10 +930,16 @@ def test_fresh_expired_intent_queries_then_expires_without_submission(tmp_path: 
 
     executor.handlebar(LastBarContext())
 
-    assert len(queries) == 2
+    assert queries == []
     assert submitted == []
     assert read_document(root, "state")["status"] == "expired"
     assert read_document(root, "acknowledgements")["status"] == "expired"
+    diagnostics = read_diagnostics(root)
+    assert diagnostics["intent_scan"] == {
+        "outcome": "expired_intent_observed",
+        "executable_candidate_count": 0,
+        "reason_code": "expired_intent_observed",
+    }
 
 
 def test_query_crossing_expiry_cannot_submit(tmp_path: Path) -> None:
@@ -873,6 +995,9 @@ def test_expiry_after_attempt_marker_is_rechecked_before_passorder(tmp_path: Pat
     assert result["status"] == "uncertain"
     assert result["passorder_attempted"] is True
     assert result["failure_code"] == "intent_expired_before_call"
+    assert read_diagnostics(root)["intent_scan"]["reason_code"] == (
+        "intent_expired_before_call"
+    )
 
 
 @pytest.mark.parametrize("order_status", [57, "57", "rejected", "waste"])
@@ -1246,6 +1371,11 @@ def test_only_one_intent_is_accepted_per_model_run(tmp_path: Path) -> None:
 
     assert calls == []
     assert list((root / "execution" / "state").glob("*.json")) == []
+    assert read_diagnostics(root)["intent_scan"] == {
+        "outcome": "multiple_executable_intents",
+        "executable_candidate_count": 2,
+        "reason_code": "multiple_executable_intents",
+    }
 
 
 def test_unrelated_and_nontext_remarks_do_not_match(tmp_path: Path) -> None:
@@ -1423,3 +1553,713 @@ def test_allowed_future_clock_skew_writes_readable_monotonic_artifacts(
     assert restarted_state.updated_at >= state.updated_at
     assert restarted_result.generated_at >= result.generated_at
     assert restarted_state.status == restarted_result.status == "uncertain"
+
+
+def test_executor_lifecycle_diagnostics_use_native_timer_and_exact_counts(
+    tmp_path: Path,
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    context = ScheduledContext(last_bar=False)
+    configure_executor(executor, root, context=context)
+
+    executor.after_init(context)
+    executor.executor_lifecycle_tick(context)
+    executor.handlebar(context)
+    context.last_bar = True
+    executor.handlebar(context)
+    executor.stop(context)
+
+    assert context.registrations == [
+        ("executor_lifecycle_tick", "30nSecond", "2019-10-14 13:20:00")
+    ]
+    diagnostics = read_diagnostics(root)
+    assert diagnostics["lifecycle"] == {
+        "init": {"count": 1, "latest_at": diagnostics["lifecycle"]["init"]["latest_at"]},
+        "after_init": {
+            "count": 1,
+            "latest_at": diagnostics["lifecycle"]["after_init"]["latest_at"],
+        },
+        "timer_callback": {
+            "count": 1,
+            "latest_at": diagnostics["lifecycle"]["timer_callback"]["latest_at"],
+        },
+        "handlebar": {
+            "count": 2,
+            "latest_at": diagnostics["lifecycle"]["handlebar"]["latest_at"],
+        },
+        "stop": {"count": 1, "latest_at": diagnostics["lifecycle"]["stop"]["latest_at"]},
+    }
+    assert all(
+        item["latest_at"] is not None for item in diagnostics["lifecycle"].values()
+    )
+    assert diagnostics["timer_registration"] == {
+        "attempted": True,
+        "succeeded": True,
+        "error_type": None,
+    }
+    assert diagnostics["handlebar_state"] == {
+        "entered": True,
+        "is_last_bar_evaluation_succeeded": True,
+        "is_last_bar": True,
+    }
+    assert diagnostics["intent_scan"] == {
+        "outcome": "no_intent_files",
+        "executable_candidate_count": 0,
+        "reason_code": "executor_stopped",
+    }
+    diagnostic_path = (
+        root / "execution" / "diagnostics" / "executor_lifecycle_v1.json"
+    )
+    encoded = diagnostic_path.read_bytes()
+    assert encoded == executor._file_bytes(diagnostics)
+    assert len(encoded) <= executor.MAX_DIAGNOSTIC_BYTES
+    assert RAW_ACCOUNT.encode("utf-8") not in encoded
+    assert BINDING_KEY.hex().encode("ascii") not in encoded
+    assert not diagnostic_path.with_suffix(".json.tmp").exists()
+
+
+def test_timer_and_handlebar_failures_are_bounded_diagnostics(tmp_path: Path) -> None:
+    class ProviderTimerError(Exception):
+        pass
+
+    class FailingContext(LastBarContext):
+        def run_time(self, *args) -> None:
+            del args
+            raise ProviderTimerError("provider text " + RAW_ACCOUNT)
+
+        def is_last_bar(self) -> bool:
+            raise RuntimeError("provider bar text " + RAW_ACCOUNT)
+
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    context = FailingContext()
+    configure_executor(executor, root, context=context)
+
+    executor.handlebar(context)
+
+    diagnostics = read_diagnostics(root)
+    assert diagnostics["timer_registration"] == {
+        "attempted": True,
+        "succeeded": False,
+        "error_type": "ProviderTimerError",
+    }
+    assert diagnostics["handlebar_state"] == {
+        "entered": True,
+        "is_last_bar_evaluation_succeeded": False,
+        "is_last_bar": None,
+    }
+    assert diagnostics["intent_scan"]["reason_code"] == "handlebar_is_last_bar_failed"
+    assert RAW_ACCOUNT not in json.dumps(diagnostics)
+
+
+def test_lifecycle_counter_is_saturated_and_diagnostic_failures_do_not_retry(
+    tmp_path: Path,
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    context = ScheduledContext()
+    configure_executor(executor, root, context=context)
+    executor.G.lifecycle["timer_callback"]["count"] = executor.MAX_QUANTITY
+    executor.executor_lifecycle_tick(context)
+    assert read_diagnostics(root)["lifecycle"]["timer_callback"]["count"] == (
+        executor.MAX_QUANTITY
+    )
+
+    write_intent(executor, root)
+    executor.get_trade_detail_data = query_from([], [], [])
+    submitted = []
+    executor.passorder = lambda *args: submitted.append(args)
+    executor._safe_write_executor_diagnostics = lambda: False
+
+    executor.handlebar(context)
+    executor.handlebar(context)
+
+    assert len(submitted) == 1
+    state = read_document(root, "state")
+    assert state["status"] == "uncertain"
+    assert state["passorder_attempted"] is True
+
+
+def test_terminal_and_expired_history_do_not_block_one_new_intent(tmp_path: Path) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    paths = executor._bridge_paths(str(root))
+    terminal = write_intent(executor, root, intent_id="done")
+    executor._write_local_state(paths, terminal, "filled", True)
+    now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+    write_intent(
+        executor,
+        root,
+        intent_id="expired",
+        created_at=now - dt.timedelta(minutes=10),
+        expires_at=now - dt.timedelta(minutes=5),
+    )
+    write_intent(executor, root, intent_id="new")
+    (root / "execution" / "intents" / "incomplete.json.tmp").write_text(
+        "ignored", encoding="ascii"
+    )
+    (root / "execution" / "intents" / "incomplete.tmp.json").write_text(
+        "ignored", encoding="ascii"
+    )
+    submitted = []
+    executor.get_trade_detail_data = query_from([], [], [])
+    executor.passorder = lambda *args: submitted.append(args)
+
+    executor.handlebar(LastBarContext())
+
+    assert [args[9] for args in submitted] == ["new"]
+    assert read_document(root, "state", "expired")["status"] == "expired"
+    assert read_document(root, "acknowledgements", "expired")["status"] == "expired"
+    diagnostics = read_diagnostics(root)
+    assert diagnostics["intent_scan"]["outcome"] == "selected_executable_intent"
+    assert diagnostics["intent_scan"]["executable_candidate_count"] == 1
+
+
+def test_attempted_history_is_reconciled_before_new_candidate_with_terminal_history(
+    tmp_path: Path,
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    paths = executor._bridge_paths(str(root))
+    active = write_intent(executor, root, intent_id="active")
+    executor._write_local_state(paths, active, "submission_attempted", True)
+    terminal = write_intent(executor, root, intent_id="done")
+    executor._write_local_state(paths, terminal, "filled", True)
+    write_intent(executor, root, intent_id="new")
+    order = SimpleNamespace(
+        m_strRemark="active",
+        m_strOrderRef="active-ref",
+        m_nOrderStatus=50,
+        m_nVolumeTotalOriginal=100,
+        m_nVolumeTraded=0,
+        m_strInstrumentID="600000.SH",
+    )
+    executor.get_trade_detail_data = query_from([order], [], [])
+    submitted = []
+    executor.passorder = lambda *args: submitted.append(args)
+
+    executor.handlebar(LastBarContext())
+
+    assert submitted == []
+    assert executor.G.intent_id == "active"
+    assert read_document(root, "acknowledgements", "active")["status"] == (
+        "broker_acknowledged"
+    )
+    assert not (root / "execution" / "state" / "new.json").exists()
+    diagnostics = read_diagnostics(root)
+    assert diagnostics["intent_scan"]["outcome"] == "selected_reconciliation_intent"
+    assert diagnostics["intent_scan"]["executable_candidate_count"] == 1
+
+
+def test_malformed_attempted_history_blocks_one_new_executable_intent(
+    tmp_path: Path,
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    paths = executor._bridge_paths(str(root))
+    old = write_intent(executor, root, intent_id="old")
+    executor._write_local_state(paths, old, "submission_attempted", True)
+    state_path = root / "execution" / "state" / "old.json"
+    state_bytes = state_path.read_bytes()
+    (root / "execution" / "intents" / "old.json").write_bytes(b"{invalid")
+    write_intent(executor, root, intent_id="new")
+    calls = []
+    executor.get_trade_detail_data = lambda *args: calls.append(("query", args))
+    executor.passorder = lambda *args: calls.append(("passorder", args))
+    scan = executor._scan_intents(paths)
+    assert scan["selected_attempted"] is None
+    assert scan["reason_code"] == "corrupt_intent_history_barrier"
+
+    executor.handlebar(LastBarContext())
+
+    assert calls == []
+    assert state_path.read_bytes() == state_bytes
+    assert not (root / "execution" / "state" / "new.json").exists()
+    assert read_diagnostics(root)["intent_scan"] == {
+        "outcome": "corrupt_intent_history_barrier",
+        "executable_candidate_count": 1,
+        "reason_code": "corrupt_intent_history_barrier",
+    }
+
+
+def test_malformed_uncertain_result_blocks_one_new_executable_intent(
+    tmp_path: Path,
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    paths = executor._bridge_paths(str(root))
+    old = write_intent(executor, root, intent_id="old")
+    result = executor._result_payload(
+        paths,
+        old,
+        "uncertain",
+        True,
+        failure_code="broker_readback_pending",
+    )
+    assert executor._safe_write_result(paths, result)
+    result_path = root / "execution" / "acknowledgements" / "old.json"
+    result_bytes = result_path.read_bytes()
+    (root / "execution" / "intents" / "old.json").write_bytes(b"{invalid")
+    write_intent(executor, root, intent_id="new")
+    calls = []
+    executor.get_trade_detail_data = lambda *args: calls.append(("query", args))
+    executor.passorder = lambda *args: calls.append(("passorder", args))
+
+    executor.handlebar(LastBarContext())
+
+    assert calls == []
+    assert result_path.read_bytes() == result_bytes
+    assert not (root / "execution" / "state" / "new.json").exists()
+    assert read_diagnostics(root)["intent_scan"]["reason_code"] == (
+        "corrupt_intent_history_barrier"
+    )
+
+
+def test_malformed_history_with_irregular_artifacts_is_stable_and_untouched(
+    tmp_path: Path,
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    write_intent(executor, root, intent_id="old")
+    state_path = root / "execution" / "state" / "old.json"
+    state_path.mkdir()
+    state_marker = state_path / "do-not-touch"
+    state_marker.write_bytes(b"preserved")
+    result_path = root / "execution" / "acknowledgements" / "old.json"
+    result_path.write_bytes(b"{corrupt-result")
+    result_bytes = result_path.read_bytes()
+    (root / "execution" / "intents" / "old.json").write_bytes(b"{invalid")
+    write_intent(executor, root, intent_id="new")
+    calls = []
+    executor.get_trade_detail_data = lambda *args: calls.append(("query", args))
+    executor.passorder = lambda *args: calls.append(("passorder", args))
+
+    executor.handlebar(LastBarContext())
+    first_scan = read_diagnostics(root)["intent_scan"]
+    executor.handlebar(LastBarContext())
+
+    assert calls == []
+    assert state_path.is_dir()
+    assert state_marker.read_bytes() == b"preserved"
+    assert result_path.read_bytes() == result_bytes
+    assert not (root / "execution" / "state" / "new.json").exists()
+    assert first_scan == read_diagnostics(root)["intent_scan"] == {
+        "outcome": "corrupt_intent_history_barrier",
+        "executable_candidate_count": 1,
+        "reason_code": "corrupt_intent_history_barrier",
+    }
+
+
+def test_bound_intent_becoming_malformed_never_falls_back_to_another_intent(
+    tmp_path: Path,
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    write_intent(executor, root, intent_id="bound")
+
+    def failing_query(*args):
+        del args
+        raise RuntimeError("transient")
+
+    submitted = []
+    executor.get_trade_detail_data = failing_query
+    executor.passorder = lambda *args: submitted.append(args)
+    executor.handlebar(LastBarContext())
+    assert executor.G.intent_id == "bound"
+    assert read_document(root, "state", "bound")["status"] == "claimed"
+
+    (root / "execution" / "intents" / "bound.json").write_bytes(b"{invalid")
+    write_intent(executor, root, intent_id="fallback")
+    query_calls = []
+    executor.get_trade_detail_data = query_from([], [], query_calls)
+    executor.handlebar(LastBarContext())
+
+    assert submitted == []
+    assert query_calls == []
+    assert executor.G.intent_id == "bound"
+    assert not (root / "execution" / "state" / "fallback.json").exists()
+    assert read_diagnostics(root)["intent_scan"]["reason_code"] == (
+        "corrupt_intent_history_barrier"
+    )
+
+
+def test_orphan_malformed_intent_does_not_block_one_new_executable_intent(
+    tmp_path: Path,
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    malformed_path = root / "execution" / "intents" / "orphan.json"
+    malformed_path.write_bytes(b"{invalid")
+    malformed_bytes = malformed_path.read_bytes()
+    write_intent(executor, root, intent_id="new")
+    query_calls = []
+    submitted = []
+    executor.get_trade_detail_data = query_from([], [], query_calls)
+    executor.passorder = lambda *args: submitted.append(args)
+
+    executor.handlebar(LastBarContext())
+
+    assert len(query_calls) == 2
+    assert [args[9] for args in submitted] == ["new"]
+    assert malformed_path.read_bytes() == malformed_bytes
+    assert not (root / "execution" / "state" / "orphan.json").exists()
+    diagnostics = read_diagnostics(root)
+    assert diagnostics["intent_scan"]["outcome"] == "selected_executable_intent"
+    assert diagnostics["intent_scan"]["executable_candidate_count"] == 1
+
+
+def test_orphan_malformed_only_history_has_deterministic_nonmutation_diagnostic(
+    tmp_path: Path,
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    malformed_path = root / "execution" / "intents" / "orphan.json"
+    malformed_path.write_bytes(b"{invalid")
+    malformed_bytes = malformed_path.read_bytes()
+    calls = []
+    executor.get_trade_detail_data = lambda *args: calls.append(("query", args))
+    executor.passorder = lambda *args: calls.append(("passorder", args))
+
+    executor.handlebar(LastBarContext())
+    first_scan = read_diagnostics(root)["intent_scan"]
+    executor.handlebar(LastBarContext())
+
+    assert calls == []
+    assert malformed_path.read_bytes() == malformed_bytes
+    assert list((root / "execution" / "state").glob("*.json")) == []
+    assert first_scan == read_diagnostics(root)["intent_scan"] == {
+        "outcome": "malformed_intent_observed",
+        "executable_candidate_count": 0,
+        "reason_code": "malformed_intent_observed",
+    }
+
+
+def test_corrupt_result_becomes_durable_attempt_barrier_across_callbacks(
+    tmp_path: Path,
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    paths = executor._bridge_paths(str(root))
+    old = write_intent(executor, root, intent_id="old")
+    executor._write_local_state(paths, old, "claimed", False)
+    result_path = root / "execution" / "acknowledgements" / "old.json"
+    result_path.write_text("{invalid", encoding="ascii")
+    write_intent(executor, root, intent_id="new")
+
+    def failing_query(*args):
+        del args
+        raise RuntimeError("provider text " + RAW_ACCOUNT)
+
+    submitted = []
+    executor.get_trade_detail_data = failing_query
+    executor.passorder = lambda *args: submitted.append(args)
+
+    executor.handlebar(LastBarContext())
+    executor.handlebar(LastBarContext())
+
+    assert submitted == []
+    state = read_document(root, "state", "old")
+    result = read_document(root, "acknowledgements", "old")
+    assert state["status"] == result["status"] == "uncertain"
+    assert state["passorder_attempted"] is result["passorder_attempted"] is True
+    assert state["failure_code"] == result["failure_code"] == "invalid_local_result"
+    assert not (root / "execution" / "state" / "new.json").exists()
+
+
+@pytest.mark.parametrize(
+    "terminal_evidence",
+    ["filled_state_corrupt_result", "filled_result_corrupt_state", "filled_result_received_state"],
+)
+def test_terminal_artifact_is_authoritative_over_malformed_or_stale_companion(
+    tmp_path: Path, terminal_evidence: str
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    paths = executor._bridge_paths(str(root))
+    old = write_intent(executor, root, intent_id="old")
+    state_path = root / "execution" / "state" / "old.json"
+    result_path = root / "execution" / "acknowledgements" / "old.json"
+    if terminal_evidence == "filled_state_corrupt_result":
+        executor._write_local_state(paths, old, "filled", True)
+        result_path.write_text("{invalid", encoding="ascii")
+    else:
+        result = executor._result_payload(
+            paths,
+            old,
+            "filled",
+            True,
+            reconciliation={
+                "filled_quantity": 100,
+                "average_fill_price": 10.0,
+                "deal_count": 1,
+            },
+        )
+        assert executor._safe_write_result(paths, result)
+        if terminal_evidence == "filled_result_corrupt_state":
+            state_path.write_text("{invalid", encoding="ascii")
+        else:
+            executor._write_local_state(paths, old, "received", False)
+    terminal_bytes = result_path.read_bytes() if result_path.exists() else None
+    write_intent(executor, root, intent_id="new")
+    submitted = []
+    executor.get_trade_detail_data = query_from([], [], [])
+    executor.passorder = lambda *args: submitted.append(args)
+
+    executor.handlebar(LastBarContext())
+
+    assert [args[9] for args in submitted] == ["new"]
+    if terminal_bytes is not None:
+        assert result_path.read_bytes() == terminal_bytes
+
+
+def test_pre_submission_state_failure_is_not_counted_as_executable(tmp_path: Path) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    paths = executor._bridge_paths(str(root))
+    intent = write_intent(executor, root)
+    executor._write_local_state(paths, intent, "claimed", False, "manual_barrier")
+    executor.get_trade_detail_data = query_from([], [], [])
+    submitted = []
+    executor.passorder = lambda *args: submitted.append(args)
+
+    executor.handlebar(LastBarContext())
+
+    assert submitted == []
+    assert read_document(root, "state")["status"] == "uncertain"
+    diagnostics = read_diagnostics(root)
+    assert diagnostics["intent_scan"]["outcome"] == "selected_reconciliation_intent"
+    assert diagnostics["intent_scan"]["executable_candidate_count"] == 0
+    assert diagnostics["intent_scan"]["reason_code"] == (
+        "pending_intent_reconciliation"
+    )
+
+
+@pytest.mark.parametrize(
+    ("history_kind", "expected_reason"),
+    [
+        ("malformed", "malformed_intent_observed"),
+        ("terminal", "terminal_intent_ignored"),
+    ],
+)
+def test_nonexecutable_history_reason_is_deterministic(
+    tmp_path: Path, history_kind: str, expected_reason: str
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    if history_kind == "malformed":
+        (root / "execution" / "intents" / "bad.json").write_text(
+            "{invalid", encoding="ascii"
+        )
+    else:
+        intent = write_intent(executor, root)
+        executor._write_local_state(
+            executor._bridge_paths(str(root)), intent, "filled", True
+        )
+    calls = []
+    executor.get_trade_detail_data = lambda *args: calls.append(("query", args))
+    executor.passorder = lambda *args: calls.append(("passorder", args))
+
+    executor.handlebar(LastBarContext())
+
+    assert calls == []
+    diagnostics = read_diagnostics(root)
+    assert diagnostics["intent_scan"]["outcome"] == expected_reason
+    assert diagnostics["intent_scan"]["reason_code"] == expected_reason
+    assert diagnostics["intent_scan"]["executable_candidate_count"] == 0
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"schema_version": True},
+        {"protocol_version": "wrong-protocol"},
+        {"strategy_name": "wrong-strategy"},
+        {"acceptance_limitation": "wrong-limitation"},
+        {"symbol": "000001.SZ"},
+        {"side": "sell"},
+        {"requested_quantity": True},
+        {"requested_quantity": 200},
+        {"limit_price": -1.0},
+        {"user_order_id": "other"},
+        {"generated_at": "2000-01-01T00:00:00Z"},
+        {"generated_at": "2026-07- 5T01:02:03Z"},
+        {"status": "submission_attempted", "passorder_attempted": False},
+        {"status": "expired", "passorder_attempted": True},
+        {"status": "broker_acknowledged"},
+        {"status": "rejected", "failure_code": "broker_order_rejected"},
+        {"status": "partially_filled"},
+        {
+            "status": "filled",
+            "passorder_attempted": True,
+            "filled_quantity": 0,
+            "deal_count": 0,
+        },
+        {
+            "status": "received",
+            "filled_quantity": 100,
+            "average_fill_price": 10.0,
+            "deal_count": 1,
+        },
+        {"filled_quantity": True},
+        {"filled_quantity": 101},
+        {"average_fill_price": 10.0},
+        {"deal_count": -1},
+        {"deal_count": 10001},
+        {"broker_order_reference": "x" * 129},
+        {"system_order_id": "x\nraw"},
+        {"order_status": "provider-free-text"},
+        {"submission_status": 2**40},
+        {"failure_code": "Bad-Code"},
+        {"failure_code": "a" + BINDING_KEY.hex()},
+        {"failure_type": "bad type"},
+        {"latest_snapshot_sequence": 0},
+        {"latest_snapshot_sequence": True},
+        {"latest_snapshot_sequence": 2**31},
+    ],
+)
+def test_semantically_invalid_canonical_result_is_a_durable_no_submit_barrier(
+    tmp_path: Path, updates: dict[str, object]
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    old = write_intent(executor, root, intent_id="old")
+    write_result(executor, root, old, **updates)
+    write_intent(executor, root, intent_id="new")
+    queries = []
+    executor.get_trade_detail_data = query_from([], [], queries)
+    submitted = []
+    executor.passorder = lambda *args: submitted.append(args)
+
+    executor.handlebar(LastBarContext())
+    executor.handlebar(LastBarContext())
+
+    assert submitted == []
+    assert len(queries) == 4
+    state = read_document(root, "state", "old")
+    result = read_document(root, "acknowledgements", "old")
+    assert state["status"] == result["status"] == "uncertain"
+    assert state["passorder_attempted"] is result["passorder_attempted"] is True
+    assert state["failure_code"] == result["failure_code"] == "invalid_local_result"
+    assert not (root / "execution" / "state" / "new.json").exists()
+    diagnostics = read_diagnostics(root)
+    assert diagnostics["intent_scan"]["executable_candidate_count"] == 1
+    assert diagnostics["intent_scan"]["reason_code"] == (
+        "pending_intent_reconciliation"
+    )
+
+
+def test_state_timestamp_before_authenticated_intent_is_a_durable_barrier(
+    tmp_path: Path,
+) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(executor, root)
+    intent = write_intent(executor, root)
+    state = {
+        "schema_version": executor.SCHEMA_VERSION,
+        "protocol_version": executor.PROTOCOL_VERSION,
+        "intent_id": intent["intent_id"],
+        "updated_at": "2000-01-01T00:00:00Z",
+        "status": "received",
+        "expected_redacted_account_id": executor.G.redacted_account_id,
+        "passorder_attempted": False,
+        "failure_code": None,
+    }
+    state_path = root / "execution" / "state" / "intent_127.json"
+    state_path.write_bytes(executor._file_bytes(state))
+    calls = []
+    executor.get_trade_detail_data = lambda *args: calls.append(("query", args))
+    executor.passorder = lambda *args: calls.append(("passorder", args))
+
+    executor.handlebar(LastBarContext())
+    executor.handlebar(LastBarContext())
+
+    assert calls == [
+        ("query", (RAW_ACCOUNT, "STOCK", "order")),
+        ("query", (RAW_ACCOUNT, "STOCK", "deal")),
+    ]
+    durable = read_document(root, "state")
+    assert durable["status"] == "uncertain"
+    assert durable["passorder_attempted"] is True
+    assert durable["failure_code"] == "invalid_local_state"
+
+
+def test_sensitive_historical_failure_code_is_not_propagated(tmp_path: Path) -> None:
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    raw_account = "123456789"
+    configure_executor(executor, root, raw_account=raw_account)
+    intent = write_intent(executor, root)
+    state = {
+        "schema_version": executor.SCHEMA_VERSION,
+        "protocol_version": executor.PROTOCOL_VERSION,
+        "intent_id": intent["intent_id"],
+        "updated_at": executor._utc_text(),
+        "status": "claimed",
+        "expected_redacted_account_id": executor.G.redacted_account_id,
+        "passorder_attempted": False,
+        "failure_code": "account_123456789",
+    }
+    state_path = root / "execution" / "state" / "intent_127.json"
+    state_path.write_bytes(executor._file_bytes(state))
+    executor.get_trade_detail_data = query_from([], [], [])
+    executor.passorder = lambda *args: pytest.fail("sensitive barrier must not submit")
+
+    executor.handlebar(LastBarContext())
+    executor.handlebar(LastBarContext())
+
+    durable = read_document(root, "state")
+    assert durable["status"] == "uncertain"
+    assert durable["passorder_attempted"] is True
+    assert durable["failure_code"] == "invalid_local_state"
+    for path in (root / "execution").rglob("*.json"):
+        assert raw_account not in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "exception_name",
+    [
+        "",
+        "Account123456789Error",
+        "StockProviderError",
+        "A" + BINDING_KEY.hex(),
+    ],
+)
+def test_timer_exception_type_cannot_encode_in_memory_identity(
+    tmp_path: Path, exception_name: str
+) -> None:
+    sensitive_error = type(exception_name, (Exception,), {})
+
+    class SensitiveTimerContext(LastBarContext):
+        def run_time(self, *args) -> None:
+            del args
+            raise sensitive_error("not serialized")
+
+    executor = load_executor()
+    root = tmp_path / "bridge"
+    configure_executor(
+        executor,
+        root,
+        context=SensitiveTimerContext(),
+        raw_account="123456789",
+    )
+
+    diagnostics = read_diagnostics(root)
+    assert diagnostics["timer_registration"]["error_type"] == "Exception"
+    encoded = json.dumps(diagnostics, sort_keys=True).casefold()
+    assert "123456789" not in encoded
+    assert BINDING_KEY.hex() not in encoded

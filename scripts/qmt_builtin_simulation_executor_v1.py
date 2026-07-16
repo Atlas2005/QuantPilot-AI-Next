@@ -36,16 +36,19 @@ ACCEPTANCE_LIMITATION = "qmt_live_trading_mode_with_broker_simulation_account_on
 MAX_INTENT_BYTES = 16 * 1024
 MAX_STATE_BYTES = 16 * 1024
 MAX_RESULT_BYTES = 64 * 1024
+MAX_DIAGNOSTIC_BYTES = 32 * 1024
 MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
 MAX_BROKER_RECORDS = 10000
 MAX_IDENTIFIER_LENGTH = 128
 MAX_STATUS_LENGTH = 128
 MAX_FAILURE_CODE_LENGTH = 80
+MAX_FAILURE_TYPE_LENGTH = 128
 MAX_RUN_LABEL_LENGTH = 128
 MAX_QUANTITY = 2147483647
 MAX_LIMIT_PRICE = 1000000000.0
 MAX_FUTURE_SKEW_SECONDS = 300
 MAX_INTENT_LIFETIME_SECONDS = 86400
+EXECUTOR_DIAGNOSTIC_INTERVAL_SECONDS = 30
 
 INTENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 SYMBOL_RE = re.compile(r"^[0-9]{6}\.(SH|SZ|BJ)$")
@@ -54,6 +57,8 @@ ACCOUNT_TOKEN_RE = re.compile(r"^qmtacct-v1-[0-9a-f]{24}$")
 UTC_TIMESTAMP_RE = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
 )
+FAILURE_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
+FAILURE_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,127}$")
 
 BASE_INTENT_KEYS = frozenset(
     (
@@ -153,6 +158,15 @@ SAFE_STATUS_TEXT = {
     "canceled": "cancelled",
     "unknown": "unknown",
 }
+SAFE_RESULT_STATUS_TEXT = frozenset(SAFE_STATUS_TEXT.values())
+
+LIFECYCLE_CALLBACK_NAMES = (
+    "init",
+    "after_init",
+    "timer_callback",
+    "handlebar",
+    "stop",
+)
 
 
 class _ExecutionState(object):
@@ -168,6 +182,17 @@ class _ExecutionState(object):
         self.lock_handle = None
         self.lock_fd = None
         self.lock_path = None
+        self.lifecycle_started_at = None
+        self.lifecycle = {}
+        self.timer_registration_attempted = False
+        self.timer_registration_succeeded = False
+        self.timer_registration_error_type = None
+        self.handlebar_entered = False
+        self.handlebar_is_last_bar_evaluation_succeeded = None
+        self.handlebar_is_last_bar = None
+        self.intent_scan_outcome = "not_scanned"
+        self.executable_candidate_count = 0
+        self.diagnostic_reason_code = "waiting_for_handlebar"
 
 
 G = _ExecutionState()
@@ -302,11 +327,16 @@ def _bridge_paths(root=None):
     intents = os.path.join(execution, "intents")
     acknowledgements = os.path.join(execution, "acknowledgements")
     state = os.path.join(execution, "state")
+    diagnostics = os.path.join(execution, "diagnostics")
     return {
         "root": absolute_root,
         "intents": intents,
         "acknowledgements": acknowledgements,
         "state": state,
+        "diagnostics": diagnostics,
+        "executor_diagnostics": os.path.join(
+            diagnostics, "executor_lifecycle_v1.json"
+        ),
         "binding_key": os.path.join(
             absolute_root, "state", ACCOUNT_BINDING_KEY_FILENAME
         ),
@@ -593,36 +623,356 @@ def _intent_is_expired(intent):
     return _parse_utc_text(intent["expires_at"]) <= _utc_now_datetime()
 
 
-def _select_intent_path(paths):
-    if G.intent_id is not None:
-        selected = os.path.join(paths["intents"], G.intent_id + ".json")
+def _persist_expired_intent(paths, intent, local_state, prior_result):
+    if local_state is None or local_state.get("status") != "expired":
         try:
-            _require_path_beneath_root(selected, paths["root"])
-        except _SafeFailure:
-            return None
-        return selected
+            _write_local_state(paths, intent, "expired", False, "intent_expired")
+        except Exception:
+            pass
+    if prior_result is None or prior_result.get("status") != "expired":
+        try:
+            result = _result_payload(
+                paths,
+                intent,
+                "expired",
+                False,
+                failure_code="intent_expired",
+            )
+            _safe_write_result(paths, result)
+        except Exception:
+            pass
+
+
+def _bounded_regular_artifact_shape(path, maximum_bytes):
     try:
-        names = os.listdir(paths["intents"])
+        item_stat = os.lstat(path)
+    except OSError as exc:
+        if getattr(exc, "errno", None) == errno.ENOENT:
+            return "absent"
+        return "unknown"
+    if (
+        stat.S_ISREG(item_stat.st_mode)
+        and item_stat.st_size >= 2
+        and item_stat.st_size <= maximum_bytes
+    ):
+        return "bounded_regular"
+    return "other"
+
+
+def _malformed_intent_entry(paths, path, intent_id):
+    state_shape = _bounded_regular_artifact_shape(
+        os.path.join(paths["state"], intent_id + ".json"), MAX_STATE_BYTES
+    )
+    result_shape = _bounded_regular_artifact_shape(
+        os.path.join(paths["acknowledgements"], intent_id + ".json"),
+        MAX_RESULT_BYTES,
+    )
+    if state_shape != "absent" or result_shape != "absent":
+        return {
+            "path": path,
+            "intent": None,
+            "intent_id": intent_id,
+            "kind": "corrupt_history_barrier",
+            "observation": "corrupt_intent_history_barrier",
+            "passorder_attempted": None,
+            "failure_code": "invalid_intent",
+            "status": None,
+        }
+    return {
+        "path": path,
+        "intent": None,
+        "intent_id": intent_id,
+        "kind": "malformed",
+        "observation": "malformed_intent_observed",
+        "passorder_attempted": None,
+        "failure_code": "invalid_intent",
+        "status": None,
+    }
+
+
+def _classify_intent_path(paths, path, intent_id, now):
+    try:
+        intent, encoded = _read_bounded_json(path, MAX_INTENT_BYTES)
+        clock_expired = _validate_intent(intent, encoded, path, now)
+    except _SafeFailure:
+        return _malformed_intent_entry(paths, path, intent_id)
+
+    local_state = None
+    state_error = False
+    try:
+        local_state = _read_local_state(paths, intent)
+    except _SafeFailure:
+        state_error = True
+    prior_result = None
+    result_error = False
+    try:
+        prior_result = _read_result_for_discovery(paths, intent)
+    except _SafeFailure:
+        result_error = True
+
+    artifacts = []
+    if local_state is not None:
+        artifacts.append(local_state)
+    if prior_result is not None:
+        artifacts.append(prior_result)
+    statuses = set(item["status"] for item in artifacts)
+    attempted = any(item["passorder_attempted"] for item in artifacts)
+    pre_submission_failure = False
+    pre_submission_failure_code = None
+    if (
+        local_state is not None
+        and local_state["status"] in PRE_SUBMISSION_STATUSES
+        and local_state.get("failure_code") is not None
+    ):
+        pre_submission_failure = True
+        pre_submission_failure_code = local_state["failure_code"]
+    elif (
+        local_state is None
+        and prior_result is not None
+        and prior_result["status"] in PRE_SUBMISSION_STATUSES
+        and prior_result.get("failure_code") is not None
+    ):
+        pre_submission_failure = True
+        pre_submission_failure_code = prior_result["failure_code"]
+    artifact_failure_code = None
+    if state_error:
+        artifact_failure_code = "invalid_local_state"
+    elif result_error:
+        artifact_failure_code = "invalid_local_result"
+    protected_statuses = frozenset(
+        (
+            "submission_attempted",
+            "broker_acknowledged",
+            "partially_filled",
+            "uncertain",
+        )
+    )
+
+    if statuses.intersection(("filled", "rejected")):
+        return {
+            "path": path,
+            "intent": intent,
+            "intent_id": intent_id,
+            "kind": "terminal",
+            "observation": "terminal_intent_ignored",
+            "passorder_attempted": attempted,
+            "failure_code": None,
+            "status": "filled" if "filled" in statuses else "rejected",
+        }
+    if attempted or statuses.intersection(protected_statuses):
+        protected_status = "uncertain"
+        for candidate_status in (
+            "partially_filled",
+            "broker_acknowledged",
+            "submission_attempted",
+            "uncertain",
+        ):
+            if candidate_status in statuses:
+                protected_status = candidate_status
+                break
+        return {
+            "path": path,
+            "intent": intent,
+            "intent_id": intent_id,
+            "kind": "reconciliation",
+            "observation": None,
+            "passorder_attempted": attempted or state_error or result_error,
+            "failure_code": artifact_failure_code or pre_submission_failure_code,
+            "status": protected_status,
+        }
+    if state_error or result_error:
+        return {
+            "path": path,
+            "intent": intent,
+            "intent_id": intent_id,
+            "kind": "barrier",
+            "observation": "malformed_intent_observed",
+            "passorder_attempted": True,
+            "failure_code": artifact_failure_code,
+            "status": "uncertain",
+        }
+    if "expired" in statuses or clock_expired:
+        _persist_expired_intent(paths, intent, local_state, prior_result)
+        return {
+            "path": path,
+            "intent": intent,
+            "intent_id": intent_id,
+            "kind": "expired",
+            "observation": "expired_intent_observed",
+            "passorder_attempted": False,
+            "failure_code": "intent_expired",
+            "status": "expired",
+        }
+    if pre_submission_failure:
+        return {
+            "path": path,
+            "intent": intent,
+            "intent_id": intent_id,
+            "kind": "reconciliation",
+            "observation": None,
+            "passorder_attempted": False,
+            "failure_code": pre_submission_failure_code,
+            "status": "uncertain",
+        }
+    return {
+        "path": path,
+        "intent": intent,
+        "intent_id": intent_id,
+        "kind": "executable",
+        "observation": None,
+        "passorder_attempted": False,
+        "failure_code": None,
+        "status": "received",
+    }
+
+
+def _empty_intent_scan(outcome, reason_code, executable_count=0):
+    return {
+        "selected_path": None,
+        "selected_kind": None,
+        "selected_attempted": None,
+        "selected_failure_code": None,
+        "selected_status": None,
+        "outcome": outcome,
+        "executable_candidate_count": executable_count,
+        "reason_code": reason_code,
+    }
+
+
+def _scan_intents(paths):
+    try:
+        names = sorted(os.listdir(paths["intents"]))
     except Exception:
-        return None
-    candidates = []
-    for name in names:
-        if not name.endswith(".json"):
-            continue
+        return _empty_intent_scan("intent_scan_failed", "malformed_intent_observed")
+    completed_names = [
+        name
+        for name in names
+        if name.endswith(".json")
+        and not name.startswith(".")
+        and ".tmp." not in name.lower()
+    ]
+    if not completed_names:
+        if G.intent_id is not None:
+            return _empty_intent_scan(
+                "bound_intent_unavailable", "bound_intent_unavailable"
+            )
+        return _empty_intent_scan("no_intent_files", "no_intent_files")
+
+    entries = []
+    malformed_count = 0
+    now = _utc_now_datetime()
+    for name in completed_names:
         intent_id = name[:-5]
-        if INTENT_ID_RE.fullmatch(intent_id) is None:
-            continue
         path = os.path.join(paths["intents"], name)
+        if INTENT_ID_RE.fullmatch(intent_id) is None:
+            malformed_count += 1
+            continue
         try:
             _require_path_beneath_root(path, paths["root"])
-            item_stat = os.lstat(path)
-        except (OSError, _SafeFailure):
-            continue
-        if stat.S_ISREG(item_stat.st_mode):
-            candidates.append(path)
-    if len(candidates) != 1:
-        return None
-    return candidates[0]
+        except _SafeFailure:
+            entry = _malformed_intent_entry(paths, path, intent_id)
+        else:
+            entry = _classify_intent_path(paths, path, intent_id, now)
+        entries.append(entry)
+        if entry["kind"] in (
+            "malformed",
+            "barrier",
+            "corrupt_history_barrier",
+        ):
+            malformed_count += 1
+
+    executable = [item for item in entries if item["kind"] == "executable"]
+    corrupt_history = [
+        item for item in entries if item["kind"] == "corrupt_history_barrier"
+    ]
+    protected = [
+        item for item in entries if item["kind"] in ("reconciliation", "barrier")
+    ]
+    executable_count = len(executable)
+
+    if corrupt_history:
+        return _empty_intent_scan(
+            "corrupt_intent_history_barrier",
+            "corrupt_intent_history_barrier",
+            executable_count,
+        )
+
+    bound_entry = None
+    if G.intent_id is not None:
+        for entry in entries:
+            if entry["intent_id"] == G.intent_id:
+                bound_entry = entry
+                break
+        if bound_entry is None or bound_entry["kind"] == "malformed":
+            return _empty_intent_scan(
+                "bound_intent_unavailable",
+                "bound_intent_unavailable",
+                executable_count,
+            )
+
+    if executable_count > 1:
+        return _empty_intent_scan(
+            "multiple_executable_intents",
+            "multiple_executable_intents",
+            executable_count,
+        )
+
+    if bound_entry is not None:
+        return {
+            "selected_path": bound_entry["path"],
+            "selected_kind": bound_entry["kind"],
+            "selected_attempted": bound_entry["passorder_attempted"],
+            "selected_failure_code": bound_entry["failure_code"],
+            "selected_status": bound_entry["status"],
+            "outcome": "selected_bound_intent",
+            "executable_candidate_count": executable_count,
+            "reason_code": None,
+        }
+
+    if len(protected) == 1:
+        return {
+            "selected_path": protected[0]["path"],
+            "selected_kind": protected[0]["kind"],
+            "selected_attempted": protected[0]["passorder_attempted"],
+            "selected_failure_code": protected[0]["failure_code"],
+            "selected_status": protected[0]["status"],
+            "outcome": "selected_reconciliation_intent",
+            "executable_candidate_count": executable_count,
+            "reason_code": None,
+        }
+    if len(protected) > 1:
+        reason = "malformed_intent_observed" if malformed_count else "no_executable_intent"
+        return _empty_intent_scan(
+            "multiple_reconciliation_intents", reason, executable_count
+        )
+    if executable_count == 1:
+        return {
+            "selected_path": executable[0]["path"],
+            "selected_kind": "executable",
+            "selected_attempted": False,
+            "selected_failure_code": None,
+            "selected_status": "received",
+            "outcome": "selected_executable_intent",
+            "executable_candidate_count": 1,
+            "reason_code": None,
+        }
+
+    observations = set(
+        item["observation"] for item in entries if item["observation"] is not None
+    )
+    if malformed_count or "malformed_intent_observed" in observations:
+        reason = "malformed_intent_observed"
+    elif "expired_intent_observed" in observations:
+        reason = "expired_intent_observed"
+    elif "terminal_intent_ignored" in observations:
+        reason = "terminal_intent_ignored"
+    else:
+        reason = "no_executable_intent"
+    return _empty_intent_scan(reason, reason, executable_count)
+
+
+def _select_intent_path(paths):
+    return _scan_intents(paths)["selected_path"]
 
 
 def _state_path(paths, intent_id):
@@ -660,6 +1010,214 @@ def _artifact_utc_text(intent, prior_path, prior_field, maximum_bytes):
     return _utc_text(selected)
 
 
+def _contains_sensitive_identity(value, include_account_type=False):
+    if not isinstance(value, str):
+        return False
+    lowered_value = value.casefold()
+    sensitive_values = [G.account_id, G.redacted_account_id]
+    if include_account_type:
+        sensitive_values.append(G.account_type)
+    for sensitive_value in sensitive_values:
+        if sensitive_value is None:
+            continue
+        try:
+            sensitive_text = str(sensitive_value).strip().casefold()
+        except Exception:
+            return True
+        if sensitive_text and sensitive_text in lowered_value:
+            return True
+    if G.binding_key is not None:
+        try:
+            binding_text = G.binding_key.hex().casefold()
+        except Exception:
+            return True
+        if binding_text and binding_text in lowered_value:
+            return True
+    return False
+
+
+def _validate_optional_result_text(value, maximum):
+    if value is None:
+        return
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > maximum
+        or "\x00" in value
+        or "\r" in value
+        or "\n" in value
+        or _contains_sensitive_identity(value)
+    ):
+        raise _SafeFailure("invalid_local_result")
+
+
+def _validate_result_status_code(value):
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise _SafeFailure("invalid_local_result")
+    if isinstance(value, int):
+        if value < -2147483648 or value > 2147483647:
+            raise _SafeFailure("invalid_local_result")
+        return
+    if value not in SAFE_RESULT_STATUS_TEXT:
+        raise _SafeFailure("invalid_local_result")
+
+
+def _validate_result_payload(payload, encoded, intent):
+    if frozenset(payload) != RESULT_KEYS or encoded != _file_bytes(payload):
+        raise _SafeFailure("invalid_local_result")
+    schema_version = payload.get("schema_version")
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != SCHEMA_VERSION
+        or payload.get("protocol_version") != PROTOCOL_VERSION
+    ):
+        raise _SafeFailure("invalid_local_result")
+    if payload.get("intent_id") != intent["intent_id"]:
+        raise _SafeFailure("invalid_local_result")
+    binding = payload.get("expected_redacted_account_id")
+    if not isinstance(binding, str) or not hmac.compare_digest(
+        binding, G.redacted_account_id
+    ):
+        raise _SafeFailure("invalid_local_result")
+    generated_at = _parse_utc_text(payload.get("generated_at"))
+    if generated_at < _parse_utc_text(intent["created_at"]):
+        raise _SafeFailure("invalid_local_result")
+    status = payload.get("status")
+    if not isinstance(status, str) or status not in STATUSES:
+        raise _SafeFailure("invalid_local_result")
+    if payload.get("symbol") != intent["symbol"]:
+        raise _SafeFailure("invalid_local_result")
+    if payload.get("side") != intent["side"]:
+        raise _SafeFailure("invalid_local_result")
+    requested = payload.get("requested_quantity")
+    if (
+        isinstance(requested, bool)
+        or not isinstance(requested, int)
+        or requested != intent["quantity"]
+    ):
+        raise _SafeFailure("invalid_local_result")
+    limit_price = payload.get("limit_price")
+    if (
+        isinstance(limit_price, bool)
+        or not isinstance(limit_price, (int, float))
+        or not math.isfinite(limit_price)
+        or limit_price <= 0
+        or limit_price > MAX_LIMIT_PRICE
+        or limit_price != intent["limit_price"]
+    ):
+        raise _SafeFailure("invalid_local_result")
+    if payload.get("strategy_name") != STRATEGY_NAME:
+        raise _SafeFailure("invalid_local_result")
+    if payload.get("user_order_id") != intent["intent_id"]:
+        raise _SafeFailure("invalid_local_result")
+    if payload.get("acceptance_limitation") != ACCEPTANCE_LIMITATION:
+        raise _SafeFailure("invalid_local_result")
+
+    attempted = payload.get("passorder_attempted")
+    if not isinstance(attempted, bool):
+        raise _SafeFailure("invalid_local_result")
+    if status == "submission_attempted" and not attempted:
+        raise _SafeFailure("invalid_local_result")
+    if status in PRE_SUBMISSION_STATUSES or status == "expired":
+        if attempted:
+            raise _SafeFailure("invalid_local_result")
+
+    broker_reference = payload.get("broker_order_reference")
+    system_order_id = payload.get("system_order_id")
+    _validate_optional_result_text(broker_reference, MAX_IDENTIFIER_LENGTH)
+    _validate_optional_result_text(system_order_id, MAX_IDENTIFIER_LENGTH)
+    order_status = payload.get("order_status")
+    submission_status = payload.get("submission_status")
+    _validate_result_status_code(order_status)
+    _validate_result_status_code(submission_status)
+
+    filled = payload.get("filled_quantity")
+    if (
+        isinstance(filled, bool)
+        or not isinstance(filled, int)
+        or filled < 0
+        or filled > intent["quantity"]
+    ):
+        raise _SafeFailure("invalid_local_result")
+    average = payload.get("average_fill_price")
+    if average is not None and (
+        isinstance(average, bool)
+        or not isinstance(average, (int, float))
+        or not math.isfinite(average)
+        or average <= 0
+        or average > MAX_LIMIT_PRICE
+    ):
+        raise _SafeFailure("invalid_local_result")
+    deal_count = payload.get("deal_count")
+    if (
+        isinstance(deal_count, bool)
+        or not isinstance(deal_count, int)
+        or deal_count < 0
+        or deal_count > MAX_BROKER_RECORDS
+    ):
+        raise _SafeFailure("invalid_local_result")
+
+    failure_code = payload.get("failure_code")
+    if failure_code is not None and (
+        not isinstance(failure_code, str)
+        or FAILURE_CODE_RE.fullmatch(failure_code) is None
+        or _contains_sensitive_identity(failure_code)
+    ):
+        raise _SafeFailure("invalid_local_result")
+    failure_type = payload.get("failure_type")
+    if failure_type is not None and (
+        not isinstance(failure_type, str)
+        or len(failure_type) > MAX_FAILURE_TYPE_LENGTH
+        or FAILURE_TYPE_RE.fullmatch(failure_type) is None
+        or _contains_sensitive_identity(failure_type)
+    ):
+        raise _SafeFailure("invalid_local_result")
+    sequence = payload.get("latest_snapshot_sequence")
+    if sequence is not None and (
+        isinstance(sequence, bool)
+        or not isinstance(sequence, int)
+        or sequence < 1
+        or sequence > MAX_QUANTITY
+    ):
+        raise _SafeFailure("invalid_local_result")
+
+    order_observed = any(
+        value is not None
+        for value in (
+            broker_reference,
+            system_order_id,
+            order_status,
+            submission_status,
+        )
+    )
+    if status == "broker_acknowledged" and not order_observed:
+        raise _SafeFailure("invalid_local_result")
+    if status == "rejected" and (
+        not order_observed or failure_code != "broker_order_rejected"
+    ):
+        raise _SafeFailure("invalid_local_result")
+    if status == "partially_filled" and not (
+        0 < filled < intent["quantity"] and deal_count > 0
+    ):
+        raise _SafeFailure("invalid_local_result")
+    if status == "filled" and not (
+        filled == intent["quantity"] and deal_count > 0
+    ):
+        raise _SafeFailure("invalid_local_result")
+    if filled > 0 and (deal_count <= 0 or average is None):
+        raise _SafeFailure("invalid_local_result")
+    if filled == 0 and average is not None:
+        raise _SafeFailure("invalid_local_result")
+    if status not in ("partially_filled", "filled") and (
+        filled != 0 or deal_count != 0
+    ):
+        raise _SafeFailure("invalid_local_result")
+    return payload
+
+
 def _read_prior_result(paths, intent):
     try:
         payload, encoded = _read_bounded_json(
@@ -669,33 +1227,20 @@ def _read_prior_result(paths, intent):
         )
         if payload is None:
             return None
-        if frozenset(payload) != RESULT_KEYS or encoded != _file_bytes(payload):
-            return None
-        schema_version = payload.get("schema_version")
-        if (
-            isinstance(schema_version, bool)
-            or not isinstance(schema_version, int)
-            or schema_version != SCHEMA_VERSION
-            or payload.get("protocol_version") != PROTOCOL_VERSION
-        ):
-            return None
-        if payload.get("intent_id") != intent["intent_id"]:
-            return None
-        if payload.get("expected_redacted_account_id") != G.redacted_account_id:
-            return None
-        if payload.get("status") not in STATUSES:
-            return None
-        filled = payload.get("filled_quantity")
-        if (
-            isinstance(filled, bool)
-            or not isinstance(filled, int)
-            or filled < 0
-            or filled > intent["quantity"]
-        ):
-            return None
-        return payload
+        return _validate_result_payload(payload, encoded, intent)
     except _SafeFailure:
         return None
+
+
+def _read_result_for_discovery(paths, intent):
+    payload, encoded = _read_bounded_json(
+        _result_path(paths, intent["intent_id"]),
+        MAX_RESULT_BYTES,
+        missing_ok=True,
+    )
+    if payload is None:
+        return None
+    return _validate_result_payload(payload, encoded, intent)
 
 
 def _readback_transition_allowed(local_state, prior_result, reconciliation):
@@ -768,18 +1313,34 @@ def _read_local_state(paths, intent):
         raise _SafeFailure("invalid_local_state")
     if (
         payload.get("status") in PRE_SUBMISSION_STATUSES
-        and payload.get("passorder_attempted")
-    ):
+        or payload.get("status") == "expired"
+    ) and payload.get("passorder_attempted"):
         raise _SafeFailure("invalid_local_state")
     failure_code = payload.get("failure_code")
-    if failure_code is not None:
-        _validate_text(failure_code, MAX_FAILURE_CODE_LENGTH, "invalid_local_state")
-    _parse_utc_text(payload.get("updated_at"))
+    if failure_code is not None and (
+        not isinstance(failure_code, str)
+        or FAILURE_CODE_RE.fullmatch(failure_code) is None
+        or _contains_sensitive_identity(failure_code)
+    ):
+        raise _SafeFailure("invalid_local_state")
+    updated_at = _parse_utc_text(payload.get("updated_at"))
+    if updated_at < _parse_utc_text(intent["created_at"]):
+        raise _SafeFailure("invalid_local_state")
     return payload
 
 
 def _write_local_state(paths, intent, status, attempted, failure_code=None):
     if status not in STATUSES or not isinstance(attempted, bool):
+        raise _SafeFailure("invalid_state_transition")
+    if status == "submission_attempted" and not attempted:
+        raise _SafeFailure("invalid_state_transition")
+    if (status in PRE_SUBMISSION_STATUSES or status == "expired") and attempted:
+        raise _SafeFailure("invalid_state_transition")
+    if failure_code is not None and (
+        not isinstance(failure_code, str)
+        or FAILURE_CODE_RE.fullmatch(failure_code) is None
+        or _contains_sensitive_identity(failure_code)
+    ):
         raise _SafeFailure("invalid_state_transition")
     payload = {
         "schema_version": SCHEMA_VERSION,
@@ -806,7 +1367,7 @@ def _write_local_state(paths, intent, status, attempted, failure_code=None):
 
 def _safe_exception_type(exc):
     name = exc.__class__.__name__
-    if not isinstance(name, str) or len(name) > 80:
+    if not isinstance(name, str) or not name or len(name) > 80:
         return "Exception"
     if not (name[0] == "_" or "A" <= name[0] <= "Z" or "a" <= name[0] <= "z"):
         return "Exception"
@@ -818,7 +1379,106 @@ def _safe_exception_type(exc):
             or "a" <= character <= "z"
         ):
             return "Exception"
+    if _contains_sensitive_identity(name, include_account_type=True):
+        return "Exception"
     return name
+
+
+def _reset_executor_diagnostics():
+    started_at = _utc_text()
+    G.lifecycle_started_at = started_at
+    G.lifecycle = {}
+    for callback_name in LIFECYCLE_CALLBACK_NAMES:
+        G.lifecycle[callback_name] = {"count": 0, "latest_at": None}
+    G.timer_registration_attempted = False
+    G.timer_registration_succeeded = False
+    G.timer_registration_error_type = None
+    G.handlebar_entered = False
+    G.handlebar_is_last_bar_evaluation_succeeded = None
+    G.handlebar_is_last_bar = None
+    G.intent_scan_outcome = "not_scanned"
+    G.executable_candidate_count = 0
+    G.diagnostic_reason_code = "waiting_for_handlebar"
+
+
+def _executor_diagnostic_payload():
+    lifecycle = {}
+    for callback_name in LIFECYCLE_CALLBACK_NAMES:
+        observed = G.lifecycle.get(callback_name, {})
+        lifecycle[callback_name] = {
+            "count": observed.get("count", 0),
+            "latest_at": observed.get("latest_at"),
+        }
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "protocol_version": PROTOCOL_VERSION,
+        "started_at": G.lifecycle_started_at,
+        "updated_at": _utc_text(),
+        "lifecycle": lifecycle,
+        "timer_registration": {
+            "attempted": G.timer_registration_attempted,
+            "succeeded": G.timer_registration_succeeded,
+            "error_type": G.timer_registration_error_type,
+        },
+        "handlebar_state": {
+            "entered": G.handlebar_entered,
+            "is_last_bar_evaluation_succeeded": (
+                G.handlebar_is_last_bar_evaluation_succeeded
+            ),
+            "is_last_bar": G.handlebar_is_last_bar,
+        },
+        "intent_scan": {
+            "outcome": G.intent_scan_outcome,
+            "executable_candidate_count": G.executable_candidate_count,
+            "reason_code": G.diagnostic_reason_code,
+        },
+    }
+
+
+def _safe_write_executor_diagnostics():
+    if G.bridge_root is None:
+        return False
+    try:
+        paths = _bridge_paths(G.bridge_root)
+        _require_path_beneath_root(paths["diagnostics"], paths["root"])
+        if not os.path.isdir(paths["diagnostics"]):
+            try:
+                os.makedirs(paths["diagnostics"])
+            except OSError:
+                if not os.path.isdir(paths["diagnostics"]):
+                    return False
+        _require_path_beneath_root(paths["diagnostics"], paths["root"])
+        _atomic_write_document(
+            paths["executor_diagnostics"],
+            _executor_diagnostic_payload(),
+            MAX_DIAGNOSTIC_BYTES,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _record_lifecycle_callback(callback_name):
+    if callback_name not in LIFECYCLE_CALLBACK_NAMES:
+        return
+    if not G.lifecycle:
+        _reset_executor_diagnostics()
+    observed = G.lifecycle[callback_name]
+    observed["count"] = min(MAX_QUANTITY, observed["count"] + 1)
+    observed["latest_at"] = _utc_text()
+    _safe_write_executor_diagnostics()
+
+
+def _record_intent_scan(scan):
+    G.intent_scan_outcome = scan["outcome"]
+    G.executable_candidate_count = scan["executable_candidate_count"]
+    G.diagnostic_reason_code = scan["reason_code"]
+    _safe_write_executor_diagnostics()
+
+
+def _record_diagnostic_reason(reason_code):
+    G.diagnostic_reason_code = reason_code
+    _safe_write_executor_diagnostics()
 
 
 def _safe_primitive_text(value, maximum=MAX_IDENTIFIER_LENGTH):
@@ -1313,7 +1973,8 @@ def _safe_write_result(paths, payload):
 
 
 def init(ContextInfo):
-    del ContextInfo
+    _reset_executor_diagnostics()
+    _record_lifecycle_callback("init")
     raw_account = globals().get("account")
     raw_account_type = globals().get("accountType")
     try:
@@ -1347,52 +2008,192 @@ def init(ContextInfo):
     G.intent_id = None
     G.in_handlebar = False
     G.stopped = False
+    G.timer_registration_attempted = True
+    try:
+        ContextInfo.run_time(
+            "executor_lifecycle_tick",
+            "{0}nSecond".format(EXECUTOR_DIAGNOSTIC_INTERVAL_SECONDS),
+            "2019-10-14 13:20:00",
+        )
+        G.timer_registration_succeeded = True
+        G.timer_registration_error_type = None
+    except Exception as exc:
+        G.timer_registration_succeeded = False
+        G.timer_registration_error_type = _safe_exception_type(exc)
+    _safe_write_executor_diagnostics()
+
+
+def after_init(ContextInfo):
+    del ContextInfo
+    _record_lifecycle_callback("after_init")
+
+
+def executor_lifecycle_tick(ContextInfo):
+    del ContextInfo
+    _record_lifecycle_callback("timer_callback")
 
 
 def handlebar(ContextInfo):
-    if not ContextInfo.is_last_bar():
+    G.handlebar_entered = True
+    _record_lifecycle_callback("handlebar")
+    try:
+        is_last_bar = bool(ContextInfo.is_last_bar())
+    except Exception:
+        G.handlebar_is_last_bar_evaluation_succeeded = False
+        G.handlebar_is_last_bar = None
+        _record_diagnostic_reason("handlebar_is_last_bar_failed")
         return
-    if G.stopped or G.in_handlebar:
+    G.handlebar_is_last_bar_evaluation_succeeded = True
+    G.handlebar_is_last_bar = is_last_bar
+    if not is_last_bar:
+        _record_diagnostic_reason("handlebar_not_last_bar")
+        return
+    if G.stopped:
+        _record_diagnostic_reason("executor_stopped")
+        return
+    if G.in_handlebar:
+        _record_diagnostic_reason("handlebar_reentrant")
         return
     G.in_handlebar = True
     try:
         paths = _bridge_paths(G.bridge_root)
-        intent_path = _select_intent_path(paths)
+        scan = _scan_intents(paths)
+        _record_intent_scan(scan)
+        intent_path = scan["selected_path"]
+        selected_kind = scan["selected_kind"]
+        selected_attempted = scan["selected_attempted"]
+        selected_failure_code = scan["selected_failure_code"]
+        selected_status = scan["selected_status"]
         if intent_path is None:
             return
         try:
             intent, encoded = _read_bounded_json(intent_path, MAX_INTENT_BYTES)
             _validate_intent(intent, encoded, intent_path, _utc_now_datetime())
         except _SafeFailure:
+            intent_id = os.path.basename(intent_path)[:-5]
+            malformed = _malformed_intent_entry(paths, intent_path, intent_id)
+            if malformed["kind"] == "corrupt_history_barrier":
+                reason = "corrupt_intent_history_barrier"
+            elif G.intent_id == intent_id:
+                reason = "bound_intent_unavailable"
+            else:
+                reason = "malformed_intent_observed"
+            _record_intent_scan(
+                _empty_intent_scan(
+                    reason,
+                    reason,
+                    scan["executable_candidate_count"],
+                )
+            )
             return
         if G.intent_id is None:
             G.intent_id = intent["intent_id"]
         if G.intent_id != intent["intent_id"]:
+            _record_diagnostic_reason("no_executable_intent")
+            return
+        if selected_kind == "terminal":
+            _record_diagnostic_reason("terminal_intent_ignored")
+            return
+        if selected_kind == "expired":
+            _record_diagnostic_reason("expired_intent_observed")
             return
 
         try:
             local_state = _read_local_state(paths, intent)
         except _SafeFailure:
+            if selected_kind == "terminal":
+                _record_diagnostic_reason("terminal_intent_ignored")
+                return
+            if selected_kind == "reconciliation":
+                attempted = selected_attempted is True
+                protected_status = selected_status
+                if protected_status not in (
+                    "submission_attempted",
+                    "broker_acknowledged",
+                    "partially_filled",
+                    "uncertain",
+                ):
+                    protected_status = "uncertain"
+                try:
+                    local_state = _write_local_state(
+                        paths,
+                        intent,
+                        protected_status,
+                        attempted,
+                        selected_failure_code or "invalid_local_state",
+                    )
+                except _SafeFailure:
+                    _record_diagnostic_reason("malformed_intent_observed")
+                    return
+            else:
+                try:
+                    _write_local_state(
+                        paths, intent, "uncertain", True, "invalid_local_state"
+                    )
+                except _SafeFailure:
+                    pass
+                result = _result_payload(
+                    paths,
+                    intent,
+                    "uncertain",
+                    True,
+                    failure_code="invalid_local_state",
+                )
+                _safe_write_result(paths, result)
+                _record_diagnostic_reason("malformed_intent_observed")
+                return
+
+        if selected_kind == "barrier":
             try:
-                _write_local_state(
-                    paths, intent, "uncertain", True, "invalid_local_state"
+                local_state = _write_local_state(
+                    paths,
+                    intent,
+                    "uncertain",
+                    True,
+                    selected_failure_code or "invalid_local_artifact",
                 )
             except _SafeFailure:
-                pass
+                _record_diagnostic_reason("malformed_intent_observed")
+                return
             result = _result_payload(
                 paths,
                 intent,
                 "uncertain",
                 True,
-                failure_code="invalid_local_state",
+                failure_code=(selected_failure_code or "invalid_local_artifact"),
             )
             _safe_write_result(paths, result)
-            return
+            _record_diagnostic_reason("malformed_intent_observed")
+
+        if selected_kind == "reconciliation" and (
+            local_state is None or local_state["status"] in PRE_SUBMISSION_STATUSES
+        ):
+            attempted = selected_attempted is True
+            protected_status = selected_status
+            if protected_status not in (
+                "submission_attempted",
+                "broker_acknowledged",
+                "partially_filled",
+                "uncertain",
+            ):
+                protected_status = "uncertain"
+            try:
+                local_state = _write_local_state(
+                    paths,
+                    intent,
+                    protected_status,
+                    attempted,
+                    selected_failure_code,
+                )
+            except _SafeFailure:
+                _record_diagnostic_reason("no_executable_intent")
+                return
 
         if local_state is None or local_state["status"] == "received":
             try:
                 local_state = _write_local_state(paths, intent, "claimed", False)
             except _SafeFailure:
+                _record_diagnostic_reason("execution_state_write_failed")
                 return
 
         try:
@@ -1419,11 +2220,13 @@ def handlebar(ContextInfo):
                         failure_code=(local_state["failure_code"] or exc.code),
                     )
                     _safe_write_result(paths, result)
+                _record_diagnostic_reason("pending_intent_reconciliation")
                 return
             if (
                 local_state["status"] in READBACK_STATUSES
                 or local_state["status"] == "expired"
             ):
+                _record_diagnostic_reason("pending_intent_reconciliation")
                 return
             attempted = local_state["passorder_attempted"]
             try:
@@ -1440,6 +2243,7 @@ def handlebar(ContextInfo):
                 failure_code=exc.code,
             )
             _safe_write_result(paths, result)
+            _record_diagnostic_reason("broker_query_failed")
             return
         except Exception as exc:
             if local_state["status"] == "uncertain":
@@ -1456,11 +2260,13 @@ def handlebar(ContextInfo):
                         failure_type=_safe_exception_type(exc),
                     )
                     _safe_write_result(paths, result)
+                _record_diagnostic_reason("pending_intent_reconciliation")
                 return
             if (
                 local_state["status"] in READBACK_STATUSES
                 or local_state["status"] == "expired"
             ):
+                _record_diagnostic_reason("pending_intent_reconciliation")
                 return
             attempted = local_state["passorder_attempted"]
             if attempted:
@@ -1480,6 +2286,7 @@ def handlebar(ContextInfo):
                 failure_type=_safe_exception_type(exc),
             )
             _safe_write_result(paths, result)
+            _record_diagnostic_reason("broker_query_failed")
             return
 
         if matching_orders or matching_deals:
@@ -1490,6 +2297,7 @@ def handlebar(ContextInfo):
                 if not _readback_transition_allowed(
                     prior_state, prior_result, reconciliation
                 ):
+                    _record_diagnostic_reason("pending_intent_reconciliation")
                     return
                 reconciliation_failure = None
                 if reconciliation["status"] == "rejected":
@@ -1513,6 +2321,10 @@ def handlebar(ContextInfo):
                 if prior_state["status"] in READBACK_STATUSES or prior_state[
                     "status"
                 ] == "expired":
+                    if prior_state["status"] in ("filled", "rejected", "expired"):
+                        _record_diagnostic_reason("terminal_intent_ignored")
+                    else:
+                        _record_diagnostic_reason("pending_intent_reconciliation")
                     return
                 attempted = local_state["passorder_attempted"]
                 failure_status = "uncertain"
@@ -1530,6 +2342,10 @@ def handlebar(ContextInfo):
                     failure_code=exc.code,
                 )
             _safe_write_result(paths, result)
+            if result["status"] in ("filled", "rejected"):
+                _record_diagnostic_reason("terminal_intent_ignored")
+            else:
+                _record_diagnostic_reason("pending_intent_reconciliation")
             return
 
         if local_state["status"] == "uncertain":
@@ -1544,14 +2360,20 @@ def handlebar(ContextInfo):
                     ),
                 )
                 _safe_write_result(paths, result)
+            _record_diagnostic_reason("pending_intent_reconciliation")
             return
         if (
             local_state["status"] in READBACK_STATUSES
             or local_state["status"] == "expired"
         ):
+            if local_state["status"] in ("filled", "rejected", "expired"):
+                _record_diagnostic_reason("terminal_intent_ignored")
+            else:
+                _record_diagnostic_reason("pending_intent_reconciliation")
             return
         can_submit = (
-            local_state["status"] in PRE_SUBMISSION_STATUSES
+            selected_kind == "executable"
+            and local_state["status"] in PRE_SUBMISSION_STATUSES
             and not local_state["passorder_attempted"]
             and local_state["failure_code"] is None
         )
@@ -1559,6 +2381,7 @@ def handlebar(ContextInfo):
             try:
                 _write_local_state(paths, intent, "expired", False, "intent_expired")
             except _SafeFailure:
+                _record_diagnostic_reason("execution_state_write_failed")
                 return
             result = _result_payload(
                 paths,
@@ -1568,9 +2391,14 @@ def handlebar(ContextInfo):
                 failure_code="intent_expired",
             )
             _safe_write_result(paths, result)
+            _record_diagnostic_reason("expired_intent_observed")
             return
 
         if local_state["status"] in TERMINAL_STATUSES:
+            if local_state["status"] == "expired":
+                _record_diagnostic_reason("expired_intent_observed")
+            else:
+                _record_diagnostic_reason("terminal_intent_ignored")
             return
         if not can_submit:
             try:
@@ -1587,6 +2415,7 @@ def handlebar(ContextInfo):
                 failure_code="broker_readback_pending",
             )
             _safe_write_result(paths, result)
+            _record_diagnostic_reason("pending_intent_reconciliation")
             return
 
         try:
@@ -1594,6 +2423,7 @@ def handlebar(ContextInfo):
                 paths, intent, "submission_attempted", True
             )
         except _SafeFailure:
+            _record_diagnostic_reason("execution_state_write_failed")
             return
         operation_code = 23 if intent["side"] == "buy" else 24
         if _intent_is_expired(intent):
@@ -1611,6 +2441,7 @@ def handlebar(ContextInfo):
                 failure_code="intent_expired_before_call",
             )
             _safe_write_result(paths, result)
+            _record_diagnostic_reason("intent_expired_before_call")
             return
         passorder(
             operation_code,
@@ -1639,6 +2470,7 @@ def handlebar(ContextInfo):
             failure_code="broker_readback_pending",
         )
         _safe_write_result(paths, result)
+        _record_diagnostic_reason("broker_readback_pending")
     except Exception as exc:
         if (
             "intent" in locals()
@@ -1652,6 +2484,10 @@ def handlebar(ContextInfo):
                 "expired",
                 "uncertain",
             ):
+                if current_status in ("filled", "rejected", "expired"):
+                    _record_diagnostic_reason("terminal_intent_ignored")
+                else:
+                    _record_diagnostic_reason("pending_intent_reconciliation")
                 return
             failure_status = "uncertain" if attempted else "claimed"
             try:
@@ -1678,13 +2514,23 @@ def handlebar(ContextInfo):
                 _safe_write_result(paths, result)
             except Exception:
                 pass
+            _record_diagnostic_reason(
+                "submission_uncertain" if attempted else "executor_failure"
+            )
+        else:
+            _record_diagnostic_reason("executor_failure")
     finally:
         G.in_handlebar = False
+        if G.diagnostic_reason_code is None:
+            G.diagnostic_reason_code = "processing_stopped"
+        _safe_write_executor_diagnostics()
 
 
 def stop(ContextInfo):
     del ContextInfo
     G.stopped = True
+    G.diagnostic_reason_code = "executor_stopped"
+    _record_lifecycle_callback("stop")
     _release_lock()
     G.account_id = None
     G.account_type = None

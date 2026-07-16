@@ -17,11 +17,15 @@ This is a manual, single-order acceptance path. It is not a trading daemon. It d
 
 Only a broker simulation/test `STOCK` account is allowed. Never select a real-money account. The protocol cannot prove from QMT data alone that an account is non-real, so the operator must verify the selected account in the QMT UI before every acceptance run. Do not put an account number or credentials in a command, strategy, JSON file, log, screenshot, or report.
 
+The real broker-simulation run exposed an execution-lifecycle compatibility limitation: QMT logged `start trading mode`, but no state or acknowledgement appeared, the authenticated intent remained `received` with `passorder_attempted=false`, and the intent expired. Separate read-only daily-period and one-minute-period checks also produced no fresh bridge file. Therefore, seeing `start trading mode` proves only that QMT started the model in that mode; it does **not** prove that QMT invoked `handlebar(ContextInfo)` or that `handlebar` had a usable broker context.
+
+The expired intent from that run is historical evidence. It must never be resubmitted, recreated under another ID for the same economic order, or made executable by deleting its state or result.
+
 ## The QMT mode distinction is mandatory
 
 QMT's **simulation signal mode does not send an order**. It is suitable for the separate PR #126 read-only exporter but cannot establish PR #127 broker-counter acceptance.
 
-A real PR #127 acceptance run requires QMT **live trading mode** as the model execution mode while the model is bound to the broker's **simulation/test account**. Here, "live trading mode" is the QMT UI name for the model execution mode; it does not authorize a real-money account. The required combination is:
+A real PR #127 acceptance run requires QMT **live trading mode** as the model execution mode while the model is bound to the broker's **simulation/test account**. Here, "live trading mode" is the QMT UI name for the model execution mode; it does not authorize a real-money account. Any QMT order-sending execution mode used by this runbook may only be bound to the broker simulation/test `STOCK` account and must never be bound to a real-money account. The required combination is:
 
 | QMT model execution mode | Selected account | PR #127 outcome |
 | --- | --- | --- |
@@ -39,7 +43,11 @@ The protocol uses schema version `1` and protocol identifier `qmt_simulation_ord
 
 ```text
 <bridge-root>\
+  probe\
+    lifecycle_probe_v1.json
   execution\
+    diagnostics\
+      executor_lifecycle_v1.json
     intents\
       <intent-id>.json
     acknowledgements\
@@ -51,6 +59,10 @@ The protocol uses schema version `1` and protocol identifier `qmt_simulation_ord
 ```
 
 Each `intent_id` owns one immutable intent path and one result identity. A different order never overwrites an existing intent. Writers create a temporary file in the destination directory, flush it, and atomically replace the completed path. Readers ignore temporary files. Runtime intent, acknowledgement, state, lock, and temporary files must remain outside Git.
+
+`execution\intents` is an immutable history, not a single-use inbox that operators empty between runs. Completed `.json` intent files remain in place. Readers ignore temporary files and enumerate completed intent files deterministically. The executor uses associated state and acknowledgement/result evidence, when available, to classify history. Terminal intents and expired unattempted intents are not executable candidates; an expired unattempted intent receives an `expired` state/result when that update is safe and deterministic. An intent that was attempted or whose outcome is uncertain can never become executable again.
+
+Execution proceeds only when exactly one completed intent is valid, authenticated, explicit-submit, unexpired, non-terminal, and otherwise executable. More than one executable candidate fails closed without calling `passorder`; zero executable candidates also performs no broker mutation. Operators do not delete historical intents to make a later acceptance run possible.
 
 The existing `<bridge-root>\state\account_binding_key_v1.hex` is a local secret used both to derive the pseudonymous `qmtacct-v1-...` account binding and to authenticate intents. Never copy its bytes into an intent, result, command argument, report, or repository.
 
@@ -117,17 +129,42 @@ The executor persists `claimed` and then `submission_attempted` atomically befor
 
 The result never contains a raw account ID, shareholder ID, password, key material, unrestricted broker error text, provider `repr`, or traceback. `broker_acknowledged` requires a matching QMT order record. `filled` requires matching QMT deal evidence or equivalent reconciled filled quantity; a `passorder` call alone is not evidence of broker acceptance. Filled quantity cannot exceed requested quantity.
 
+### Read-only lifecycle probe record
+
+`probe\lifecycle_probe_v1.json` is an atomically replaced, canonical JSON observation record written by `scripts/qmt_builtin_lifecycle_probe_v1.py`. It contains `schema_version`, `protocol_version`, `started_at`, and `updated_at`. Its `lifecycle` object has the exact callback keys `init`, `after_init`, `timer_callback`, `handlebar`, and `stop`; each callback entry records `count` and nullable `latest_at`. `timer_registration` contains `attempted`, `succeeded`, and nullable bounded `exception_type`. `handlebar_state` contains `is_last_bar_call_attempted`, `is_last_bar_callable`, and nullable bounded `is_last_bar_exception_type`.
+
+The `queries` object has one entry for each lifecycle callback with a callback-level `attempted` flag and nested `account`, `position`, `order`, and `deal` outcomes. Each outcome contains `attempted`, nullable `succeeded`, and nullable bounded `exception_type`. Each callback type is queried at most once. The record stores no returned account/order/deal objects, provider representations, raw account or shareholder identifiers, binding key, credential, traceback, or complete local user path. Its `safety` object fixes `order_submission_enabled=false`, `cancel_enabled=false`, `passorder_invoked=false`, and `cancel_invoked=false`.
+
+### Executor lifecycle diagnostics
+
+`execution\diagnostics\executor_lifecycle_v1.json` is bounded, non-sensitive, canonical JSON diagnostic evidence. It contains `schema_version`, `protocol_version`, `started_at`, and `updated_at`. Its `lifecycle` object uses the same exact `init`, `after_init`, `timer_callback`, `handlebar`, and `stop` keys with `count` and nullable `latest_at`. `timer_registration` contains `attempted`, `succeeded`, and nullable bounded `error_type`. `handlebar_state` contains `entered`, nullable `is_last_bar_evaluation_succeeded`, and nullable `is_last_bar`.
+
+The `intent_scan` object records the latest deterministic `outcome`, `executable_candidate_count`, and stable `reason_code` when processing does not continue. Reason codes include `no_intent_files`, `no_executable_intent`, `multiple_executable_intents`, `expired_intent_observed`, `terminal_intent_ignored`, `malformed_intent_observed`, `corrupt_intent_history_barrier`, `bound_intent_unavailable`, `waiting_for_handlebar`, `handlebar_not_last_bar`, and `executor_stopped`. The file never stores raw account identity or binding-key bytes. A diagnostic write failure does not authorize another submission attempt, erase execution state, or weaken the submission-attempted-before-`passorder` barrier.
+
+## Run the one-time real-QMT lifecycle compatibility prerequisite
+
+The lifecycle probe is a one-time real-QMT lifecycle compatibility prerequisite for PR #127 acceptance before creating any new broker-simulation intent. It is not a generic production approval layer and does not establish production readiness. This prerequisite exists because the real broker-simulation client started its model but did not demonstrate that QMT invoked `handlebar(ContextInfo)`. The probe is read-only and contains no order, cancellation, or other broker-mutation call.
+
+1. Preserve the expired real-QMT intent and all of its state/result evidence. Do not create a replacement intent.
+2. In the QMT strategy editor, create a separate strategy from the complete tracked `scripts/qmt_builtin_lifecycle_probe_v1.py`. Keep its first line exactly `#coding:gbk`, and set its bridge-root constant to the same external bridge root used by QuantPilot.
+3. Bind the strategy only to the intended broker simulation/test `STOCK` account. If the QMT model must use an order-sending execution mode to expose broker context, select QMT live trading mode only after rechecking that the bound account is the simulation/test account. An order-sending mode bound to any real-money account is forbidden even though this probe is read-only.
+4. Start the probe without an intent present for a new order. Exercise the intended period/mode long enough to observe the applicable callbacks and timer, then stop it cleanly so the `stop` observation can be recorded. Do not infer callback execution from the QMT start log.
+5. Inspect the fresh `<bridge-root>\probe\lifecycle_probe_v1.json`. Confirm that its timestamps belong to this run, all `safety` flags are false, and `lifecycle`, `timer_registration`, `handlebar_state`, and per-callback `queries` evidence are present. Do not paste account identity or other local sensitive data into a report.
+6. Treat a callback as having usable broker context only when the fresh record shows that callback was entered and its required read-only broker queries succeeded while bound to the intended simulation/test `STOCK` account. Preserve the record as the compatibility evidence.
+
+No new broker-simulation intent may be created until this probe identifies a callback with usable broker context. The tracked executor still keeps broker readback and its sole direct `passorder(...)` call in `handlebar`; the probe does not authorize an operator to move or duplicate that call. If the probe finds usable context only in another callback, stop and obtain a reviewed executor revision before creating an intent. If no callback has usable context, stop without an intent or broker mutation.
+
 ## Prepare the dedicated QMT strategy
 
 PR #126 remains a separate, strictly read-only bridge. Do not add `passorder` to `scripts/qmt_builtin_readonly_exporter_v1.py`, and do not weaken any of its mutation prohibitions.
 
-For PR #127, use only `scripts/qmt_builtin_simulation_executor_v1.py`:
+After the lifecycle compatibility prerequisite above has been satisfied for `handlebar`, use only `scripts/qmt_builtin_simulation_executor_v1.py`:
 
 1. In the QMT strategy editor, create a new Python strategy and copy the entire tracked executor source. Keep the first line exactly `#coding:gbk`.
 2. Keep or set its bridge-root constant to the same external bridge root used by QuantPilot. The executor is ASCII-only, Python 3.6 compatible, and standard-library only.
 3. In the QMT UI, select the intended broker simulation/test stock account. Confirm QMT will inject `account` and `accountType=STOCK`. Do not paste the account number into source.
 4. Select QMT **live trading mode** for this model. Re-check that the bound account is still the simulation/test account and not a real-money account.
-5. Do not start the strategy yet. First create and inspect exactly one authenticated intent as described below, then manually start this dedicated executor.
+5. Do not start the strategy yet. After preserving the lifecycle-probe evidence, create and inspect exactly one new executable authenticated intent as described below, then manually start this dedicated executor. Existing terminal and expired intent files remain as immutable history.
 
 The strategy performs broker queries and its only mutation call from `handlebar(ContextInfo)`. Historical bars return immediately. The one permitted call shape is:
 
@@ -151,9 +188,11 @@ There is exactly one direct `passorder` call site. There is no market-order rout
 
 The fixed QMT strategy name recorded in version 1 results is `quantpilot_sim_v1`.
 
-## Create exactly one intent
+## Create exactly one executable intent
 
 Creating an intent writes only the local filesystem protocol; it does not connect to QMT or submit an order. Nevertheless, it is the first half of the deliberate execution boundary, so verify the symbol, side, share quantity, limit price, external bridge root, redacted account binding, expiry, and intended test account before proceeding.
+
+Do not run an intent-creation command until the fresh lifecycle probe has proved that `handlebar` has usable broker context for this QMT environment. Never reuse the expired real-QMT acceptance intent. Retained terminal or expired `.json` files do not count against the single new executable candidate and must not be deleted.
 
 Use the PowerShell wrapper from the repository root. Replace every placeholder and retain the explicit confirmation switch:
 
@@ -188,9 +227,9 @@ PR #127 supports explicit limit-share orders only. Buys must use a positive quan
 
 ## Submit and inspect the result
 
-1. Confirm that only the intended `<intent-id>.json` exists in `execution\intents` and that the intent has not expired.
+1. Confirm that the intended `<intent-id>.json` is the only executable candidate and has not expired. Historical terminal and expired intent files may and should remain in `execution\intents`.
 2. In QMT, perform the final visual check: **live trading mode**, the intended **simulation/test `STOCK` account**, and no real-money account selected.
-3. Manually start `qmt_builtin_simulation_executor_v1.py`. QMT invokes `handlebar(ContextInfo)`; the executor does not create a polling thread or continuously generate work.
+3. Manually start `qmt_builtin_simulation_executor_v1.py`. The executor waits for QMT to invoke `handlebar(ContextInfo)`; neither the model start log nor timer registration proves that this occurred. The executor does not create a polling thread or continuously generate work.
 4. Inspect the local result without contacting QMT:
 
 ```powershell
@@ -202,6 +241,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\inspect_qmt_simula
 Use the wrapper's JSON option when machine-readable bounded output is required. The underlying Python inspector accepts the bridge root, intent ID, and text/JSON output format. Inspection reads only completed local state/result files; it never submits, cancels, or connects to QMT, and it does not print full account data.
 
 5. Stop the dedicated executor after this one intent reaches a supported terminal outcome or after collecting the required `uncertain` evidence. Do not create a second intent as an automatic retry.
+
+If no state or acknowledgement appears, inspect `<bridge-root>\execution\diagnostics\executor_lifecycle_v1.json` before taking any other action. Use its `lifecycle`, `timer_registration`, `handlebar_state`, and `intent_scan` evidence to distinguish a missing `handlebar` callback from a rejected or non-executable intent. Diagnostics alone never authorize resubmission.
 
 `passorder` has no broker-acknowledgement return value. `passorder_attempted=true` means only that the direct call was attempted. Acceptance must be proved by QMT order/deal readback under the matching `intent_id`.
 
@@ -218,6 +259,8 @@ Use the wrapper's JSON option when machine-readable bounded output is required. 
 - An explicit bounded broker rejection becomes `rejected`.
 
 If the process stops after `submission_attempted` but before readback proves an order or deal, the result becomes or remains `uncertain`. On restart, the executor queries by `m_strRemark` but does **not** automatically call `passorder` again. An acknowledgement write failure likewise does not authorize resubmission. Later readback may safely upgrade `uncertain`; until then it means neither accepted nor rejected. This protocol deliberately prefers one uncertain order over a possible duplicate order.
+
+If a completed intent later becomes malformed while a state or acknowledgement/result path with the same valid filename-derived `intent_id` exists, the executor treats that pair as corrupt execution history. It inspects only whether the associated paths exist and have bounded regular-file shape; it does not parse, trust, rewrite, delete, normalize, or overwrite them without the authenticated intent. This `corrupt_intent_history_barrier` blocks all broker queries and submissions, and the attempt status remains unknown. A malformed intent with no associated state or result is instead an orphan: it remains untouched and non-executable, but does not block exactly one otherwise valid executable candidate.
 
 Never work around `uncertain` by deleting local state or creating a replacement intent for the same economic order. First inspect the broker simulation/test account's order/deal records and preserve the protocol files for reconciliation.
 
@@ -238,7 +281,8 @@ Stop the acceptance run without submission if any of the following is true:
 - the bridge root is in Git or differs between the intent creator and QMT strategy;
 - the quantity or explicit limit price is wrong;
 - the broker-specific simulation counter is unavailable;
-- another manual order is already in progress.
+- another manual order is already in progress;
+- the lifecycle probe has not produced fresh evidence of usable `handlebar` broker context.
 
 PR #127 offers no automatic cancellation. A limit order may remain pending according to broker simulation-counter behavior. Resolve it manually in the broker simulation/test environment only after preserving and inspecting the protocol evidence; do not represent a manual broker action as an automatic protocol result.
 
