@@ -24,12 +24,37 @@ class ActiveShadowConfig:
     failure_policy: str = "abstain"
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "allow_roles", normalize_active_shadow_roles(self.allow_roles))
         if self.failure_policy != "abstain":
             raise ValueError("active shadow supports only failure_policy='abstain'")
         if self.timeout <= 0:
             raise ValueError("timeout must be positive")
+        if self.enable_live_calls and not self.enabled:
+            raise ValueError("live AI requires active shadow to be enabled")
         if self.enable_live_calls and (self.max_physical_model_calls_per_cycle <= 0 or self.max_estimated_cost_per_cycle <= 0 or self.estimated_cost_per_call <= 0):
             raise ValueError("live active shadow requires positive call, cycle-cost, and per-call cost limits")
+
+
+def normalize_active_shadow_roles(
+    roles: str | tuple[DeepSeekAdvisoryRole | str, ...] | list[str],
+) -> tuple[DeepSeekAdvisoryRole, ...]:
+    """Normalize CLI or serialized role values to unique runtime enums."""
+    if isinstance(roles, str):
+        values = tuple(item.strip() for item in roles.split(",") if item.strip())
+        if not values:
+            return tuple(DeepSeekAdvisoryRole)
+    else:
+        values = tuple(roles)
+
+    normalized: list[DeepSeekAdvisoryRole] = []
+    for value in values:
+        if isinstance(value, DeepSeekAdvisoryRole):
+            role = value
+        else:
+            role = DeepSeekAdvisoryRole(str(value).strip().lower().replace("-", "_"))
+        if role not in normalized:
+            normalized.append(role)
+    return tuple(normalized)
 
 
 class ActiveShadowRunner:

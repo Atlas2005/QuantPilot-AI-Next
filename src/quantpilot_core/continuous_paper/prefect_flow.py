@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any
 
-from quantpilot_core.production_candidate import load_runtime_manifest
-from quantpilot_core.real_candidate_pipeline import RealCandidatePipelineConfig
 from .active_shadow import ActiveShadowConfig
 from .contracts import ContinuousPaperCycleConfig
+from .manifest_bridge import load_production_pipeline_config
 from .service import ContinuousPaperCycle
 from .store import PostgreSQLReportingStore
 
@@ -18,7 +16,10 @@ SHANGHAI_TIMEZONE = "Asia/Shanghai"
 def retryable_exception(exc: BaseException) -> bool:
     if exc.__class__.__name__ in {"ReportingConflictError", "ValueError", "TypeError"}:
         return False
-    return any(word in str(exc).lower() for word in ("connection", "timeout", "temporar", "postgres", "network"))
+    return any(
+        word in str(exc).lower()
+        for word in ("connection", "timeout", "temporar", "postgres", "network")
+    )
 
 
 def prefect_retry_condition(_task: Any, _task_run: Any, state: Any) -> bool:
@@ -26,14 +27,41 @@ def prefect_retry_condition(_task: Any, _task_run: Any, state: Any) -> bool:
     return retryable_exception(state.result(raise_on_failure=False))
 
 
-def run_continuous_paper_flow(*, production_manifest_path: str, decision_session: str, state_path: str, report_path: str, run_id: str, dsn_env_var: str = "QUANTPILOT_POSTGRES_DSN", active_shadow: dict[str, Any] | None = None, **pipeline_options: Any) -> Any:
+def run_continuous_paper_flow(
+    *,
+    production_manifest_path: str,
+    decision_session: str,
+    state_path: str,
+    report_path: str,
+    run_id: str,
+    dsn_env_var: str = "QUANTPILOT_POSTGRES_DSN",
+    active_shadow: dict[str, Any] | None = None,
+    live_market_data: bool = False,
+    input_payload: dict[str, Any] | None = None,
+    pipeline_options: dict[str, Any] | None = None,
+) -> Any:
     """Construct all runtime objects from serializable scheduled-flow parameters."""
     dsn = os.environ.get(dsn_env_var)
     if not dsn:
-        raise RuntimeError(f"required PostgreSQL DSN environment variable is not set: {dsn_env_var}")
-    manifest = load_runtime_manifest(Path(production_manifest_path))
-    pipeline = RealCandidatePipelineConfig(decision_session=decision_session, state_path=state_path, report_path=report_path, production_manifest=manifest, **pipeline_options)
-    config = ContinuousPaperCycleConfig(pipeline_config=pipeline, run_id=run_id, active_shadow=ActiveShadowConfig(**(active_shadow or {})))
+        raise RuntimeError(
+            f"required PostgreSQL DSN environment variable is not set: {dsn_env_var}"
+        )
+
+    pipeline = load_production_pipeline_config(
+        manifest_path=production_manifest_path,
+        decision_session=decision_session,
+        state_path=state_path,
+        report_path=report_path,
+        live_market_data=live_market_data,
+        input_payload=input_payload,
+        pipeline_options=pipeline_options,
+    )
+
+    config = ContinuousPaperCycleConfig(
+        pipeline_config=pipeline,
+        run_id=run_id,
+        active_shadow=ActiveShadowConfig(**(active_shadow or {})),
+    )
     return ContinuousPaperCycle(PostgreSQLReportingStore(dsn)).run_once(config)
 
 
@@ -62,6 +90,8 @@ else:
         run_id: str,
         dsn_env_var: str = "QUANTPILOT_POSTGRES_DSN",
         active_shadow: dict[str, Any] | None = None,
+        live_market_data: bool = False,
+        input_payload: dict[str, Any] | None = None,
         pipeline_options: dict[str, Any] | None = None,
     ) -> Any:
         """Prefect-visible parameters plus an explicit serializable option mapping."""
@@ -73,5 +103,7 @@ else:
             run_id=run_id,
             dsn_env_var=dsn_env_var,
             active_shadow=active_shadow,
-            **(pipeline_options or {}),
+            live_market_data=live_market_data,
+            input_payload=input_payload,
+            pipeline_options=pipeline_options,
         )
