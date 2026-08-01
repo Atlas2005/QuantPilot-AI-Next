@@ -102,6 +102,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "persisted_bar_count": 0,
             "storage_backend": storage_backend,
             "realtime_market_change_detected": False,
+            "subscription_attempted": False,
+            "subscription_succeeded": False,
+            "subscription_error_type": None,
+            "sanitized_subscription_error": None,
+            "polling_fallback_active": False,
             "shadow": bool(args.shadow),
             "error": str(exc),
         }

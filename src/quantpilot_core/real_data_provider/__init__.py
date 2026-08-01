@@ -77,9 +77,11 @@ from quantpilot_core.real_data_provider.tdx_level1_adapter import (
     TDXInitializationError,
     TDXLevel1Provider,
     TDXOperationError,
+    TDXSubscriptionError,
     canonicalize_tdx_level1_symbol,
     normalize_tdx_historical_minute_bars,
     normalize_tdx_level1_snapshot,
+    sanitize_tdx_error_message,
 )
 
 __all__ = [
@@ -119,6 +121,7 @@ __all__ = [
     "TDXInitializationDependencyError",
     "TDXInitializationError",
     "TDXOperationError",
+    "TDXSubscriptionError",
     "TushareIndexDailyProvider",
     "TushareDependencyStatus",
     "TusharePrimaryBaoStockCalendarProvider",
@@ -134,6 +137,7 @@ __all__ = [
     "normalize_baostock_daily_bars",
     "normalize_tdx_historical_minute_bars",
     "normalize_tdx_level1_snapshot",
+    "sanitize_tdx_error_message",
     "normalize_tushare_daily_bars",
     "aggregate_intraday_bars",
     "parse_yyyymmdd",

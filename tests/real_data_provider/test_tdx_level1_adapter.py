@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ from quantpilot_core.real_data_provider import (
     TDXInitializationError,
     TDXLevel1Provider,
     TDXOperationError,
+    TDXSubscriptionError,
     normalize_tdx_level1_snapshot,
 )
 
@@ -192,10 +194,10 @@ class _TQCenterApi:
             }
         }
 
-    def subscribe_hq(self, symbol, callback):
+    def subscribe_hq(self, *, stock_list, callback):
         self.callback = callback
-        self.subscribed.append(symbol)
-        return f"subscription-{symbol}"
+        self.subscribed.append({"stock_list": stock_list, "callback": callback})
+        return "subscription-all-symbols"
 
     def unsubscribe_hq(self, subscription):
         self.unsubscribed.append(subscription)
@@ -377,8 +379,8 @@ class TQ:
         self.initialization_path = initialization_path
     def get_market_snapshot(self, *, stock_code, field_list):
         return {"Now": "11.63", "Volume": "1", "Amount": "0.1163", "ErrorId": "0"}
-    def subscribe_hq(self, symbol, callback):
-        return symbol
+    def subscribe_hq(self, *, stock_list, callback):
+        return "subscription-all-symbols"
     def unsubscribe_hq(self, subscription):
         return None
 tq = TQ()
@@ -549,7 +551,7 @@ def test_historical_minute_wrapper_calls_tq_and_normalizes_canonical_units(tmp_p
     }
 
 
-def test_provider_subscribes_and_unsubscribes_each_explicit_symbol(tmp_path: Path) -> None:
+def test_provider_subscribes_once_with_keyword_symbol_list_and_module_callback(tmp_path: Path) -> None:
     (tmp_path / "tqcenter.py").write_text("# runtime marker\n", encoding="utf-8")
     api = _TQCenterApi()
     provider = TDXLevel1Provider(
@@ -559,12 +561,45 @@ def test_provider_subscribes_and_unsubscribes_each_explicit_symbol(tmp_path: Pat
     )
     provider.initialize()
 
-    subscription = provider.subscribe_hq(("SZ000001", "SH600000"), lambda _payload: None)
+    notifications = []
+    subscription = provider.subscribe_hq(("SZ000001", "SH600000"), notifications.append)
+    api.callback({"Code": "000001.SZ", "ErrorId": "0"})
     provider.unsubscribe_hq(subscription)
     provider.close()
 
-    assert api.subscribed == ["000001.SZ", "600000.SH"]
-    assert api.unsubscribed == ["subscription-000001.SZ", "subscription-600000.SH"]
+    assert len(api.subscribed) == 1
+    assert api.subscribed[0]["stock_list"] == ["000001.SZ", "600000.SH"]
+    assert api.subscribed[0]["callback"] is api.callback
+    assert inspect.isfunction(api.callback)
+    assert len(inspect.signature(api.callback).parameters) == 1
+    assert api.callback.__module__ == "quantpilot_core.real_data_provider.tdx_level1_adapter"
+    assert notifications == [{"Code": "000001.SZ", "ErrorId": "0"}]
+    assert api.unsubscribed == ["subscription-all-symbols"]
+
+
+def test_provider_subscription_failure_preserves_polling_compatible_error(tmp_path: Path) -> None:
+    (tmp_path / "tqcenter.py").write_text("# runtime marker\n", encoding="utf-8")
+
+    class FailingSubscriptionApi(_TQCenterApi):
+        def get_market_snapshot(self, *, stock_code, field_list):
+            return dict(REAL_TDX_LEVEL1_SNAPSHOT)
+
+        def subscribe_hq(self, *, stock_list, callback):
+            raise TypeError("codestr error token=private")
+
+    provider = TDXLevel1Provider(
+        tmp_path,
+        module_loader=lambda _name: SimpleNamespace(tq=FailingSubscriptionApi()),
+        platform_system=lambda: "Windows",
+    )
+    provider.initialize()
+
+    with pytest.raises(TDXSubscriptionError) as captured:
+        provider.subscribe_hq(("000001.SZ",), lambda _payload: None)
+
+    assert isinstance(captured.value.__cause__, TypeError)
+    assert "codestr error" in str(captured.value)
+    assert "private" not in str(captured.value)
 
 
 class _CollectorProvider:
@@ -587,7 +622,7 @@ class _CollectorProvider:
 
     def subscribe_hq(self, symbols: Sequence[str], callback) -> Any:
         if self.subscribe_error:
-            raise ProviderError("subscription unavailable")
+            raise ProviderError("subscription unavailable token=private-value")
         self.callback = callback
         return self.subscription
 
@@ -636,6 +671,11 @@ def test_callback_is_refresh_notification_and_deduplicates_snapshot() -> None:
     report = collector.report()
 
     assert report.connection_status == "subscribed"
+    assert report.subscription_attempted is True
+    assert report.subscription_succeeded is True
+    assert report.subscription_error_type is None
+    assert report.sanitized_subscription_error is None
+    assert report.polling_fallback_active is False
     assert report.snapshot_count == 3
     assert report.callback_count == 2
     assert report.quote_change_count == 1
@@ -674,10 +714,20 @@ def test_polling_fallback_and_graceful_shutdown() -> None:
     collector.start()
     assert collector.connection_status == "polling_fallback"
     collector.shutdown()
+    report = collector.report()
 
     assert provider.unsubscribed is False
     assert provider.closed is True
     assert collector.connection_status == "disconnected"
+    assert report.connection_status == "polling_fallback"
+    assert report.snapshot_count == 1
+    assert report.event_count == 1
+    assert report.subscription_attempted is True
+    assert report.subscription_succeeded is False
+    assert report.subscription_error_type == "ProviderError"
+    assert report.sanitized_subscription_error == "subscription unavailable token=<redacted>"
+    assert "private-value" not in report.sanitized_subscription_error
+    assert report.polling_fallback_active is True
 
 
 def test_existing_reporting_store_persists_level1_events_and_bars_idempotently() -> None:

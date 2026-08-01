@@ -18,6 +18,7 @@ from quantpilot_core.real_data_provider.intraday_aggregation import MinuteBarAgg
 from quantpilot_core.real_data_provider.tdx_level1_adapter import (
     TDXOperationError,
     canonicalize_tdx_level1_symbol,
+    sanitize_tdx_error_message,
 )
 
 
@@ -44,6 +45,11 @@ class Level1CollectorReport:
     persisted_bar_count: int
     storage_backend: str
     realtime_market_change_detected: bool
+    subscription_attempted: bool
+    subscription_succeeded: bool
+    subscription_error_type: str | None
+    sanitized_subscription_error: str | None
+    polling_fallback_active: bool
     shadow: bool
 
     def as_dict(self) -> Mapping[str, Any]:
@@ -102,6 +108,10 @@ class LiveLevel1Collector:
         self._deduplicated_count = 0
         self._persisted_event_count = 0
         self._persisted_bar_count = 0
+        self._subscription_attempted = False
+        self._subscription_succeeded = False
+        self._subscription_error_type: str | None = None
+        self._sanitized_subscription_error: str | None = None
 
     @property
     def events(self) -> tuple[NormalizedLevel1Event, ...]:
@@ -123,11 +133,16 @@ class LiveLevel1Collector:
         self.provider.initialize()
         self._running = True
         self.refresh(self.symbols, count_as_change=False)
+        self._subscription_attempted = True
         try:
             self._subscription = self.provider.subscribe_hq(self.symbols, self._on_refresh_notification)
+            self._subscription_succeeded = True
             self._set_connection_status("subscribed")
-        except ProviderError:
+        except ProviderError as exc:
             self._subscription = None
+            cause = exc.__cause__ or exc
+            self._subscription_error_type = type(cause).__name__
+            self._sanitized_subscription_error = sanitize_tdx_error_message(str(cause))
             self._set_connection_status("polling_fallback")
 
     def run(self, duration_seconds: float) -> Level1CollectorReport:
@@ -241,6 +256,11 @@ class LiveLevel1Collector:
             persisted_bar_count=self._persisted_bar_count,
             storage_backend=self.storage_backend,
             realtime_market_change_detected=self._quote_change_count > 0,
+            subscription_attempted=self._subscription_attempted,
+            subscription_succeeded=self._subscription_succeeded,
+            subscription_error_type=self._subscription_error_type,
+            sanitized_subscription_error=self._sanitized_subscription_error,
+            polling_fallback_active=self._active_connection_status == "polling_fallback",
             shadow=self.shadow,
         )
 

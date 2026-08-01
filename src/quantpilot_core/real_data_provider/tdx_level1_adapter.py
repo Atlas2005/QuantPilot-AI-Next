@@ -5,10 +5,12 @@ from __future__ import annotations
 import platform
 import re
 import sys
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
+from itertools import count
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -66,6 +68,9 @@ _REQUIRED_LEVEL1_FUNCTIONS = (
 )
 _HISTORICAL_MINUTE_FIELDS = ("Open", "High", "Low", "Close", "Volume", "Amount")
 _NO_RAW_RESULT = object()
+_SUBSCRIPTION_CALLBACKS: dict[int, Callable[[Mapping[str, Any]], None]] = {}
+_SUBSCRIPTION_CALLBACKS_LOCK = threading.RLock()
+_SUBSCRIPTION_CALLBACK_IDS = count(1)
 
 
 class TDXInitializationError(ProviderError):
@@ -142,9 +147,19 @@ class TDXOperationError(ProviderError):
         return details
 
 
+class TDXSubscriptionError(ProviderError):
+    """Sanitized failure while registering the TDX refresh callback."""
+
+    def __init__(self, message: str) -> None:
+        self.sanitized_message = _sanitize_exception_message(message)
+        super().__init__(f"tqcenter subscribe_hq failed: {self.sanitized_message}")
+
+
 @dataclass(frozen=True)
 class _TDXSubscription:
-    entries: tuple[tuple[str, Any], ...]
+    symbols: tuple[str, ...]
+    handle: Any
+    callback_id: int
 
 
 class TDXLevel1Provider:
@@ -364,18 +379,22 @@ class TDXLevel1Provider:
             raise ValueError("symbols must contain at least one symbol")
         if not callable(callback):
             raise TypeError("callback must be callable")
-        entries = []
+        callback_id = _register_subscription_callback(callback)
         try:
-            for symbol in requested:
-                entries.append((symbol, api.subscribe_hq(symbol, callback)))
+            handle = api.subscribe_hq(
+                stock_list=list(requested),
+                callback=_tdx_subscription_callback,
+            )
         except Exception as exc:
-            for symbol, handle in entries:
-                try:
-                    api.unsubscribe_hq(_unsubscribe_target(symbol, handle))
-                except Exception:
-                    pass
-            raise ProviderError("tqcenter subscribe_hq failed") from exc
-        subscription = _TDXSubscription(tuple(entries))
+            _unregister_subscription_callback(callback_id)
+            raise TDXSubscriptionError(
+                str(exc) or "tqcenter.tq.subscribe_hq raised an exception"
+            ) from exc
+        if handle is False:
+            _unregister_subscription_callback(callback_id)
+            error = RuntimeError("tqcenter.tq.subscribe_hq returned False")
+            raise TDXSubscriptionError(str(error)) from error
+        subscription = _TDXSubscription(requested, handle, callback_id)
         self._subscriptions.append(subscription)
         return subscription
 
@@ -937,19 +956,45 @@ def canonicalize_tdx_level1_symbol(value: Any) -> str:
 
 
 def _unsubscribe(api: Any, subscription: Any) -> None:
-    entries = subscription.entries if isinstance(subscription, _TDXSubscription) else (("", subscription),)
-    first_error: Exception | None = None
-    for symbol, handle in entries:
+    if isinstance(subscription, _TDXSubscription):
+        target = _unsubscribe_target(subscription.symbols, subscription.handle)
         try:
-            api.unsubscribe_hq(_unsubscribe_target(symbol, handle))
-        except Exception as exc:
-            first_error = first_error or exc
-    if first_error is not None:
-        raise first_error
+            api.unsubscribe_hq(target)
+        finally:
+            _unregister_subscription_callback(subscription.callback_id)
+        return
+    api.unsubscribe_hq(subscription)
 
 
-def _unsubscribe_target(symbol: str, handle: Any) -> Any:
-    return symbol if handle is None or isinstance(handle, bool) else handle
+def _unsubscribe_target(symbols: Sequence[str], handle: Any) -> Any:
+    return list(symbols) if handle is None or isinstance(handle, bool) else handle
+
+
+def _register_subscription_callback(callback: Callable[[Mapping[str, Any]], None]) -> int:
+    callback_id = next(_SUBSCRIPTION_CALLBACK_IDS)
+    with _SUBSCRIPTION_CALLBACKS_LOCK:
+        _SUBSCRIPTION_CALLBACKS[callback_id] = callback
+    return callback_id
+
+
+def _unregister_subscription_callback(callback_id: int) -> None:
+    with _SUBSCRIPTION_CALLBACKS_LOCK:
+        _SUBSCRIPTION_CALLBACKS.pop(callback_id, None)
+
+
+def _tdx_subscription_callback(payload: Mapping[str, Any]) -> None:
+    """Module-level one-argument callback required by the Windows TQ runtime."""
+
+    with _SUBSCRIPTION_CALLBACKS_LOCK:
+        callbacks = tuple(_SUBSCRIPTION_CALLBACKS.values())
+    for callback in callbacks:
+        callback(payload)
+
+
+def sanitize_tdx_error_message(value: Any) -> str:
+    """Return the repository-safe representation used in runtime reports."""
+
+    return _sanitize_exception_message(value)
 
 
 def _shanghai_timestamp(value: datetime) -> datetime:
