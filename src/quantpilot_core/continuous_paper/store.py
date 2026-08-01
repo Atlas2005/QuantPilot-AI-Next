@@ -4,10 +4,12 @@ from __future__ import annotations
 import hashlib
 import json
 from contextlib import contextmanager
-from typing import Any, Mapping, Protocol
+from dataclasses import asdict, is_dataclass
+from datetime import date, datetime
+from typing import Any, Mapping, Protocol, Sequence
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def canonical_json(value: Any) -> str:
@@ -25,6 +27,7 @@ class ReportingConflictError(ValueError):
 class ReportingStore(Protocol):
     def initialize(self) -> None: ...
     def persist_cycle(self, bundle: Any) -> None: ...
+    def persist_market_data(self, events: Sequence[Any], bars: Sequence[Any]) -> None: ...
     def get_session(self, session_id: str) -> Mapping[str, Any] | None: ...
 
 
@@ -35,6 +38,8 @@ class InMemoryReportingStore:
         self.learning: dict[str, dict[str, Any]] = {}
         self.shadow: dict[str, dict[str, Any]] = {}
         self.facts: dict[str, dict[tuple[str, str, int], dict[str, Any]]] = {name: {} for name in ("paper_orders", "paper_fills", "paper_positions", "paper_equity_curve", "paper_reconciliation")}
+        self.market_events: dict[str, dict[str, Any]] = {}
+        self.intraday_bars: dict[str, dict[str, Any]] = {}
 
     def initialize(self) -> None:
         return None
@@ -44,6 +49,36 @@ class InMemoryReportingStore:
         tables = (dict(self.sessions), dict(self.reports), dict(self.learning), dict(self.shadow), {name: dict(rows) for name, rows in self.facts.items()})
         self._write_bundle(tables, bundle)
         self.sessions, self.reports, self.learning, self.shadow, self.facts = tables
+
+    def persist_market_data(self, events: Sequence[Any], bars: Sequence[Any]) -> None:
+        market_events = dict(self.market_events)
+        intraday_bars = dict(self.intraday_bars)
+        for event in events:
+            payload = _market_payload(event)
+            event_id = payload_digest(payload)
+            row = {
+                "event_id": event_id,
+                "provider": str(payload.get("provider", "")),
+                "symbol": str(payload["symbol"]),
+                "event_timestamp": str(payload["timestamp"]),
+                "received_at": str(payload["received_at"]),
+                "payload": payload,
+            }
+            self._immutable(market_events, event_id, row, "payload_digest")
+        for bar in bars:
+            payload = _market_payload(bar)
+            bar_id = payload_digest(payload)
+            row = {
+                "bar_id": bar_id,
+                "provider": str(payload.get("provider", "")),
+                "symbol": str(payload["symbol"]),
+                "bar_start": str(payload["start"]),
+                "interval_minutes": int(payload["interval_minutes"]),
+                "payload": payload,
+            }
+            self._immutable(intraday_bars, bar_id, row, "payload_digest")
+        self.market_events = market_events
+        self.intraday_bars = intraday_bars
 
     def _write_bundle(self, tables: Any, bundle: Any) -> None:
         sessions, reports, learning, shadow, facts = tables
@@ -79,7 +114,7 @@ class InMemoryReportingStore:
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS reporting_schema_version (version INTEGER PRIMARY KEY);
-INSERT INTO reporting_schema_version(version) VALUES (2) ON CONFLICT DO NOTHING;
+INSERT INTO reporting_schema_version(version) VALUES (3) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS paper_sessions (session_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, decision_session TEXT NOT NULL, execution_session TEXT, status TEXT NOT NULL, strategy_id TEXT, production_manifest_digest TEXT, effective_parameter_digest TEXT, production_input_digest TEXT, state_hash_before TEXT, state_hash_after TEXT, prefect_flow_id TEXT, prefect_deployment_id TEXT, prefect_flow_run_id TEXT, replay_status TEXT NOT NULL, failure_class TEXT, failure_reason TEXT, started_at TIMESTAMPTZ NOT NULL, completed_at TIMESTAMPTZ NOT NULL, report_digest TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS paper_session_reports (session_id TEXT PRIMARY KEY REFERENCES paper_sessions(session_id), schema_version INTEGER NOT NULL, payload JSONB NOT NULL, payload_digest TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS learning_desk_reports (session_id TEXT PRIMARY KEY REFERENCES paper_sessions(session_id), payload JSONB NOT NULL, payload_digest TEXT NOT NULL);
@@ -89,6 +124,8 @@ CREATE TABLE IF NOT EXISTS paper_fills (session_id TEXT REFERENCES paper_session
 CREATE TABLE IF NOT EXISTS paper_positions (session_id TEXT REFERENCES paper_sessions(session_id), source_identity TEXT NOT NULL, source_index INTEGER NOT NULL, payload JSONB NOT NULL, payload_digest TEXT NOT NULL, PRIMARY KEY(session_id,source_identity,source_index));
 CREATE TABLE IF NOT EXISTS paper_equity_curve (session_id TEXT REFERENCES paper_sessions(session_id), source_identity TEXT NOT NULL, source_index INTEGER NOT NULL, payload JSONB NOT NULL, payload_digest TEXT NOT NULL, PRIMARY KEY(session_id,source_identity,source_index));
 CREATE TABLE IF NOT EXISTS paper_reconciliation (session_id TEXT REFERENCES paper_sessions(session_id), source_identity TEXT NOT NULL, source_index INTEGER NOT NULL, payload JSONB NOT NULL, payload_digest TEXT NOT NULL, PRIMARY KEY(session_id,source_identity,source_index));
+CREATE TABLE IF NOT EXISTS market_level1_events (event_id TEXT PRIMARY KEY, provider TEXT NOT NULL, symbol TEXT NOT NULL, event_timestamp TIMESTAMPTZ NOT NULL, received_at TIMESTAMPTZ NOT NULL, payload JSONB NOT NULL, payload_digest TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS market_intraday_bars (bar_id TEXT PRIMARY KEY, provider TEXT NOT NULL, symbol TEXT NOT NULL, bar_start TIMESTAMPTZ NOT NULL, interval_minutes INTEGER NOT NULL, payload JSONB NOT NULL, payload_digest TEXT NOT NULL);
 """
 
 
@@ -128,6 +165,49 @@ class PostgreSQLReportingStore:
             conn.rollback()
             raise
 
+    def persist_market_data(self, events: Sequence[Any], bars: Sequence[Any]) -> None:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                for event in events:
+                    payload = _market_payload(event)
+                    event_id = payload_digest(payload)
+                    self._check_and_insert(
+                        cur,
+                        "market_level1_events",
+                        "event_id",
+                        {
+                            "event_id": event_id,
+                            "provider": str(payload.get("provider", "")),
+                            "symbol": str(payload["symbol"]),
+                            "event_timestamp": str(payload["timestamp"]),
+                            "received_at": str(payload["received_at"]),
+                            "payload": payload,
+                        },
+                        "payload_digest",
+                    )
+                for bar in bars:
+                    payload = _market_payload(bar)
+                    bar_id = payload_digest(payload)
+                    self._check_and_insert(
+                        cur,
+                        "market_intraday_bars",
+                        "bar_id",
+                        {
+                            "bar_id": bar_id,
+                            "provider": str(payload.get("provider", "")),
+                            "symbol": str(payload["symbol"]),
+                            "bar_start": str(payload["start"]),
+                            "interval_minutes": int(payload["interval_minutes"]),
+                            "payload": payload,
+                        },
+                        "payload_digest",
+                    )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
     def _check_and_insert(self, cur: Any, table: str, keys: str, row: Mapping[str, Any], digest_key: str, *, session: bool = False) -> None:
         item = dict(row); item.setdefault(digest_key, payload_digest(item.get("payload", item)))
         key_names = keys.split(",")
@@ -151,3 +231,26 @@ class PostgreSQLReportingStore:
             cur.execute("SELECT session_id, report_digest FROM paper_sessions WHERE session_id=%s", (session_id,))
             row = cur.fetchone()
         return {"session_id": row[0], "report_digest": row[1]} if row else None
+
+
+def _market_payload(value: Any) -> Mapping[str, Any]:
+    if is_dataclass(value) and not isinstance(value, type):
+        payload = asdict(value)
+    elif isinstance(value, Mapping):
+        payload = dict(value)
+    else:
+        raise TypeError("market data rows must be dataclasses or mappings")
+    return _json_ready(payload)
+
+
+def _json_ready(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _json_ready(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    enum_value = getattr(value, "value", None)
+    if enum_value is not None and isinstance(enum_value, (str, int, float, bool)):
+        return enum_value
+    return value
