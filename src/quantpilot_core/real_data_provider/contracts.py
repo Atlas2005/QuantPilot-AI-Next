@@ -170,7 +170,7 @@ class NormalizedLevel1Event:
 
 @dataclass(frozen=True)
 class NormalizedIntradayBar:
-    """Intraday bar derived from Level1 events; volume is shares, amount CNY."""
+    """Intraday bar; volume is shares, amount CNY, raw source is retained."""
 
     symbol: str
     start: datetime
@@ -187,6 +187,7 @@ class NormalizedIntradayBar:
     missing_minutes_before: int = 0
     partial: bool = False
     provider: ProviderName = ProviderName.TDX_LEVEL1
+    raw_payload: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.symbol.strip():
@@ -212,6 +213,8 @@ class NormalizedIntradayBar:
             raise ValueError("event_count must be positive")
         if self.missing_minutes_before < 0:
             raise ValueError("missing_minutes_before must be non-negative")
+        if not isinstance(self.raw_payload, Mapping):
+            raise TypeError("raw_payload must be a mapping")
 
 
 class Level1MarketDataProvider(Protocol):

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
@@ -12,6 +14,8 @@ from quantpilot_core.real_data_provider import (
     LiveLevel1Collector,
     NormalizedLevel1Event,
     ProviderError,
+    TDXInitializationDependencyError,
+    TDXInitializationError,
     TDXLevel1Provider,
     normalize_tdx_level1_snapshot,
 )
@@ -47,6 +51,17 @@ REAL_TDX_LEVEL1_SNAPSHOT = {
     "ZAFPre3": "3.84",
     "ErrorId": "0",
 }
+
+
+@pytest.fixture
+def isolated_tqcenter_module():
+    prior = sys.modules.pop("tqcenter", None)
+    try:
+        yield
+    finally:
+        sys.modules.pop("tqcenter", None)
+        if prior is not None:
+            sys.modules["tqcenter"] = prior
 
 
 def _time(hour: int, minute: int, second: int = 0) -> datetime:
@@ -154,9 +169,11 @@ class _TQCenterApi:
         self.callback = None
         self.subscribed = []
         self.unsubscribed = []
+        self.initialization_path = None
 
-    def initialize(self) -> None:
+    def initialize(self, initialization_path: str) -> None:
         self.initialized = True
+        self.initialization_path = initialization_path
 
     def get_market_snapshot(self, symbols):
         return {
@@ -187,7 +204,7 @@ def test_provider_imports_injected_tqcenter_only_during_initialize(tmp_path: Pat
     imports = []
     provider = TDXLevel1Provider(
         tmp_path,
-        module_loader=lambda name: imports.append(name) or api,
+        module_loader=lambda name: imports.append(name) or SimpleNamespace(tq=api),
         platform_system=lambda: "Windows",
         clock=lambda: _time(10, 1, 5),
     )
@@ -199,7 +216,194 @@ def test_provider_imports_injected_tqcenter_only_during_initialize(tmp_path: Pat
 
     assert imports == ["tqcenter"]
     assert api.initialized is True
+    assert Path(api.initialization_path).is_file()
     assert events[0].symbol == "000001.SZ"
+
+
+def test_provider_uses_normal_runtime_directory_import_and_real_initialize_path(
+    tmp_path: Path,
+    isolated_tqcenter_module,
+) -> None:
+    module_path = tmp_path / "tqcenter.py"
+    module_path.write_text(
+        """
+class TQ:
+    def __init__(self):
+        self.initialization_path = None
+    def initialize(self, initialization_path):
+        self.initialization_path = initialization_path
+    def get_market_snapshot(self, symbols):
+        return {symbols[0]: {"Now": "11.63", "Volume": "1", "Amount": "0.1163"}}
+    def subscribe_hq(self, symbol, callback):
+        return symbol
+    def unsubscribe_hq(self, subscription):
+        return None
+tq = TQ()
+""",
+        encoding="utf-8",
+    )
+    original_path = tuple(sys.path)
+    provider = TDXLevel1Provider(
+        tmp_path,
+        platform_system=lambda: "Windows",
+        clock=lambda: _time(10, 1, 5),
+    )
+
+    provider.initialize()
+    events = provider.get_market_snapshot(("000001.SZ",))
+
+    assert Path(provider._api.initialization_path).is_file()
+    assert Path(sys.modules["tqcenter"].__file__).resolve() == module_path.resolve()
+    assert tuple(sys.path) == original_path
+    assert events[0].last_price == 11.63
+    provider.close()
+
+
+def test_provider_requires_exact_tqcenter_python_file(tmp_path: Path) -> None:
+    provider = TDXLevel1Provider(tmp_path, platform_system=lambda: "Windows")
+
+    with pytest.raises(TDXInitializationDependencyError) as captured:
+        provider.initialize()
+
+    assert captured.value.initialization_stage == "tqcenter_path_validation"
+    assert "tqcenter.py" in str(captured.value)
+
+
+def test_provider_reports_normal_python_import_failure(
+    tmp_path: Path,
+    isolated_tqcenter_module,
+) -> None:
+    (tmp_path / "tqcenter.py").write_text(
+        "raise ImportError('verified import failure token=do-not-print')\n",
+        encoding="utf-8",
+    )
+    provider = TDXLevel1Provider(tmp_path, platform_system=lambda: "Windows")
+
+    with pytest.raises(TDXInitializationDependencyError) as captured:
+        provider.initialize()
+
+    error = captured.value
+    assert error.initialization_stage == "tqcenter_import"
+    assert isinstance(error.__cause__, ImportError)
+    assert "verified import failure" in str(error.__cause__)
+    assert "do-not-print" not in str(error)
+    assert error.as_dict()["cause_exception_type"] == "ImportError"
+    assert "do-not-print" not in error.as_dict()["sanitized_cause_message"]
+
+
+def test_provider_rejects_tqcenter_module_without_tq(
+    tmp_path: Path,
+    isolated_tqcenter_module,
+) -> None:
+    (tmp_path / "tqcenter.py").write_text("runtime_marker = True\n", encoding="utf-8")
+    provider = TDXLevel1Provider(tmp_path, platform_system=lambda: "Windows")
+
+    with pytest.raises(TDXInitializationDependencyError) as captured:
+        provider.initialize()
+
+    assert captured.value.initialization_stage == "tq_object_validation"
+    assert isinstance(captured.value.__cause__, AttributeError)
+
+
+def test_provider_initialize_failure_preserves_original_exception_and_chain(tmp_path: Path) -> None:
+    (tmp_path / "tqcenter.py").write_text("# runtime marker\n", encoding="utf-8")
+
+    class FailingApi(_TQCenterApi):
+        def initialize(self, initialization_path: str) -> None:
+            try:
+                raise ValueError("inner initialization cause")
+            except ValueError as inner:
+                raise RuntimeError("original initialize failure") from inner
+
+    provider = TDXLevel1Provider(
+        tmp_path,
+        module_loader=lambda _name: SimpleNamespace(tq=FailingApi()),
+        platform_system=lambda: "Windows",
+    )
+
+    with pytest.raises(TDXInitializationError) as captured:
+        provider.initialize()
+
+    error = captured.value
+    assert error.initialization_stage == "tq_initialize"
+    assert isinstance(error.__cause__, RuntimeError)
+    assert str(error.__cause__) == "original initialize failure"
+    assert isinstance(error.__cause__.__cause__, ValueError)
+    assert str(error.__cause__.__cause__) == "inner initialization cause"
+    assert error.as_dict()["cause_exception_type"] == "RuntimeError"
+    assert error.as_dict()["sanitized_cause_message"] == "original initialize failure"
+
+
+def test_historical_minute_wrapper_calls_tq_and_normalizes_canonical_units(tmp_path: Path) -> None:
+    (tmp_path / "tqcenter.py").write_text("# runtime marker\n", encoding="utf-8")
+    timestamp = "20260803100100"
+
+    class HistoricalApi(_TQCenterApi):
+        def __init__(self) -> None:
+            super().__init__()
+            self.market_data_call = None
+
+        def get_market_data(self, **kwargs):
+            self.market_data_call = kwargs
+            return {
+                "Open": {timestamp: "10.00"},
+                "High": {timestamp: "10.20"},
+                "Low": {timestamp: "9.90"},
+                "Close": {timestamp: "10.10"},
+                "Volume": {timestamp: "10"},
+                "Amount": {timestamp: "1.01"},
+            }
+
+    api = HistoricalApi()
+    provider = TDXLevel1Provider(
+        tmp_path,
+        module_loader=lambda _name: SimpleNamespace(tq=api),
+        platform_system=lambda: "Windows",
+    )
+    provider.initialize()
+
+    bars = provider.get_historical_intraday_bars(
+        ("000001.SZ",),
+        period="1m",
+        fields=("Open", "High", "Low", "Close", "Volume", "Amount"),
+        start_time="20260803093000",
+        end_time="20260803150000",
+        count=20,
+        dividend_type="none",
+        fill_data=False,
+    )
+
+    assert api.market_data_call == {
+        "field_list": ["Open", "High", "Low", "Close", "Volume", "Amount"],
+        "stock_list": ["000001.SZ"],
+        "period": "1m",
+        "start_time": "20260803093000",
+        "end_time": "20260803150000",
+        "count": 20,
+        "dividend_type": "none",
+        "fill_data": False,
+    }
+    assert len(bars) == 1
+    bar = bars[0]
+    assert bar.symbol == "000001.SZ"
+    assert bar.start.isoformat() == "2026-08-03T10:01:00+08:00"
+    assert (bar.open, bar.high, bar.low, bar.close) == (10.0, 10.2, 9.9, 10.1)
+    assert bar.volume == 1_000
+    assert bar.amount == 10_100
+    assert bar.average_price == pytest.approx(10.1)
+    assert bar.raw_payload == {
+        "timestamp": timestamp,
+        "Open": "10.00",
+        "High": "10.20",
+        "Low": "9.90",
+        "Close": "10.10",
+        "Volume": "10",
+        "Amount": "1.01",
+        "source_units": {
+            "Volume": "lots_of_100_shares",
+            "Amount": "10000_cny",
+        },
+    }
 
 
 def test_provider_subscribes_and_unsubscribes_each_explicit_symbol(tmp_path: Path) -> None:
@@ -207,7 +411,7 @@ def test_provider_subscribes_and_unsubscribes_each_explicit_symbol(tmp_path: Pat
     api = _TQCenterApi()
     provider = TDXLevel1Provider(
         tmp_path,
-        module_loader=lambda _name: api,
+        module_loader=lambda _name: SimpleNamespace(tq=api),
         platform_system=lambda: "Windows",
     )
     provider.initialize()

@@ -5,6 +5,7 @@ import json
 import pytest
 
 import scripts.run_tdx_level1_adapter_v1 as runner
+from quantpilot_core.real_data_provider import TDXInitializationError
 
 
 class _Store:
@@ -99,3 +100,39 @@ def test_explicit_postgresql_fails_clearly_without_configuration(monkeypatch) ->
     monkeypatch.delenv("QUANTPILOT_POSTGRES_DSN", raising=False)
     with pytest.raises(RuntimeError, match="QUANTPILOT_POSTGRES_DSN"):
         runner._store("postgresql")
+
+
+def test_cli_reports_structured_sanitized_initialization_error(monkeypatch, capsys) -> None:
+    cause = TypeError("initialize missing caller path token=private-value")
+    failure = TDXInitializationError("tq_initialize", str(cause))
+    failure.__cause__ = cause
+
+    class FailingCollector:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def run(self, _duration):
+            raise failure
+
+    monkeypatch.setattr(runner, "TDXLevel1Provider", lambda _path: object())
+    monkeypatch.setattr(runner, "LiveLevel1Collector", FailingCollector)
+
+    result = runner.main(
+        [
+            "--symbols", "000001.SZ",
+            "--tdx-user-dir", r"D:\tongdaxin\PYPlugins\user",
+            "--duration", "0",
+            "--store-provider", "memory",
+            "--shadow",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert result == 2
+    assert payload["initialization_stage"] == "tq_initialize"
+    assert payload["exception_type"] == "TDXInitializationError"
+    assert "TDX initialization failed at tq_initialize" in payload["sanitized_exception_message"]
+    assert payload["cause_exception_type"] == "TypeError"
+    assert "initialize missing caller path" in payload["sanitized_cause_message"]
+    assert "private-value" not in output

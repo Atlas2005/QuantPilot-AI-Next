@@ -9,7 +9,11 @@ import os
 from typing import Sequence
 
 from quantpilot_core.continuous_paper import InMemoryReportingStore, PostgreSQLReportingStore
-from quantpilot_core.real_data_provider import LiveLevel1Collector, TDXLevel1Provider
+from quantpilot_core.real_data_provider import (
+    LiveLevel1Collector,
+    TDXInitializationError,
+    TDXLevel1Provider,
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -85,26 +89,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(report.as_dict(), sort_keys=True))
         return 0
     except Exception as exc:
-        print(
-            json.dumps(
-                {
-                    "connection_status": "unavailable",
-                    "symbols": tuple(item.strip() for item in args.symbols.split(",") if item.strip()),
-                    "event_count": 0,
-                    "snapshot_count": 0,
-                    "bar_count": 0,
-                    "callback_count": 0,
-                    "quote_change_count": 0,
-                    "persisted_event_count": 0,
-                    "persisted_bar_count": 0,
-                    "storage_backend": storage_backend,
-                    "realtime_market_change_detected": False,
-                    "shadow": bool(args.shadow),
-                    "error": str(exc),
-                },
-                sort_keys=True,
-            )
-        )
+        payload = {
+            "connection_status": "unavailable",
+            "symbols": tuple(item.strip() for item in args.symbols.split(",") if item.strip()),
+            "event_count": 0,
+            "snapshot_count": 0,
+            "bar_count": 0,
+            "callback_count": 0,
+            "quote_change_count": 0,
+            "persisted_event_count": 0,
+            "persisted_bar_count": 0,
+            "storage_backend": storage_backend,
+            "realtime_market_change_detected": False,
+            "shadow": bool(args.shadow),
+            "error": str(exc),
+        }
+        if isinstance(exc, TDXInitializationError):
+            payload.update(exc.as_dict())
+        print(json.dumps(payload, sort_keys=True))
         return 2
 
 

@@ -73,8 +73,11 @@ from quantpilot_core.real_data_provider.level1_collector import (
     LiveLevel1Collector,
 )
 from quantpilot_core.real_data_provider.tdx_level1_adapter import (
+    TDXInitializationDependencyError,
+    TDXInitializationError,
     TDXLevel1Provider,
     canonicalize_tdx_level1_symbol,
+    normalize_tdx_historical_minute_bars,
     normalize_tdx_level1_snapshot,
 )
 
@@ -112,6 +115,8 @@ __all__ = [
     "SnapshotDailyBarProvider",
     "SUPPORTED_INTRADAY_INTERVALS",
     "TDXLevel1Provider",
+    "TDXInitializationDependencyError",
+    "TDXInitializationError",
     "TushareIndexDailyProvider",
     "TushareDependencyStatus",
     "TusharePrimaryBaoStockCalendarProvider",
@@ -125,6 +130,7 @@ __all__ = [
     "detect_baostock_dependency",
     "detect_tushare_dependency",
     "normalize_baostock_daily_bars",
+    "normalize_tdx_historical_minute_bars",
     "normalize_tdx_level1_snapshot",
     "normalize_tushare_daily_bars",
     "aggregate_intraday_bars",

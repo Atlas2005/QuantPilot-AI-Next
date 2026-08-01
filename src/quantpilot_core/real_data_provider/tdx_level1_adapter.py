@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import importlib
 import platform
 import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -16,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from quantpilot_core.data_provider_normalization import canonicalize_a_share_symbol
 from quantpilot_core.real_data_provider.contracts import (
+    NormalizedIntradayBar,
     NormalizedLevel1Event,
     ProviderDataError,
     ProviderDependencyError,
@@ -57,6 +57,43 @@ _TDX_SOURCE_UNITS: Mapping[str, str] = {
     "Outside": "unconfirmed_tdx_source_unit",
 }
 
+_TDX_INITIALIZATION_FILE = Path(__file__).resolve()
+_REQUIRED_LEVEL1_FUNCTIONS = (
+    "initialize",
+    "get_market_snapshot",
+    "subscribe_hq",
+    "unsubscribe_hq",
+)
+_HISTORICAL_MINUTE_FIELDS = ("Open", "High", "Low", "Close", "Volume", "Amount")
+
+
+class TDXInitializationError(ProviderError):
+    """Structured, sanitized failure from a specific TDX initialization stage."""
+
+    def __init__(self, initialization_stage: str, message: str) -> None:
+        self.initialization_stage = initialization_stage
+        self.sanitized_source_message = _sanitize_exception_message(message)
+        super().__init__(
+            f"TDX initialization failed at {initialization_stage}: "
+            f"{self.sanitized_source_message}"
+        )
+
+    def as_dict(self) -> dict[str, str]:
+        details = {
+            "initialization_stage": self.initialization_stage,
+            "exception_type": type(self).__name__,
+            "sanitized_exception_message": str(self),
+        }
+        cause = self.__cause__
+        if cause is not None:
+            details["cause_exception_type"] = type(cause).__name__
+            details["sanitized_cause_message"] = _sanitize_exception_message(str(cause))
+        return details
+
+
+class TDXInitializationDependencyError(TDXInitializationError, ProviderDependencyError):
+    """Initialization failure caused by platform, path, import, or API shape."""
+
 
 @dataclass(frozen=True)
 class _TDXSubscription:
@@ -81,11 +118,10 @@ class TDXLevel1Provider:
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.tdx_user_dir = Path(tdx_user_dir)
-        self._module_loader = module_loader or importlib.import_module
+        self._module_loader = module_loader
         self._platform_system = platform_system or platform.system
         self._clock = clock or (lambda: datetime.now(SHANGHAI_TZ))
         self._api: Any | None = None
-        self._path_inserted = False
         self._subscriptions: list[_TDXSubscription] = []
 
     @property
@@ -96,35 +132,79 @@ class TDXLevel1Provider:
         if self.initialized:
             return
         if self._platform_system() != "Windows":
-            raise ProviderDependencyError("TDX Level1 is available only on Windows")
+            raise TDXInitializationDependencyError(
+                "platform_validation",
+                "TDX Level1 is available only on Windows",
+            )
         if not self.tdx_user_dir.is_dir():
-            raise ProviderDependencyError(f"TDX user directory not found: {self.tdx_user_dir}")
+            raise TDXInitializationDependencyError(
+                "runtime_directory_validation",
+                "configured TDX user directory does not exist",
+            )
         module_path = self.tdx_user_dir / "tqcenter.py"
         if not module_path.is_file():
-            raise ProviderDependencyError(f"tqcenter.py not found in TDX user directory: {module_path}")
+            raise TDXInitializationDependencyError(
+                "tqcenter_path_validation",
+                "tqcenter.py not found in configured TDX user directory",
+            )
+        if not _TDX_INITIALIZATION_FILE.is_file():
+            raise TDXInitializationDependencyError(
+                "initialize_path_validation",
+                "provider initialization Python file does not exist",
+            )
         user_dir = str(self.tdx_user_dir)
-        if user_dir not in sys.path:
+        path_was_prepended = not sys.path or sys.path[0] != user_dir
+        if path_was_prepended:
             sys.path.insert(0, user_dir)
-            self._path_inserted = True
         try:
-            module = self._module_loader("tqcenter")
-        except Exception as exc:
-            self._remove_runtime_path()
-            raise ProviderDependencyError(f"unable to import tqcenter from {module_path}") from exc
-        api = getattr(module, "tq", module)
-        missing = tuple(
-            name
-            for name in ("initialize", "get_market_snapshot", "subscribe_hq", "unsubscribe_hq")
-            if not callable(getattr(api, name, None))
-        )
-        if missing:
-            self._remove_runtime_path()
-            raise ProviderDependencyError(f"tqcenter is missing required Level1 functions: {', '.join(missing)}")
-        try:
-            api.initialize()
-        except Exception as exc:
-            self._remove_runtime_path()
-            raise ProviderError("tqcenter Level1 initialization failed") from exc
+            try:
+                module = (
+                    self._module_loader("tqcenter")
+                    if self._module_loader is not None
+                    else __import__("tqcenter", fromlist=("tq",))
+                )
+            except Exception as exc:
+                raise TDXInitializationDependencyError(
+                    "tqcenter_import",
+                    str(exc) or "normal Python import of tqcenter failed",
+                ) from exc
+            if self._module_loader is None:
+                origin = getattr(module, "__file__", None)
+                if origin is None or Path(origin).resolve() != module_path.resolve():
+                    raise TDXInitializationDependencyError(
+                        "tqcenter_origin_validation",
+                        "normal Python import did not resolve to configured tqcenter.py",
+                    )
+            try:
+                api = module.tq
+            except AttributeError as exc:
+                raise TDXInitializationDependencyError(
+                    "tq_object_validation",
+                    "imported tqcenter module does not expose tqcenter.tq",
+                ) from exc
+            missing = tuple(
+                name
+                for name in _REQUIRED_LEVEL1_FUNCTIONS
+                if not callable(getattr(api, name, None))
+            )
+            if missing:
+                error = AttributeError(
+                    f"tqcenter.tq missing required Level1 functions: {', '.join(missing)}"
+                )
+                raise TDXInitializationDependencyError(
+                    "tq_api_validation",
+                    str(error),
+                ) from error
+            try:
+                api.initialize(str(_TDX_INITIALIZATION_FILE))
+            except Exception as exc:
+                raise TDXInitializationError(
+                    "tq_initialize",
+                    str(exc) or "tqcenter.tq.initialize failed",
+                ) from exc
+        finally:
+            if path_was_prepended:
+                _remove_first_sys_path_entry(user_dir)
         self._api = api
 
     def get_market_snapshot(self, symbols: Sequence[str]) -> tuple[NormalizedLevel1Event, ...]:
@@ -138,6 +218,46 @@ class TDXLevel1Provider:
         except Exception as exc:
             raise ProviderError("tqcenter get_market_snapshot failed") from exc
         return normalize_tdx_level1_snapshot(raw, requested_symbols=requested, received_at=received_at)
+
+    def get_historical_intraday_bars(
+        self,
+        symbols: Sequence[str],
+        *,
+        period: str,
+        fields: Sequence[str],
+        start_time: str,
+        end_time: str,
+        count: int,
+        dividend_type: str,
+        fill_data: bool,
+    ) -> tuple[NormalizedIntradayBar, ...]:
+        """Fetch and normalize local TDX one-minute history through ``tq``."""
+
+        api = self._require_api()
+        requested = _canonical_symbols(symbols)
+        if not requested:
+            raise ValueError("symbols must contain at least one symbol")
+        if period != "1m":
+            raise ValueError("TDX historical intraday bars support period='1m' only")
+        requested_fields = tuple(str(field).strip() for field in fields if str(field).strip())
+        _require_historical_minute_fields(requested_fields)
+        get_market_data = getattr(api, "get_market_data", None)
+        if not callable(get_market_data):
+            raise ProviderDependencyError("tqcenter.tq does not expose get_market_data")
+        try:
+            raw = get_market_data(
+                field_list=list(requested_fields),
+                stock_list=list(requested),
+                period=period,
+                start_time=start_time,
+                end_time=end_time,
+                count=int(count),
+                dividend_type=dividend_type,
+                fill_data=bool(fill_data),
+            )
+        except Exception as exc:
+            raise ProviderError("tqcenter get_market_data failed") from exc
+        return normalize_tdx_historical_minute_bars(raw, requested_symbols=requested)
 
     def subscribe_hq(
         self,
@@ -184,7 +304,6 @@ class TDXLevel1Provider:
                     first_error = first_error or exc
         self._subscriptions.clear()
         self._api = None
-        self._remove_runtime_path()
         if first_error is not None:
             raise ProviderError("tqcenter unsubscribe_hq failed during shutdown") from first_error
 
@@ -192,16 +311,6 @@ class TDXLevel1Provider:
         if self._api is None:
             raise ProviderError("TDX Level1 provider is not initialized")
         return self._api
-
-    def _remove_runtime_path(self) -> None:
-        user_dir = str(self.tdx_user_dir)
-        if self._path_inserted:
-            try:
-                sys.path.remove(user_dir)
-            except ValueError:
-                pass
-        self._path_inserted = False
-
 
 def normalize_tdx_level1_snapshot(
     payload: Any,
@@ -285,6 +394,86 @@ def normalize_tdx_level1_snapshot(
             raise ProviderDataError(f"conflicting TDX Level1 rows for {event.symbol}")
         by_symbol[event.symbol] = event
     return tuple(by_symbol[symbol] for symbol in sorted(by_symbol))
+
+
+def normalize_tdx_historical_minute_bars(
+    payload: Any,
+    *,
+    requested_symbols: Sequence[str],
+) -> tuple[NormalizedIntradayBar, ...]:
+    """Normalize field-oriented ``tq.get_market_data`` output into minute bars."""
+
+    requested = _canonical_symbols(requested_symbols)
+    if not requested:
+        raise ValueError("requested_symbols must contain at least one symbol")
+    if not isinstance(payload, Mapping):
+        raise ProviderDataError("TDX historical minute data must be a field mapping")
+    payload_fields = {_key_token(key): (str(key), value) for key, value in payload.items()}
+    field_points: dict[str, dict[tuple[str, datetime], tuple[Any, Any]]] = {}
+    for field in _HISTORICAL_MINUTE_FIELDS:
+        found = payload_fields.get(_key_token(field))
+        if found is None:
+            raise ProviderDataError(f"TDX historical minute data is missing {field}")
+        source_name, source_values = found
+        field_points[field] = _historical_field_points(
+            source_values,
+            requested_symbols=requested,
+            field_name=source_name,
+        )
+
+    keys = set().union(*(set(points) for points in field_points.values()))
+    output = []
+    for symbol, timestamp in sorted(keys, key=lambda item: (item[1], item[0])):
+        missing = [
+            field
+            for field in _HISTORICAL_MINUTE_FIELDS
+            if (symbol, timestamp) not in field_points[field]
+        ]
+        if missing:
+            raise ProviderDataError(
+                f"TDX historical minute row for {symbol} at {timestamp.isoformat()} "
+                f"is missing fields: {', '.join(missing)}"
+            )
+        raw_values = {
+            field: field_points[field][(symbol, timestamp)][0]
+            for field in _HISTORICAL_MINUTE_FIELDS
+        }
+        raw_timestamp = field_points["Open"][(symbol, timestamp)][1]
+        volume = _required_historical_decimal(raw_values["Volume"], "Volume")
+        amount = _required_historical_decimal(raw_values["Amount"], "Amount")
+        volume_shares = float(volume * Decimal("100"))
+        amount_cny = float(amount * Decimal("10000"))
+        average_price = amount_cny / volume_shares if volume_shares > 0 else None
+        try:
+            output.append(
+                NormalizedIntradayBar(
+                    symbol=symbol,
+                    start=timestamp,
+                    end=timestamp + timedelta(minutes=1),
+                    interval_minutes=1,
+                    open=_required_number(raw_values["Open"], "historical Open"),
+                    high=_required_number(raw_values["High"], "historical High"),
+                    low=_required_number(raw_values["Low"], "historical Low"),
+                    close=_required_number(raw_values["Close"], "historical Close"),
+                    volume=volume_shares,
+                    amount=amount_cny,
+                    average_price=average_price,
+                    event_count=1,
+                    raw_payload={
+                        "timestamp": raw_timestamp,
+                        **raw_values,
+                        "source_units": {
+                            "Volume": "lots_of_100_shares",
+                            "Amount": "10000_cny",
+                        },
+                    },
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            raise ProviderDataError(
+                f"invalid TDX historical minute row for {symbol} at {timestamp.isoformat()}: {exc}"
+            ) from exc
+    return tuple(output)
 
 
 def _snapshot_rows(payload: Any) -> tuple[tuple[str | None, Mapping[str, Any]], ...]:
@@ -442,6 +631,156 @@ def _number_levels(value: Any, field_name: str) -> tuple[float, ...]:
             raise ProviderDataError(f"TDX Level1 {field_name}[{index}] must be numeric")
         output.append(numeric)
     return tuple(output)
+
+
+def _require_historical_minute_fields(fields: Sequence[str]) -> None:
+    available = {_key_token(field) for field in fields}
+    missing = [field for field in _HISTORICAL_MINUTE_FIELDS if _key_token(field) not in available]
+    if missing:
+        raise ValueError(
+            "TDX historical one-minute fields must include: " + ", ".join(missing)
+        )
+
+
+def _historical_field_points(
+    values: Any,
+    *,
+    requested_symbols: Sequence[str],
+    field_name: str,
+) -> dict[tuple[str, datetime], tuple[Any, Any]]:
+    mapping = _data_mapping(values, field_name)
+    requested = set(requested_symbols)
+    output: dict[tuple[str, datetime], tuple[Any, Any]] = {}
+    for outer_key, outer_value in mapping.items():
+        outer_symbol = _try_historical_symbol(outer_key)
+        if outer_symbol is not None:
+            if outer_symbol not in requested:
+                continue
+            nested = _data_mapping(outer_value, field_name)
+            for raw_timestamp, raw_value in nested.items():
+                timestamp = _historical_timestamp(raw_timestamp, field_name)
+                output[(outer_symbol, timestamp)] = (raw_value, raw_timestamp)
+            continue
+
+        timestamp = _try_historical_timestamp(outer_key)
+        if timestamp is None:
+            raise ProviderDataError(
+                f"TDX historical {field_name} contains an unsupported index value"
+            )
+        nested = _optional_data_mapping(outer_value)
+        if nested is None:
+            if len(requested_symbols) != 1:
+                raise ProviderDataError(
+                    f"TDX historical {field_name} row does not identify a symbol"
+                )
+            output[(requested_symbols[0], timestamp)] = (outer_value, outer_key)
+            continue
+        for raw_symbol, raw_value in nested.items():
+            symbol = canonicalize_tdx_level1_symbol(raw_symbol)
+            if symbol in requested:
+                output[(symbol, timestamp)] = (raw_value, outer_key)
+    if not output:
+        raise ProviderDataError(f"TDX historical {field_name} contains no requested rows")
+    return output
+
+
+def _data_mapping(value: Any, field_name: str) -> Mapping[Any, Any]:
+    mapping = _optional_data_mapping(value)
+    if mapping is None:
+        raise ProviderDataError(
+            f"TDX historical {field_name} must expose timestamp-indexed values"
+        )
+    return mapping
+
+
+def _optional_data_mapping(value: Any) -> Mapping[Any, Any] | None:
+    if isinstance(value, Mapping):
+        return value
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        converted = to_dict()
+        if isinstance(converted, Mapping):
+            return converted
+    return None
+
+
+def _try_historical_symbol(value: Any) -> str | None:
+    try:
+        return canonicalize_tdx_level1_symbol(value)
+    except ProviderDataError:
+        return None
+
+
+def _historical_timestamp(value: Any, field_name: str) -> datetime:
+    timestamp = _try_historical_timestamp(value)
+    if timestamp is None:
+        raise ProviderDataError(f"TDX historical {field_name} timestamp is invalid")
+    return timestamp
+
+
+def _try_historical_timestamp(value: Any) -> datetime | None:
+    to_datetime = getattr(value, "to_pydatetime", None)
+    if callable(to_datetime):
+        value = to_datetime()
+    if isinstance(value, datetime):
+        return _shanghai_timestamp(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    digits = re.sub(r"\D", "", text)
+    timestamp_formats = (
+        (12, "%Y%m%d%H%M"),
+        (14, "%Y%m%d%H%M%S"),
+        (17, "%Y%m%d%H%M%S%f"),
+    )
+    for length, fmt in timestamp_formats:
+        if len(digits) == length:
+            try:
+                return datetime.strptime(digits, fmt).replace(tzinfo=SHANGHAI_TZ)
+            except ValueError:
+                pass
+    if text.isdigit() and len(text) in {10, 13}:
+        divisor = 1000 if len(text) == 13 else 1
+        try:
+            return datetime.fromtimestamp(int(text) / divisor, tz=SHANGHAI_TZ)
+        except (OverflowError, OSError, ValueError):
+            pass
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return _shanghai_timestamp(parsed)
+
+
+def _required_historical_decimal(value: Any, field_name: str) -> Decimal:
+    result = _optional_decimal(value, f"historical {field_name}")
+    if result is None:
+        raise ProviderDataError(f"TDX historical {field_name} must be numeric")
+    return result
+
+
+def _remove_first_sys_path_entry(value: str) -> None:
+    try:
+        sys.path.remove(value)
+    except ValueError:
+        pass
+
+
+def _sanitize_exception_message(value: Any) -> str:
+    message = str(value).strip() or "no exception message"
+    message = re.sub(
+        r"(?i)\b(?:postgres(?:ql)?|https?|mysql|redis)://[^\s,;]+",
+        "<redacted-uri>",
+        message,
+    )
+    message = re.sub(
+        r"(?i)\b(password|passwd|pwd|token|secret|api[_-]?key|dsn)\s*[:=]\s*[^\s,;]+",
+        r"\1=<redacted>",
+        message,
+    )
+    message = re.sub(r"(?<!\w)[A-Za-z]:\\[^\s\"']+", "<path>", message)
+    message = re.sub(r"(?<!\w)/(?:[^/\s\"']+/)+[^\s\"']*", "<path>", message)
+    return message[:1000]
 
 
 def _canonical_symbols(symbols: Sequence[str]) -> tuple[str, ...]:
