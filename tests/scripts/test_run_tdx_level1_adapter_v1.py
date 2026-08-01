@@ -5,7 +5,7 @@ import json
 import pytest
 
 import scripts.run_tdx_level1_adapter_v1 as runner
-from quantpilot_core.real_data_provider import TDXInitializationError
+from quantpilot_core.real_data_provider import TDXInitializationError, TDXOperationError
 
 
 class _Store:
@@ -135,4 +135,48 @@ def test_cli_reports_structured_sanitized_initialization_error(monkeypatch, caps
     assert "TDX initialization failed at tq_initialize" in payload["sanitized_exception_message"]
     assert payload["cause_exception_type"] == "TypeError"
     assert "initialize missing caller path" in payload["sanitized_cause_message"]
+    assert "private-value" not in output
+
+
+def test_cli_reports_structured_snapshot_operation_error(monkeypatch, capsys) -> None:
+    cause = ValueError("invalid snapshot token=private-value")
+    failure = TDXOperationError(
+        "snapshot_normalization",
+        str(cause),
+        requested_symbol="000001.SZ",
+        api_call_completed=True,
+        raw_result={"ErrorId": "0", "Now": "invalid"},
+    )
+    failure.__cause__ = cause
+
+    class FailingCollector:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def run(self, _duration):
+            raise failure
+
+    monkeypatch.setattr(runner, "TDXLevel1Provider", lambda _path: object())
+    monkeypatch.setattr(runner, "LiveLevel1Collector", FailingCollector)
+
+    result = runner.main(
+        [
+            "--symbols", "000001.SZ",
+            "--tdx-user-dir", r"D:\tongdaxin\PYPlugins\user",
+            "--duration", "0",
+            "--store-provider", "memory",
+            "--shadow",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert result == 2
+    assert payload["operation_stage"] == "snapshot_normalization"
+    assert payload["exception_type"] == "TDXOperationError"
+    assert payload["requested_symbol"] == "000001.SZ"
+    assert payload["api_call_completed"] is True
+    assert payload["raw_result_type"] == "dict"
+    assert payload["raw_result_keys"] == ["ErrorId", "Now"]
+    assert payload["cause_exception_type"] == "ValueError"
     assert "private-value" not in output

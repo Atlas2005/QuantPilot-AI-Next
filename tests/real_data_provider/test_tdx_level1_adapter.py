@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import quantpilot_core.real_data_provider.level1_collector as collector_module
 from quantpilot_core.continuous_paper import InMemoryReportingStore
 from quantpilot_core.real_data_provider import (
     LiveLevel1Collector,
@@ -17,6 +18,7 @@ from quantpilot_core.real_data_provider import (
     TDXInitializationDependencyError,
     TDXInitializationError,
     TDXLevel1Provider,
+    TDXOperationError,
     normalize_tdx_level1_snapshot,
 )
 
@@ -170,14 +172,16 @@ class _TQCenterApi:
         self.subscribed = []
         self.unsubscribed = []
         self.initialization_path = None
+        self.snapshot_calls = []
 
     def initialize(self, initialization_path: str) -> None:
         self.initialized = True
         self.initialization_path = initialization_path
 
-    def get_market_snapshot(self, symbols):
+    def get_market_snapshot(self, *, stock_code, field_list):
+        self.snapshot_calls.append({"stock_code": stock_code, "field_list": field_list})
         return {
-            symbol: {
+            stock_code: {
                 "DateTime": "20260803100102",
                 "LastPrice": 10.25,
                 "Open": 10.0,
@@ -186,7 +190,6 @@ class _TQCenterApi:
                 "Volume": 1200,
                 "Amount": 12240,
             }
-            for symbol in symbols
         }
 
     def subscribe_hq(self, symbol, callback):
@@ -220,6 +223,146 @@ def test_provider_imports_injected_tqcenter_only_during_initialize(tmp_path: Pat
     assert events[0].symbol == "000001.SZ"
 
 
+def test_provider_calls_verified_snapshot_contract_and_binds_requested_symbol(tmp_path: Path) -> None:
+    (tmp_path / "tqcenter.py").write_text("# runtime marker\n", encoding="utf-8")
+
+    class VerifiedSnapshotApi(_TQCenterApi):
+        def get_market_snapshot(self, *, stock_code, field_list):
+            self.snapshot_calls.append({"stock_code": stock_code, "field_list": field_list})
+            return dict(REAL_TDX_LEVEL1_SNAPSHOT)
+
+    api = VerifiedSnapshotApi()
+    provider = TDXLevel1Provider(
+        tmp_path,
+        module_loader=lambda _name: SimpleNamespace(tq=api),
+        platform_system=lambda: "Windows",
+        clock=lambda: _time(18, 0),
+    )
+    provider.initialize()
+
+    event = provider.get_market_snapshot(("000001.SZ",))[0]
+
+    assert api.snapshot_calls == [{"stock_code": "000001.SZ", "field_list": []}]
+    assert event.symbol == "000001.SZ"
+    assert event.last_price == 11.63
+    assert event.cumulative_volume_shares == 202_497_800
+    assert event.cumulative_amount_cny == 2_318_839_800
+    assert event.buy1 == 11.62
+    assert event.sell1 == 11.63
+    assert event.raw_payload == REAL_TDX_LEVEL1_SNAPSHOT
+
+
+def test_snapshot_api_call_failure_preserves_operation_details(tmp_path: Path) -> None:
+    (tmp_path / "tqcenter.py").write_text("# runtime marker\n", encoding="utf-8")
+
+    class FailingSnapshotApi(_TQCenterApi):
+        def get_market_snapshot(self, *, stock_code, field_list):
+            raise TypeError("verified keyword binding failure token=private")
+
+    provider = TDXLevel1Provider(
+        tmp_path,
+        module_loader=lambda _name: SimpleNamespace(tq=FailingSnapshotApi()),
+        platform_system=lambda: "Windows",
+    )
+    provider.initialize()
+
+    with pytest.raises(TDXOperationError) as captured:
+        provider.get_market_snapshot(("000001.SZ",))
+
+    error = captured.value
+    details = error.as_dict()
+    assert error.operation_stage == "get_market_snapshot_api_call"
+    assert isinstance(error.__cause__, TypeError)
+    assert str(error.__cause__) == "verified keyword binding failure token=private"
+    assert details["requested_symbol"] == "000001.SZ"
+    assert details["api_call_completed"] is False
+    assert details["cause_exception_type"] == "TypeError"
+    assert "private" not in details["sanitized_cause_message"]
+    assert "raw_result_type" not in details
+
+
+def test_snapshot_invalid_return_type_is_distinct_from_api_call_failure(tmp_path: Path) -> None:
+    (tmp_path / "tqcenter.py").write_text("# runtime marker\n", encoding="utf-8")
+
+    class InvalidReturnApi(_TQCenterApi):
+        def get_market_snapshot(self, *, stock_code, field_list):
+            return [dict(REAL_TDX_LEVEL1_SNAPSHOT)]
+
+    provider = TDXLevel1Provider(
+        tmp_path,
+        module_loader=lambda _name: SimpleNamespace(tq=InvalidReturnApi()),
+        platform_system=lambda: "Windows",
+    )
+    provider.initialize()
+
+    with pytest.raises(TDXOperationError) as captured:
+        provider.get_market_snapshot(("000001.SZ",))
+
+    details = captured.value.as_dict()
+    assert details["operation_stage"] == "snapshot_return_validation"
+    assert details["api_call_completed"] is True
+    assert details["raw_result_type"] == "list"
+    assert "raw_result_keys" not in details
+
+
+def test_snapshot_symbol_mismatch_reports_binding_stage(tmp_path: Path) -> None:
+    (tmp_path / "tqcenter.py").write_text("# runtime marker\n", encoding="utf-8")
+
+    class WrongSymbolApi(_TQCenterApi):
+        def get_market_snapshot(self, *, stock_code, field_list):
+            return {"Code": "600000.SH", **REAL_TDX_LEVEL1_SNAPSHOT}
+
+    provider = TDXLevel1Provider(
+        tmp_path,
+        module_loader=lambda _name: SimpleNamespace(tq=WrongSymbolApi()),
+        platform_system=lambda: "Windows",
+    )
+    provider.initialize()
+
+    with pytest.raises(TDXOperationError) as captured:
+        provider.get_market_snapshot(("000001.SZ",))
+
+    assert captured.value.operation_stage == "snapshot_symbol_binding"
+    assert captured.value.api_call_completed is True
+    assert captured.value.raw_result_type == "dict"
+
+
+def test_snapshot_normalization_failure_preserves_original_error_and_raw_shape(tmp_path: Path) -> None:
+    (tmp_path / "tqcenter.py").write_text("# runtime marker\n", encoding="utf-8")
+
+    class InvalidNumericApi(_TQCenterApi):
+        def get_market_snapshot(self, *, stock_code, field_list):
+            return {**REAL_TDX_LEVEL1_SNAPSHOT, "Now": "not-a-number"}
+
+    provider = TDXLevel1Provider(
+        tmp_path,
+        module_loader=lambda _name: SimpleNamespace(tq=InvalidNumericApi()),
+        platform_system=lambda: "Windows",
+    )
+    provider.initialize()
+
+    with pytest.raises(TDXOperationError) as captured:
+        provider.get_market_snapshot(("000001.SZ",))
+
+    error = captured.value
+    details = error.as_dict()
+    assert error.operation_stage == "snapshot_normalization"
+    assert isinstance(error.__cause__, Exception)
+    assert "last_price must be numeric" in str(error.__cause__)
+    assert details["api_call_completed"] is True
+    assert details["raw_result_type"] == "dict"
+    assert tuple(sorted(REAL_TDX_LEVEL1_SNAPSHOT)) == details["raw_result_keys"]
+
+
+def test_snapshot_without_symbol_is_ambiguous_for_multi_symbol_normalization() -> None:
+    with pytest.raises(Exception, match="symbol binding is ambiguous"):
+        normalize_tdx_level1_snapshot(
+            [dict(REAL_TDX_LEVEL1_SNAPSHOT), dict(REAL_TDX_LEVEL1_SNAPSHOT)],
+            requested_symbols=("000001.SZ", "600000.SH"),
+            received_at=_time(18, 0),
+        )
+
+
 def test_provider_uses_normal_runtime_directory_import_and_real_initialize_path(
     tmp_path: Path,
     isolated_tqcenter_module,
@@ -232,8 +375,8 @@ class TQ:
         self.initialization_path = None
     def initialize(self, initialization_path):
         self.initialization_path = initialization_path
-    def get_market_snapshot(self, symbols):
-        return {symbols[0]: {"Now": "11.63", "Volume": "1", "Amount": "0.1163"}}
+    def get_market_snapshot(self, *, stock_code, field_list):
+        return {"Now": "11.63", "Volume": "1", "Amount": "0.1163", "ErrorId": "0"}
     def subscribe_hq(self, symbol, callback):
         return symbol
     def unsubscribe_hq(self, subscription):
@@ -458,6 +601,26 @@ class _CollectorProvider:
     def notify(self, payload: Mapping[str, Any]) -> None:
         assert self.callback is not None
         self.callback(payload)
+
+
+def test_snapshot_deduplication_failure_has_distinct_operation_stage(monkeypatch) -> None:
+    provider = _CollectorProvider(((_event(),),))
+    collector = LiveLevel1Collector(provider, ("000001.SZ",))
+
+    def fail_event_key(_event):
+        raise ValueError("deduplication key failure")
+
+    monkeypatch.setattr(collector_module, "_event_key", fail_event_key)
+
+    with pytest.raises(TDXOperationError) as captured:
+        collector.start()
+    collector.shutdown()
+
+    details = captured.value.as_dict()
+    assert details["operation_stage"] == "snapshot_deduplication"
+    assert details["requested_symbol"] == "000001.SZ"
+    assert details["api_call_completed"] is True
+    assert details["raw_result_type"] == "dict"
 
 
 def test_callback_is_refresh_notification_and_deduplicates_snapshot() -> None:

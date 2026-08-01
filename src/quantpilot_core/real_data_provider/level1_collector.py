@@ -15,7 +15,10 @@ from quantpilot_core.real_data_provider.contracts import (
     ProviderError,
 )
 from quantpilot_core.real_data_provider.intraday_aggregation import MinuteBarAggregator
-from quantpilot_core.real_data_provider.tdx_level1_adapter import canonicalize_tdx_level1_symbol
+from quantpilot_core.real_data_provider.tdx_level1_adapter import (
+    TDXOperationError,
+    canonicalize_tdx_level1_symbol,
+)
 
 
 class Level1MarketDataSink(Protocol):
@@ -136,6 +139,8 @@ class LiveLevel1Collector:
             self.start()
             while not self._stop.is_set():
                 if self._callback_error is not None:
+                    if isinstance(self._callback_error, TDXOperationError):
+                        raise self._callback_error
                     raise ProviderError("TDX Level1 callback refresh failed") from self._callback_error
                 now = self._monotonic()
                 if now - started >= duration_seconds:
@@ -169,11 +174,22 @@ class LiveLevel1Collector:
             for event in events:
                 if event.symbol not in allowed:
                     continue
-                key = _event_key(event)
-                if self._last_event_keys.get(event.symbol) == key:
+                try:
+                    key = _event_key(event)
+                    duplicate = self._last_event_keys.get(event.symbol) == key
+                    if not duplicate:
+                        self._last_event_keys[event.symbol] = key
+                except Exception as exc:
+                    raise TDXOperationError(
+                        "snapshot_deduplication",
+                        str(exc) or "snapshot deduplication failed",
+                        requested_symbol=event.symbol,
+                        api_call_completed=True,
+                        raw_result=event.raw_payload,
+                    ) from exc
+                if duplicate:
                     self._deduplicated_count += 1
                     continue
-                self._last_event_keys[event.symbol] = key
                 accepted.append(event)
                 completed_bars.extend(self.aggregator.update(event))
             self._events.extend(accepted)

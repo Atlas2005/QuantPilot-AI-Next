@@ -65,6 +65,7 @@ _REQUIRED_LEVEL1_FUNCTIONS = (
     "unsubscribe_hq",
 )
 _HISTORICAL_MINUTE_FIELDS = ("Open", "High", "Low", "Close", "Volume", "Amount")
+_NO_RAW_RESULT = object()
 
 
 class TDXInitializationError(ProviderError):
@@ -95,6 +96,52 @@ class TDXInitializationDependencyError(TDXInitializationError, ProviderDependenc
     """Initialization failure caused by platform, path, import, or API shape."""
 
 
+class TDXOperationError(ProviderError):
+    """Structured, sanitized failure from a specific TDX runtime operation stage."""
+
+    def __init__(
+        self,
+        operation_stage: str,
+        message: str,
+        *,
+        requested_symbol: str,
+        api_call_completed: bool,
+        raw_result: Any = _NO_RAW_RESULT,
+    ) -> None:
+        self.operation_stage = operation_stage
+        self.requested_symbol = requested_symbol
+        self.api_call_completed = bool(api_call_completed)
+        self.sanitized_source_message = _sanitize_exception_message(message)
+        self.raw_result_type: str | None = None
+        self.raw_result_keys: tuple[str, ...] | None = None
+        if raw_result is not _NO_RAW_RESULT:
+            self.raw_result_type = type(raw_result).__name__
+            if isinstance(raw_result, Mapping):
+                self.raw_result_keys = tuple(sorted(str(key) for key in raw_result))
+        super().__init__(
+            f"TDX operation failed at {operation_stage} for {requested_symbol}: "
+            f"{self.sanitized_source_message}"
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        details: dict[str, Any] = {
+            "operation_stage": self.operation_stage,
+            "exception_type": type(self).__name__,
+            "sanitized_exception_message": str(self),
+            "requested_symbol": self.requested_symbol,
+            "api_call_completed": self.api_call_completed,
+        }
+        if self.raw_result_type is not None:
+            details["raw_result_type"] = self.raw_result_type
+        if self.raw_result_keys is not None:
+            details["raw_result_keys"] = self.raw_result_keys
+        cause = self.__cause__
+        if cause is not None:
+            details["cause_exception_type"] = type(cause).__name__
+            details["sanitized_cause_message"] = _sanitize_exception_message(str(cause))
+        return details
+
+
 @dataclass(frozen=True)
 class _TDXSubscription:
     entries: tuple[tuple[str, Any], ...]
@@ -116,11 +163,13 @@ class TDXLevel1Provider:
         module_loader: Callable[[str], Any] | None = None,
         platform_system: Callable[[], str] | None = None,
         clock: Callable[[], datetime] | None = None,
+        snapshot_fields: Sequence[str] = (),
     ) -> None:
         self.tdx_user_dir = Path(tdx_user_dir)
         self._module_loader = module_loader
         self._platform_system = platform_system or platform.system
         self._clock = clock or (lambda: datetime.now(SHANGHAI_TZ))
+        self._snapshot_fields = tuple(str(field) for field in snapshot_fields)
         self._api: Any | None = None
         self._subscriptions: list[_TDXSubscription] = []
 
@@ -213,11 +262,56 @@ class TDXLevel1Provider:
         if not requested:
             raise ValueError("symbols must contain at least one symbol")
         received_at = _shanghai_timestamp(self._clock())
-        try:
-            raw = api.get_market_snapshot(list(requested))
-        except Exception as exc:
-            raise ProviderError("tqcenter get_market_snapshot failed") from exc
-        return normalize_tdx_level1_snapshot(raw, requested_symbols=requested, received_at=received_at)
+        events: list[NormalizedLevel1Event] = []
+        for symbol in requested:
+            try:
+                raw = api.get_market_snapshot(
+                    stock_code=symbol,
+                    field_list=list(self._snapshot_fields),
+                )
+            except Exception as exc:
+                raise TDXOperationError(
+                    "get_market_snapshot_api_call",
+                    str(exc) or "tqcenter.tq.get_market_snapshot failed",
+                    requested_symbol=symbol,
+                    api_call_completed=False,
+                ) from exc
+            try:
+                _validate_snapshot_return(raw)
+            except Exception as exc:
+                raise TDXOperationError(
+                    "snapshot_return_validation",
+                    str(exc),
+                    requested_symbol=symbol,
+                    api_call_completed=True,
+                    raw_result=raw,
+                ) from exc
+            try:
+                _validate_snapshot_symbol_binding(raw, symbol)
+            except Exception as exc:
+                raise TDXOperationError(
+                    "snapshot_symbol_binding",
+                    str(exc),
+                    requested_symbol=symbol,
+                    api_call_completed=True,
+                    raw_result=raw,
+                ) from exc
+            try:
+                normalized = normalize_tdx_level1_snapshot(
+                    raw,
+                    requested_symbols=(symbol,),
+                    received_at=received_at,
+                )
+            except Exception as exc:
+                raise TDXOperationError(
+                    "snapshot_normalization",
+                    str(exc),
+                    requested_symbol=symbol,
+                    api_call_completed=True,
+                    raw_result=raw,
+                ) from exc
+            events.extend(normalized)
+        return tuple(sorted(events, key=lambda event: event.symbol))
 
     def get_historical_intraday_bars(
         self,
@@ -323,8 +417,16 @@ def normalize_tdx_level1_snapshot(
     received = _shanghai_timestamp(received_at or datetime.now(SHANGHAI_TZ))
     requested = _canonical_symbols(requested_symbols)
     requested_set = set(requested)
+    snapshot_rows = _snapshot_rows(payload)
+    if len(requested) != 1 and any(
+        _lookup(raw_row, _SYMBOL_FIELDS) in (None, "") and fallback_symbol in (None, "")
+        for fallback_symbol, raw_row in snapshot_rows
+    ):
+        raise ProviderDataError(
+            "TDX Level1 snapshot symbol binding is ambiguous without a symbol field"
+        )
     events: list[NormalizedLevel1Event] = []
-    for fallback_symbol, raw_row in _snapshot_rows(payload):
+    for fallback_symbol, raw_row in snapshot_rows:
         row = dict(raw_row)
         symbol_value = _lookup(row, _SYMBOL_FIELDS)
         if symbol_value in (None, "") and fallback_symbol in (None, "") and len(requested) == 1:
@@ -394,6 +496,36 @@ def normalize_tdx_level1_snapshot(
             raise ProviderDataError(f"conflicting TDX Level1 rows for {event.symbol}")
         by_symbol[event.symbol] = event
     return tuple(by_symbol[symbol] for symbol in sorted(by_symbol))
+
+
+def _validate_snapshot_return(payload: Any) -> None:
+    if not isinstance(payload, Mapping):
+        raise ProviderDataError("TDX get_market_snapshot must return a mapping")
+    for _fallback_symbol, row in _snapshot_rows(payload):
+        error_id = _lookup(row, ("ErrorId", "error_id"))
+        if error_id not in (None, "") and str(error_id).strip() != "0":
+            raise ProviderDataError(
+                f"TDX get_market_snapshot returned ErrorId={str(error_id).strip()}"
+            )
+
+
+def _validate_snapshot_symbol_binding(payload: Mapping[str, Any], requested_symbol: str) -> None:
+    rows = _snapshot_rows(payload)
+    if len(rows) != 1:
+        raise ProviderDataError(
+            "TDX get_market_snapshot returned an ambiguous number of rows for one requested symbol"
+        )
+    fallback_symbol, row = rows[0]
+    symbol_value = _lookup(row, _SYMBOL_FIELDS)
+    if symbol_value in (None, ""):
+        symbol_value = fallback_symbol
+    if symbol_value in (None, ""):
+        return  # the externally requested symbol is authoritative for this one-row response
+    returned_symbol = canonicalize_tdx_level1_symbol(symbol_value)
+    if returned_symbol != requested_symbol:
+        raise ProviderDataError(
+            f"TDX snapshot symbol {returned_symbol} does not match requested symbol {requested_symbol}"
+        )
 
 
 def normalize_tdx_historical_minute_bars(

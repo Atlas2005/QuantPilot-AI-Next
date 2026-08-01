@@ -13,6 +13,7 @@ from quantpilot_core.real_data_provider import (
     LiveLevel1Collector,
     TDXInitializationError,
     TDXLevel1Provider,
+    TDXOperationError,
 )
 
 
@@ -104,7 +105,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "shadow": bool(args.shadow),
             "error": str(exc),
         }
-        if isinstance(exc, TDXInitializationError):
+        if isinstance(exc, (TDXInitializationError, TDXOperationError)):
             payload.update(exc.as_dict())
         print(json.dumps(payload, sort_keys=True))
         return 2
