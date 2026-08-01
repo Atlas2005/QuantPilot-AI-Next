@@ -14,7 +14,10 @@ from quantpilot_core.real_data_provider.contracts import (
     Adjustment,
     DailyBarProvider,
     DailyBarRequest,
+    Level1MarketDataProvider,
     NormalizedDailyBar,
+    NormalizedIntradayBar,
+    NormalizedLevel1Event,
     ProviderDataError,
     ProviderDependencyError,
     ProviderError,
@@ -59,6 +62,21 @@ from quantpilot_core.real_data_provider.tushare_adapter import (
     normalize_tushare_daily_bars,
 )
 from quantpilot_core.real_data_provider.snapshot_adapter import SnapshotDailyBarProvider
+from quantpilot_core.real_data_provider.intraday_aggregation import (
+    SUPPORTED_INTRADAY_INTERVALS,
+    MinuteBarAggregator,
+    aggregate_intraday_bars,
+)
+from quantpilot_core.real_data_provider.level1_collector import (
+    Level1CollectorReport,
+    Level1MarketDataSink,
+    LiveLevel1Collector,
+)
+from quantpilot_core.real_data_provider.tdx_level1_adapter import (
+    TDXLevel1Provider,
+    canonicalize_tdx_level1_symbol,
+    normalize_tdx_level1_snapshot,
+)
 
 __all__ = [
     "Adjustment",
@@ -71,11 +89,18 @@ __all__ = [
     "DailyBarComparison",
     "BaoStockTradingCalendarProvider",
     "DailyBarRequest",
+    "Level1CollectorReport",
+    "Level1MarketDataProvider",
+    "Level1MarketDataSink",
+    "LiveLevel1Collector",
+    "MinuteBarAggregator",
     "IndexDailyProvenanceResult",
     "CalendarAttempt",
     "CalendarError",
     "CalendarProvenanceResult",
     "NormalizedDailyBar",
+    "NormalizedIntradayBar",
+    "NormalizedLevel1Event",
     "ProviderAttempt",
     "ProviderDataError",
     "ProviderDependencyError",
@@ -85,6 +110,8 @@ __all__ = [
     "TradingCalendarProvider",
     "TushareDailyBarProvider",
     "SnapshotDailyBarProvider",
+    "SUPPORTED_INTRADAY_INTERVALS",
+    "TDXLevel1Provider",
     "TushareIndexDailyProvider",
     "TushareDependencyStatus",
     "TusharePrimaryBaoStockCalendarProvider",
@@ -93,11 +120,14 @@ __all__ = [
     "TushareTradingCalendarProvider",
     "baostock_result_to_frame",
     "calendar_to_announcement_trading_calendar",
+    "canonicalize_tdx_level1_symbol",
     "compare_daily_bars",
     "detect_baostock_dependency",
     "detect_tushare_dependency",
     "normalize_baostock_daily_bars",
+    "normalize_tdx_level1_snapshot",
     "normalize_tushare_daily_bars",
+    "aggregate_intraday_bars",
     "parse_yyyymmdd",
     "provenance_warnings",
     "require_columns",
