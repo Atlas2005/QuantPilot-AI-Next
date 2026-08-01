@@ -165,7 +165,9 @@ foreach ($parameterName in @(
 $runtimeEnvironment = $null
 try {
     $resolvedRuntimeConfig = Resolve-QPRuntimeConfigPayload -Overrides $runtimeConfigArguments
-    Assert-QPAccountBindingKeyState -BridgeRoot ([string]$resolvedRuntimeConfig.qmt_builtin_bridge.bridge_root) -AllowMissing
+    if ([string]$resolvedRuntimeConfig.broker_provider -eq "qmt_builtin_bridge") {
+        Assert-QPAccountBindingKeyState -BridgeRoot ([string]$resolvedRuntimeConfig.qmt_builtin_bridge.bridge_root) -AllowMissing
+    }
     $root = Get-QPRepositoryRoot
     Initialize-QPRuntimeDirectories
     $venv = Join-Path $root ".venv"
@@ -192,7 +194,9 @@ try {
 
     Write-QPRuntimeConfig @runtimeConfigArguments
     $persistedRuntimeConfig = Read-QPRuntimeConfig
-    Initialize-QPAccountBindingKey -BridgeRoot ([string]$persistedRuntimeConfig.qmt_builtin_bridge.bridge_root)
+    if ([string]$persistedRuntimeConfig.broker_provider -eq "qmt_builtin_bridge") {
+        Initialize-QPAccountBindingKey -BridgeRoot ([string]$persistedRuntimeConfig.qmt_builtin_bridge.bridge_root)
+    }
     Initialize-QPLocalServiceSecret -Name "postgres_password" -VolumeName "pgdata"
     Initialize-QPLocalServiceSecret -Name "grafana_password" -VolumeName "grafana_data"
     Initialize-QPApiSecrets

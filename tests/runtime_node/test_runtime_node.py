@@ -680,7 +680,7 @@ def test_missing_qmt_snapshot_provisioning_flag_is_bootstrap_only() -> None:
     provisioning_sequence = (
         "Resolve-QPRuntimeConfigPayload -Overrides $runtimeConfigArguments",
         "Write-QPRuntimeConfig @runtimeConfigArguments",
-        "    Initialize-QPAccountBindingKey -BridgeRoot",
+        "        Initialize-QPAccountBindingKey -BridgeRoot",
         '    Initialize-QPLocalServiceSecret -Name "postgres_password"',
         "    Initialize-QPApiSecrets\n",
         '        Invoke-QPCompose -ComposeArguments @("up", "-d")',
@@ -809,3 +809,134 @@ def test_runtime_doctor_strict_mode_returns_nonzero_for_missing_required_package
     monkeypatch.setattr(doctor_script, "diagnostics_payload", lambda **_kwargs: {"ok": False, "checks": []})
     assert doctor_script.main(["--format", "json", "--strict", "--skip-services"]) == 1
     assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_windows_bootstrap_guards_qmt_key_init_with_broker_provider() -> None:
+    root = Path(__file__).parents[2]
+    bootstrap = (root / "scripts" / "bootstrap_windows_runtime_v1.ps1").read_text(encoding="utf-8")
+
+    assert 'if ([string]$resolvedRuntimeConfig.broker_provider -eq "qmt_builtin_bridge")' in bootstrap
+    assert 'if ([string]$persistedRuntimeConfig.broker_provider -eq "qmt_builtin_bridge")' in bootstrap
+
+    resolved_guard_index = bootstrap.index(
+        'if ([string]$resolvedRuntimeConfig.broker_provider -eq "qmt_builtin_bridge")'
+    )
+    persisted_guard_index = bootstrap.index(
+        'if ([string]$persistedRuntimeConfig.broker_provider -eq "qmt_builtin_bridge")'
+    )
+    assert_key_state_index = bootstrap.index(
+        "Assert-QPAccountBindingKeyState -BridgeRoot",
+        resolved_guard_index,
+    )
+    init_key_index = bootstrap.index(
+        "Initialize-QPAccountBindingKey -BridgeRoot",
+        persisted_guard_index,
+    )
+
+    assert resolved_guard_index < assert_key_state_index
+    assert persisted_guard_index < init_key_index
+    assert assert_key_state_index < bootstrap.index("Initialize-QPRuntimeDirectories")
+    assert init_key_index < bootstrap.index(
+        'Initialize-QPLocalServiceSecret -Name "postgres_password"'
+    )
+
+    qmt_block = bootstrap[resolved_guard_index:init_key_index]
+    assert "try {" not in qmt_block.lower() and "catch" not in qmt_block.lower()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1 provider=none bootstrap behavior")
+def test_windows_powershell_provider_none_skips_key_and_preserves_existing_config(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).parents[2]
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    if not powershell:
+        pytest.skip("Windows PowerShell executable is unavailable")
+
+    runtime_home = tmp_path / "runtime home"
+    bridge_root = tmp_path / "existing bridge"
+    missing_key_bridge = tmp_path / "missing key bridge"
+    corrupt_key_bridge = tmp_path / "corrupt key bridge"
+    missing_key_home = tmp_path / "missing key runtime"
+    corrupt_key_home = tmp_path / "corrupt key runtime"
+    script_path = tmp_path / "exercise provider none key skip.ps1"
+    common_script = root / "scripts" / "windows_runtime_common_v1.ps1"
+    script_path.write_text(
+        "\n".join(
+            (
+                "$ErrorActionPreference = 'Stop'",
+                f"$env:QUANTPILOT_RUNTIME_HOME = {_powershell_literal(str(runtime_home))}",
+                f". {_powershell_literal(str(common_script))}",
+                f"$bridgeRoot = {_powershell_literal(str(bridge_root))}",
+                "$keyPath = Join-Path ([IO.Path]::GetFullPath($bridgeRoot)) 'state\\account_binding_key_v1.hex'",
+                "New-Item -ItemType Directory -Force -Path (Split-Path -Parent $keyPath) | Out-Null",
+                "$syntheticKey = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2'",
+                "[IO.File]::WriteAllText($keyPath, $syntheticKey, (New-Object Text.UTF8Encoding($false)))",
+                "$keyContent = [IO.File]::ReadAllText($keyPath)",
+                "$keyBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($keyPath))",
+                "Import-QPWindowsSecurityModule",
+                "$keyAclBefore = Get-Acl -LiteralPath $keyPath",
+                "Write-QPRuntimeConfig -BrokerProvider qmt_builtin_bridge -QmtBridgeRoot $bridgeRoot",
+                "$qmtConfigBefore = (Read-QPRuntimeConfig).qmt_builtin_bridge | ConvertTo-Json -Depth 3 -Compress",
+                "Write-QPRuntimeConfig -BrokerProvider none",
+                "$disabledConfig = Read-QPRuntimeConfig",
+                "if ([string]$disabledConfig.broker_provider -cne 'none') { throw 'provider was not set to none' }",
+                "$qmtConfigAfter = $disabledConfig.qmt_builtin_bridge | ConvertTo-Json -Depth 3 -Compress",
+                "if ($qmtConfigAfter -cne $qmtConfigBefore) { throw 'provider=none changed persisted QMT settings' }",
+                "$effectiveProvider = [string]$disabledConfig.broker_provider",
+                "if ($effectiveProvider -eq 'qmt_builtin_bridge') { Initialize-QPAccountBindingKey -BridgeRoot ([string]$disabledConfig.qmt_builtin_bridge.bridge_root) }",
+                "if ([IO.File]::ReadAllText($keyPath) -cne $keyContent) { throw 'key content changed under provider=none path' }",
+                "if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($keyPath)) -cne $keyBytes) { throw 'key bytes changed under provider=none path' }",
+                "$keyAclAfter = Get-Acl -LiteralPath $keyPath",
+                "if ([string]$keyAclAfter.Sddl -cne [string]$keyAclBefore.Sddl) { throw 'key ACL changed under provider=none path' }",
+                f"$env:QUANTPILOT_RUNTIME_HOME = {_powershell_literal(str(missing_key_home))}",
+                "Initialize-QPRuntimeDirectories",
+                f"$missingKeyBridgeRoot = {_powershell_literal(str(missing_key_bridge))}",
+                "$missingConfig = New-QPDefaultRuntimeConfigPayload",
+                "$missingConfig.broker_provider = 'none'",
+                "$missingConfig.qmt_builtin_bridge.bridge_root = $missingKeyBridgeRoot",
+                "$missingConfigPath = Get-QPRuntimeConfigPath",
+                "[IO.File]::WriteAllText($missingConfigPath, ($missingConfig | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding($false)))",
+                "if (-not (Test-Path (Join-Path $missingKeyBridgeRoot 'state') -PathType Container)) {",
+                "    New-Item -ItemType Directory -Force -Path (Join-Path $missingKeyBridgeRoot 'state') | Out-Null",
+                "}",
+                "$missingPersisted = Read-QPRuntimeConfig",
+                "$missingProvider = [string]$missingPersisted.broker_provider",
+                "if ($missingProvider -eq 'qmt_builtin_bridge') { Initialize-QPAccountBindingKey -BridgeRoot ([string]$missingPersisted.qmt_builtin_bridge.bridge_root) }",
+                "if (Test-Path (Join-Path $missingKeyBridgeRoot 'state\\account_binding_key_v1.hex') -PathType Leaf) { throw 'provider=none created a key when none existed' }",
+                f"$env:QUANTPILOT_RUNTIME_HOME = {_powershell_literal(str(corrupt_key_home))}",
+                "Initialize-QPRuntimeDirectories",
+                f"$corruptKeyBridgeRoot = {_powershell_literal(str(corrupt_key_bridge))}",
+                "$corruptConfig = New-QPDefaultRuntimeConfigPayload",
+                "$corruptConfig.broker_provider = 'none'",
+                "$corruptConfig.qmt_builtin_bridge.bridge_root = $corruptKeyBridgeRoot",
+                "$corruptConfigPath = Get-QPRuntimeConfigPath",
+                "[IO.File]::WriteAllText($corruptConfigPath, ($corruptConfig | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding($false)))",
+                "$corruptKeyDir = Join-Path $corruptKeyBridgeRoot 'state'",
+                "New-Item -ItemType Directory -Force -Path $corruptKeyDir | Out-Null",
+                "$corruptKeyPath = Join-Path $corruptKeyDir 'account_binding_key_v1.hex'",
+                "'not-a-valid-hex-key' | Set-Content -Path $corruptKeyPath -Encoding ASCII -NoNewline",
+                "$corruptPersisted = Read-QPRuntimeConfig",
+                "$corruptProvider = [string]$corruptPersisted.broker_provider",
+                "$corruptRaised = $false",
+                "try {",
+                "    if ($corruptProvider -eq 'qmt_builtin_bridge') { Initialize-QPAccountBindingKey -BridgeRoot ([string]$corruptPersisted.qmt_builtin_bridge.bridge_root) }",
+                "} catch { $corruptRaised = $true }",
+                "if ($corruptRaised) { throw 'corrupt key caused provider=none path to fail' }",
+                "$corruptKeyContent = Get-Content -Path $corruptKeyPath -Raw",
+                "if ($corruptKeyContent.Trim() -cne 'not-a-valid-hex-key') { throw 'corrupt key content changed under provider=none path' }",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path)],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=45,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
