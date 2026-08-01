@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import quantpilot_core.real_data_provider.level1_collector as collector_module
+import quantpilot_core.real_data_provider.tdx_level1_adapter as tdx_adapter_module
 from quantpilot_core.continuous_paper import InMemoryReportingStore
 from quantpilot_core.real_data_provider import (
     LiveLevel1Collector,
@@ -174,10 +176,17 @@ class _TQCenterApi:
         self.subscribed = []
         self.unsubscribed = []
         self.initialization_path = None
+        self.initialize_calls = 0
         self.snapshot_calls = []
+        self.subscription_response = {
+            "ErrorId": "0",
+            "Msg": "subscription successful",
+            "run_id": "6",
+        }
 
     def initialize(self, initialization_path: str) -> None:
         self.initialized = True
+        self.initialize_calls += 1
         self.initialization_path = initialization_path
 
     def get_market_snapshot(self, *, stock_code, field_list):
@@ -197,10 +206,22 @@ class _TQCenterApi:
     def subscribe_hq(self, *, stock_list, callback):
         self.callback = callback
         self.subscribed.append({"stock_list": stock_list, "callback": callback})
-        return "subscription-all-symbols"
+        return json.dumps(self.subscription_response)
 
-    def unsubscribe_hq(self, subscription):
-        self.unsubscribed.append(subscription)
+    def unsubscribe_hq(self, *, stock_list):
+        self.unsubscribed.append(stock_list)
+
+
+def _provider_for_api(tmp_path: Path, api: _TQCenterApi) -> TDXLevel1Provider:
+    (tmp_path / "tqcenter.py").write_text("# runtime marker\n", encoding="utf-8")
+    provider = TDXLevel1Provider(
+        tmp_path,
+        module_loader=lambda _name: SimpleNamespace(tq=api),
+        platform_system=lambda: "Windows",
+        clock=lambda: _time(10, 1, 5),
+    )
+    provider.initialize()
+    return provider
 
 
 def test_provider_imports_injected_tqcenter_only_during_initialize(tmp_path: Path) -> None:
@@ -380,8 +401,8 @@ class TQ:
     def get_market_snapshot(self, *, stock_code, field_list):
         return {"Now": "11.63", "Volume": "1", "Amount": "0.1163", "ErrorId": "0"}
     def subscribe_hq(self, *, stock_list, callback):
-        return "subscription-all-symbols"
-    def unsubscribe_hq(self, subscription):
+        return '{"ErrorId":"0","Msg":"subscription successful","run_id":"6"}'
+    def unsubscribe_hq(self, *, stock_list):
         return None
 tq = TQ()
 """,
@@ -565,6 +586,8 @@ def test_provider_subscribes_once_with_keyword_symbol_list_and_module_callback(t
     subscription = provider.subscribe_hq(("SZ000001", "SH600000"), notifications.append)
     api.callback({"Code": "000001.SZ", "ErrorId": "0"})
     provider.unsubscribe_hq(subscription)
+    provider.unsubscribe_hq(subscription)
+    provider.close()
     provider.close()
 
     assert len(api.subscribed) == 1
@@ -574,7 +597,159 @@ def test_provider_subscribes_once_with_keyword_symbol_list_and_module_callback(t
     assert len(inspect.signature(api.callback).parameters) == 1
     assert api.callback.__module__ == "quantpilot_core.real_data_provider.tdx_level1_adapter"
     assert notifications == [{"Code": "000001.SZ", "ErrorId": "0"}]
-    assert api.unsubscribed == ["subscription-all-symbols"]
+    assert api.unsubscribed == [["000001.SZ", "600000.SH"]]
+    assert "6" not in api.unsubscribed[0]
+    assert api.initialize_calls == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        '{"Code":"000001.SZ","ErrorId":"0"}',
+        b'{"Code":"000001.SZ","ErrorId":"0"}',
+        {"Code": "000001.SZ", "ErrorId": "0"},
+    ),
+    ids=("json-string", "json-bytes", "mapping"),
+)
+def test_callback_boundary_normalizes_real_payload_shapes(tmp_path: Path, payload: Any) -> None:
+    api = _TQCenterApi()
+    provider = _provider_for_api(tmp_path, api)
+    notifications = []
+    subscription = provider.subscribe_hq(("000001.SZ",), notifications.append)
+
+    api.callback(payload)
+
+    assert notifications == [{"Code": "000001.SZ", "ErrorId": "0"}]
+    diagnostics = provider.callback_diagnostics()
+    assert diagnostics["callback_count"] == 1
+    assert diagnostics["callback_parse_error_count"] == 0
+    assert diagnostics["callback_dispatch_error_count"] == 0
+    provider.unsubscribe_hq(subscription)
+    provider.close()
+
+
+def test_callback_boundary_contains_malformed_json(tmp_path: Path) -> None:
+    api = _TQCenterApi()
+    provider = _provider_for_api(tmp_path, api)
+    notifications = []
+    subscription = provider.subscribe_hq(("000001.SZ",), notifications.append)
+
+    api.callback('{"Code":')
+
+    assert notifications == []
+    diagnostics = provider.callback_diagnostics()
+    assert diagnostics["callback_count"] == 1
+    assert diagnostics["callback_parse_error_count"] == 1
+    assert diagnostics["callback_dispatch_error_count"] == 0
+    assert diagnostics["last_sanitized_callback_error"]
+    provider.unsubscribe_hq(subscription)
+    provider.close()
+
+
+def test_callback_boundary_contains_collector_dispatch_exception(tmp_path: Path) -> None:
+    api = _TQCenterApi()
+    provider = _provider_for_api(tmp_path, api)
+
+    def fail_dispatch(_payload):
+        raise RuntimeError("collector dispatch failed token=private")
+
+    subscription = provider.subscribe_hq(("000001.SZ",), fail_dispatch)
+
+    api.callback('{"Code":"000001.SZ","ErrorId":"0"}')
+
+    diagnostics = provider.callback_diagnostics()
+    assert diagnostics["callback_count"] == 1
+    assert diagnostics["callback_parse_error_count"] == 0
+    assert diagnostics["callback_dispatch_error_count"] == 1
+    assert diagnostics["last_sanitized_callback_error"] == (
+        "collector dispatch failed token=<redacted>"
+    )
+    provider.unsubscribe_hq(subscription)
+    provider.close()
+
+
+def test_subscription_mapping_response_with_numeric_zero_is_success(tmp_path: Path) -> None:
+    class MappingResponseApi(_TQCenterApi):
+        def subscribe_hq(self, *, stock_list, callback):
+            self.callback = callback
+            self.subscribed.append({"stock_list": stock_list, "callback": callback})
+            return {"ErrorId": 0, "Msg": "subscription successful", "run_id": 6}
+
+    api = MappingResponseApi()
+    provider = _provider_for_api(tmp_path, api)
+    subscription = provider.subscribe_hq(("000001.SZ",), lambda _payload: None)
+
+    summary = json.loads(provider.callback_diagnostics()["sanitized_subscription_response"])
+    assert summary == {
+        "ErrorId": "0",
+        "Msg": "subscription successful",
+        "run_id": "6",
+    }
+    provider.unsubscribe_hq(subscription)
+    provider.close()
+
+
+def test_subscription_bytes_response_with_string_zero_is_success(tmp_path: Path) -> None:
+    class BytesResponseApi(_TQCenterApi):
+        def subscribe_hq(self, *, stock_list, callback):
+            self.callback = callback
+            self.subscribed.append({"stock_list": stock_list, "callback": callback})
+            return b'{"ErrorId":"0","Msg":"subscription successful","run_id":"6"}'
+
+    api = BytesResponseApi()
+    provider = _provider_for_api(tmp_path, api)
+    subscription = provider.subscribe_hq(("000001.SZ",), lambda _payload: None)
+
+    assert provider.callback_diagnostics()["sanitized_subscription_response"]
+    provider.unsubscribe_hq(subscription)
+    provider.close()
+
+
+@pytest.mark.parametrize(
+    "response",
+    (
+        False,
+        {"ErrorId": "2", "Msg": "subscription rejected"},
+        "not-json",
+    ),
+    ids=("explicit-false", "nonzero-error", "malformed-json"),
+)
+def test_subscription_unsuccessful_responses_are_contained(tmp_path: Path, response: Any) -> None:
+    class ResponseApi(_TQCenterApi):
+        def subscribe_hq(self, *, stock_list, callback):
+            self.callback = callback
+            return response
+
+    api = ResponseApi()
+    provider = _provider_for_api(tmp_path, api)
+    registrations_before = tdx_adapter_module._active_callback_registrations()
+
+    with pytest.raises(TDXSubscriptionError):
+        provider.subscribe_hq(("000001.SZ",), lambda _payload: None)
+
+    assert tdx_adapter_module._active_callback_registrations() == registrations_before
+    assert api.unsubscribed == []
+    provider.close()
+
+
+def test_provider_close_before_initialize_is_idempotent(tmp_path: Path) -> None:
+    provider = TDXLevel1Provider(tmp_path, platform_system=lambda: "Windows")
+    provider.close()
+    provider.close()
+    assert provider.initialized is False
+
+
+def test_provider_close_unsubscribes_active_symbols_exactly_once(tmp_path: Path) -> None:
+    api = _TQCenterApi()
+    provider = _provider_for_api(tmp_path, api)
+    provider.subscribe_hq(("000001.SZ", "600000.SH"), lambda _payload: None)
+
+    provider.close()
+    provider.close()
+
+    assert api.unsubscribed == [["000001.SZ", "600000.SH"]]
+    assert api.initialize_calls == 1
+    assert provider.initialized is False
 
 
 def test_provider_subscription_failure_preserves_polling_compatible_error(tmp_path: Path) -> None:
@@ -705,6 +880,85 @@ def test_callback_heartbeat_is_not_reported_as_a_realtime_market_change() -> Non
     assert report.persisted_event_count == 1
     assert report.persisted_bar_count == 1
     assert report.storage_backend == "memory"
+
+
+def test_real_json_callback_heartbeat_refreshes_without_quote_change(tmp_path: Path) -> None:
+    api = _TQCenterApi()
+    provider = _provider_for_api(tmp_path, api)
+    collector = LiveLevel1Collector(provider, ("000001.SZ",))
+
+    collector.start()
+    api.callback('{"Code":"000001.SZ","ErrorId":"0"}')
+    collector.shutdown()
+    report = collector.report()
+
+    assert report.connection_status == "subscribed"
+    assert report.subscription_attempted is True
+    assert report.subscription_succeeded is True
+    assert report.polling_fallback_active is False
+    assert report.callback_count == 1
+    assert report.callback_parse_error_count == 0
+    assert report.callback_dispatch_error_count == 0
+    assert report.snapshot_count == 2
+    assert report.event_count == 1
+    assert report.deduplicated_count == 1
+    assert report.quote_change_count == 0
+    assert report.realtime_market_change_detected is False
+    assert report.unsubscribe_attempted is True
+    assert report.unsubscribe_succeeded is True
+    assert api.unsubscribed == [["000001.SZ"]]
+
+
+def test_callback_parse_error_is_reported_without_losing_subscription_status(tmp_path: Path) -> None:
+    api = _TQCenterApi()
+    provider = _provider_for_api(tmp_path, api)
+    collector = LiveLevel1Collector(provider, ("000001.SZ",))
+
+    collector.start()
+    api.callback('{"Code":')
+    collector.shutdown()
+    report = collector.report()
+
+    assert report.connection_status == "subscribed"
+    assert report.subscription_succeeded is True
+    assert report.polling_fallback_active is False
+    assert report.callback_count == 1
+    assert report.callback_parse_error_count == 1
+    assert report.callback_dispatch_error_count == 0
+    assert report.last_sanitized_callback_error
+    assert report.event_count == 1
+    assert report.unsubscribe_succeeded is True
+
+
+def test_unsubscribe_failure_is_reported_once_and_preserves_collected_events(
+    tmp_path: Path,
+) -> None:
+    class FailingUnsubscribeApi(_TQCenterApi):
+        def unsubscribe_hq(self, *, stock_list):
+            self.unsubscribed.append(stock_list)
+            raise RuntimeError("unsubscribe failed token=private")
+
+    api = FailingUnsubscribeApi()
+    provider = _provider_for_api(tmp_path, api)
+    collector = LiveLevel1Collector(provider, ("000001.SZ",))
+
+    collector.start()
+    collector.shutdown()
+    collector.shutdown()
+    report = collector.report()
+
+    assert report.connection_status == "subscribed"
+    assert report.subscription_attempted is True
+    assert report.subscription_succeeded is True
+    assert report.event_count == 1
+    assert report.unsubscribe_attempted is True
+    assert report.unsubscribe_succeeded is False
+    assert report.unsubscribe_error_type == "RuntimeError"
+    assert report.sanitized_unsubscribe_error == "unsubscribe failed token=<redacted>"
+    assert "private" not in report.sanitized_unsubscribe_error
+    assert api.unsubscribed == [["000001.SZ"]]
+    assert api.initialize_calls == 1
+    assert provider.initialized is False
 
 
 def test_polling_fallback_and_graceful_shutdown() -> None:

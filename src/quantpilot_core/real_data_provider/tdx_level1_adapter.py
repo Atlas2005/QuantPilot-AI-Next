@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import platform
 import re
 import sys
@@ -68,7 +69,7 @@ _REQUIRED_LEVEL1_FUNCTIONS = (
 )
 _HISTORICAL_MINUTE_FIELDS = ("Open", "High", "Low", "Close", "Volume", "Amount")
 _NO_RAW_RESULT = object()
-_SUBSCRIPTION_CALLBACKS: dict[int, Callable[[Mapping[str, Any]], None]] = {}
+_SUBSCRIPTION_CALLBACKS: dict[int, _CallbackRegistration] = {}
 _SUBSCRIPTION_CALLBACKS_LOCK = threading.RLock()
 _SUBSCRIPTION_CALLBACK_IDS = count(1)
 
@@ -155,11 +156,33 @@ class TDXSubscriptionError(ProviderError):
         super().__init__(f"tqcenter subscribe_hq failed: {self.sanitized_message}")
 
 
+class TDXUnsubscribeError(ProviderError):
+    """Sanitized failure while removing the TDX symbol subscription."""
+
+    def __init__(self, message: str) -> None:
+        self.sanitized_message = _sanitize_exception_message(message)
+        super().__init__(f"tqcenter unsubscribe_hq failed: {self.sanitized_message}")
+
+
+@dataclass
+class _CallbackDiagnostics:
+    callback_count: int = 0
+    parse_error_count: int = 0
+    dispatch_error_count: int = 0
+    last_sanitized_error: str | None = None
+
+
+@dataclass(frozen=True)
+class _CallbackRegistration:
+    callback: Callable[[Mapping[str, Any]], None]
+    diagnostics: _CallbackDiagnostics
+
+
 @dataclass(frozen=True)
 class _TDXSubscription:
     symbols: tuple[str, ...]
-    handle: Any
     callback_id: int
+    sanitized_response_summary: str
 
 
 class TDXLevel1Provider:
@@ -187,6 +210,8 @@ class TDXLevel1Provider:
         self._snapshot_fields = tuple(str(field) for field in snapshot_fields)
         self._api: Any | None = None
         self._subscriptions: list[_TDXSubscription] = []
+        self._callback_diagnostics = _CallbackDiagnostics()
+        self._sanitized_subscription_response: str | None = None
 
     @property
     def initialized(self) -> bool:
@@ -379,9 +404,9 @@ class TDXLevel1Provider:
             raise ValueError("symbols must contain at least one symbol")
         if not callable(callback):
             raise TypeError("callback must be callable")
-        callback_id = _register_subscription_callback(callback)
+        callback_id = _register_subscription_callback(callback, self._callback_diagnostics)
         try:
-            handle = api.subscribe_hq(
+            response = api.subscribe_hq(
                 stock_list=list(requested),
                 callback=_tdx_subscription_callback,
             )
@@ -390,35 +415,55 @@ class TDXLevel1Provider:
             raise TDXSubscriptionError(
                 str(exc) or "tqcenter.tq.subscribe_hq raised an exception"
             ) from exc
-        if handle is False:
+        try:
+            response_summary = _interpret_subscription_response(response)
+        except Exception as exc:
             _unregister_subscription_callback(callback_id)
-            error = RuntimeError("tqcenter.tq.subscribe_hq returned False")
-            raise TDXSubscriptionError(str(error)) from error
-        subscription = _TDXSubscription(requested, handle, callback_id)
+            raise TDXSubscriptionError(str(exc)) from exc
+        self._sanitized_subscription_response = response_summary
+        subscription = _TDXSubscription(requested, callback_id, response_summary)
         self._subscriptions.append(subscription)
         return subscription
 
     def unsubscribe_hq(self, subscription: Any) -> None:
-        api = self._require_api()
-        try:
-            _unsubscribe(api, subscription)
-        except Exception as exc:
-            raise ProviderError("tqcenter unsubscribe_hq failed") from exc
+        if not isinstance(subscription, _TDXSubscription) or subscription not in self._subscriptions:
+            return
         self._subscriptions = [item for item in self._subscriptions if item != subscription]
+        _unregister_subscription_callback(subscription.callback_id)
+        api = self._api
+        if api is None:
+            return
+        try:
+            api.unsubscribe_hq(stock_list=list(subscription.symbols))
+        except Exception as exc:
+            raise TDXUnsubscribeError(
+                str(exc) or "tqcenter.tq.unsubscribe_hq raised an exception"
+            ) from exc
 
     def close(self) -> None:
         api = self._api
+        if api is None:
+            return
         first_error: Exception | None = None
-        if api is not None:
-            for subscription in tuple(self._subscriptions):
-                try:
-                    _unsubscribe(api, subscription)
-                except Exception as exc:  # shutdown still releases local runtime state
-                    first_error = first_error or exc
+        for subscription in tuple(self._subscriptions):
+            try:
+                self.unsubscribe_hq(subscription)
+            except Exception as exc:  # shutdown still releases local runtime state
+                first_error = first_error or exc
         self._subscriptions.clear()
         self._api = None
         if first_error is not None:
             raise ProviderError("tqcenter unsubscribe_hq failed during shutdown") from first_error
+
+    def callback_diagnostics(self) -> Mapping[str, Any]:
+        with _SUBSCRIPTION_CALLBACKS_LOCK:
+            return {
+                "callback_count": self._callback_diagnostics.callback_count,
+                "callback_parse_error_count": self._callback_diagnostics.parse_error_count,
+                "callback_dispatch_error_count": self._callback_diagnostics.dispatch_error_count,
+                "last_sanitized_callback_error": self._callback_diagnostics.last_sanitized_error,
+                "sanitized_subscription_response": self._sanitized_subscription_response,
+            }
 
     def _require_api(self) -> Any:
         if self._api is None:
@@ -955,25 +1000,13 @@ def canonicalize_tdx_level1_symbol(value: Any) -> str:
     return text
 
 
-def _unsubscribe(api: Any, subscription: Any) -> None:
-    if isinstance(subscription, _TDXSubscription):
-        target = _unsubscribe_target(subscription.symbols, subscription.handle)
-        try:
-            api.unsubscribe_hq(target)
-        finally:
-            _unregister_subscription_callback(subscription.callback_id)
-        return
-    api.unsubscribe_hq(subscription)
-
-
-def _unsubscribe_target(symbols: Sequence[str], handle: Any) -> Any:
-    return list(symbols) if handle is None or isinstance(handle, bool) else handle
-
-
-def _register_subscription_callback(callback: Callable[[Mapping[str, Any]], None]) -> int:
+def _register_subscription_callback(
+    callback: Callable[[Mapping[str, Any]], None],
+    diagnostics: _CallbackDiagnostics,
+) -> int:
     callback_id = next(_SUBSCRIPTION_CALLBACK_IDS)
     with _SUBSCRIPTION_CALLBACKS_LOCK:
-        _SUBSCRIPTION_CALLBACKS[callback_id] = callback
+        _SUBSCRIPTION_CALLBACKS[callback_id] = _CallbackRegistration(callback, diagnostics)
     return callback_id
 
 
@@ -982,13 +1015,90 @@ def _unregister_subscription_callback(callback_id: int) -> None:
         _SUBSCRIPTION_CALLBACKS.pop(callback_id, None)
 
 
-def _tdx_subscription_callback(payload: Mapping[str, Any]) -> None:
-    """Module-level one-argument callback required by the Windows TQ runtime."""
+def _tdx_subscription_callback(payload: Any) -> None:
+    """Normalize and contain the Windows ctypes callback boundary."""
 
     with _SUBSCRIPTION_CALLBACKS_LOCK:
-        callbacks = tuple(_SUBSCRIPTION_CALLBACKS.values())
-    for callback in callbacks:
-        callback(payload)
+        registrations = tuple(_SUBSCRIPTION_CALLBACKS.values())
+        for registration in registrations:
+            registration.diagnostics.callback_count += 1
+    try:
+        normalized = _normalize_tdx_callback_payload(payload)
+    except BaseException as exc:
+        sanitized = _safe_callback_error_message(exc)
+        with _SUBSCRIPTION_CALLBACKS_LOCK:
+            for registration in registrations:
+                registration.diagnostics.parse_error_count += 1
+                registration.diagnostics.last_sanitized_error = sanitized
+        return
+    for registration in registrations:
+        try:
+            registration.callback(normalized)
+        except BaseException as exc:
+            sanitized = _safe_callback_error_message(exc)
+            with _SUBSCRIPTION_CALLBACKS_LOCK:
+                registration.diagnostics.dispatch_error_count += 1
+                registration.diagnostics.last_sanitized_error = sanitized
+
+
+def _normalize_tdx_callback_payload(payload: Any) -> Mapping[str, Any]:
+    if isinstance(payload, bytes):
+        payload = payload.decode("utf-8")
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    if not isinstance(payload, Mapping):
+        raise TypeError("TDX callback payload must decode to a mapping")
+    return dict(payload)
+
+
+def _interpret_subscription_response(response: Any) -> str:
+    if response is False:
+        raise ProviderDataError("tqcenter.tq.subscribe_hq returned False")
+    parsed = response
+    if isinstance(parsed, bytes):
+        parsed = parsed.decode("utf-8")
+    if isinstance(parsed, str):
+        try:
+            parsed = json.loads(parsed)
+        except json.JSONDecodeError as exc:
+            raise ProviderDataError("tqcenter.tq.subscribe_hq returned malformed JSON") from exc
+    if not isinstance(parsed, Mapping):
+        raise ProviderDataError("tqcenter.tq.subscribe_hq must return a mapping or JSON mapping")
+    error_id = parsed.get("ErrorId", parsed.get("error_id"))
+    if error_id is None:
+        raise ProviderDataError("tqcenter.tq.subscribe_hq response is missing ErrorId")
+    if not _is_zero_error_id(error_id):
+        raise ProviderDataError(
+            f"tqcenter.tq.subscribe_hq returned ErrorId={str(error_id).strip()}"
+        )
+    message = str(parsed.get("Msg", "")).strip()
+    summary = {
+        "ErrorId": str(error_id).strip(),
+        "Msg": _sanitize_exception_message(message) if message else "",
+        "run_id": str(parsed.get("run_id", "")),
+    }
+    return json.dumps(summary, ensure_ascii=False, sort_keys=True)
+
+
+def _is_zero_error_id(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        return Decimal(str(value).strip()) == Decimal("0")
+    except (InvalidOperation, ValueError):
+        return False
+
+
+def _safe_callback_error_message(exc: BaseException) -> str:
+    try:
+        return _sanitize_exception_message(str(exc))
+    except BaseException:
+        return f"{type(exc).__name__}: callback boundary failure"
+
+
+def _active_callback_registrations() -> int:
+    with _SUBSCRIPTION_CALLBACKS_LOCK:
+        return len(_SUBSCRIPTION_CALLBACKS)
 
 
 def sanitize_tdx_error_message(value: Any) -> str:

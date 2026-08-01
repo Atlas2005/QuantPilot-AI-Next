@@ -38,6 +38,9 @@ class Level1CollectorReport:
     snapshot_count: int
     bar_count: int
     callback_count: int
+    callback_parse_error_count: int
+    callback_dispatch_error_count: int
+    last_sanitized_callback_error: str | None
     quote_change_count: int
     polling_count: int
     deduplicated_count: int
@@ -49,7 +52,12 @@ class Level1CollectorReport:
     subscription_succeeded: bool
     subscription_error_type: str | None
     sanitized_subscription_error: str | None
+    sanitized_subscription_response: str | None
     polling_fallback_active: bool
+    unsubscribe_attempted: bool
+    unsubscribe_succeeded: bool
+    unsubscribe_error_type: str | None
+    sanitized_unsubscribe_error: str | None
     shadow: bool
 
     def as_dict(self) -> Mapping[str, Any]:
@@ -112,6 +120,10 @@ class LiveLevel1Collector:
         self._subscription_succeeded = False
         self._subscription_error_type: str | None = None
         self._sanitized_subscription_error: str | None = None
+        self._unsubscribe_attempted = False
+        self._unsubscribe_succeeded = False
+        self._unsubscribe_error_type: str | None = None
+        self._sanitized_unsubscribe_error: str | None = None
 
     @property
     def events(self) -> tuple[NormalizedLevel1Event, ...]:
@@ -220,10 +232,14 @@ class LiveLevel1Collector:
         self._stop.set()
         first_error: Exception | None = None
         if self._subscription is not None:
+            self._unsubscribe_attempted = True
             try:
                 self.provider.unsubscribe_hq(self._subscription)
+                self._unsubscribe_succeeded = True
             except Exception as exc:
-                first_error = exc
+                cause = exc.__cause__ or exc
+                self._unsubscribe_error_type = type(cause).__name__
+                self._sanitized_unsubscribe_error = sanitize_tdx_error_message(str(cause))
             self._subscription = None
         partial_bars = self.aggregator.flush()
         self._bars.extend(partial_bars)
@@ -242,13 +258,23 @@ class LiveLevel1Collector:
             raise first_error
 
     def report(self) -> Level1CollectorReport:
+        callback_diagnostics = _callback_diagnostics(self.provider)
         return Level1CollectorReport(
             connection_status=self._active_connection_status,
             symbols=self.symbols,
             event_count=len(self._events),
             snapshot_count=self._snapshot_count,
             bar_count=len(self._bars),
-            callback_count=self._callback_count,
+            callback_count=int(callback_diagnostics.get("callback_count", self._callback_count)),
+            callback_parse_error_count=int(
+                callback_diagnostics.get("callback_parse_error_count", 0)
+            ),
+            callback_dispatch_error_count=int(
+                callback_diagnostics.get("callback_dispatch_error_count", 0)
+            ),
+            last_sanitized_callback_error=callback_diagnostics.get(
+                "last_sanitized_callback_error"
+            ),
             quote_change_count=self._quote_change_count,
             polling_count=self._polling_count,
             deduplicated_count=self._deduplicated_count,
@@ -260,7 +286,14 @@ class LiveLevel1Collector:
             subscription_succeeded=self._subscription_succeeded,
             subscription_error_type=self._subscription_error_type,
             sanitized_subscription_error=self._sanitized_subscription_error,
+            sanitized_subscription_response=callback_diagnostics.get(
+                "sanitized_subscription_response"
+            ),
             polling_fallback_active=self._active_connection_status == "polling_fallback",
+            unsubscribe_attempted=self._unsubscribe_attempted,
+            unsubscribe_succeeded=self._unsubscribe_succeeded,
+            unsubscribe_error_type=self._unsubscribe_error_type,
+            sanitized_unsubscribe_error=self._sanitized_unsubscribe_error,
             shadow=self.shadow,
         )
 
@@ -331,3 +364,14 @@ def _storage_backend_name(sink: Level1MarketDataSink | None) -> str:
     if "memory" in name:
         return "memory"
     return name
+
+
+def _callback_diagnostics(provider: Level1MarketDataProvider) -> Mapping[str, Any]:
+    diagnostics = getattr(provider, "callback_diagnostics", None)
+    if not callable(diagnostics):
+        return {}
+    try:
+        value = diagnostics()
+    except Exception:
+        return {}
+    return value if isinstance(value, Mapping) else {}
