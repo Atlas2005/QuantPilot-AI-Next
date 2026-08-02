@@ -34,6 +34,11 @@ TQ Column ID Mapping (16 columns, each row = one timestamp):
 buy_signal  = action==BUY AND signal_valid AND NOT signal_stale
 sell_signal = action==SELL AND signal_valid AND NOT signal_stale AND t1_sellable
 
+Prediction records with schema_version=tdx_prediction_signal_v1 use the same
+16-column transport with state/probability/zone/target fields. String reason
+codes and full evidence provenance remain in the adjacent atomic JSON/CSV
+artifacts because send_bt_data transports numeric formula columns.
+
 Usage:
     # Dry-run (works on any OS):
     python scripts/publish_tdx_signals_tq_v1.py \\
@@ -65,6 +70,14 @@ SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 ACTION_CODE = {"NONE": 0, "BUY": 1, "HOLD": 2, "SELL": 3}
 POSITION_STATE_CODE = {"no_position": 0, "holding": 1, "t1_locked": 2}
+PREDICTION_STATE_CODE = {
+    "WATCH": 0,
+    "ENTRY": 1,
+    "HOLD": 2,
+    "WEAKENING": 3,
+    "EXIT": 4,
+    "INVALIDATED": 5,
+}
 
 # TQ column layout (1-indexed, max 16)
 TQ_COLUMN_SPEC: tuple[tuple[int, str, str], ...] = (
@@ -84,6 +97,25 @@ TQ_COLUMN_SPEC: tuple[tuple[int, str, str], ...] = (
     (14, "freshness_valid", "bool"),
     (15, "buy_signal", "bool"),
     (16, "sell_signal", "bool"),
+)
+
+PREDICTION_TQ_COLUMN_SPEC: tuple[tuple[int, str, str], ...] = (
+    (1, "signal_valid", "bool"),
+    (2, "prediction_state_code", "int"),
+    (3, "entry_probability_pct", "int"),
+    (4, "continuation_probability_pct", "int"),
+    (5, "exit_probability_pct", "int"),
+    (6, "expected_return_bps", "float"),
+    (7, "entry_zone_low", "float"),
+    (8, "entry_zone_high", "float"),
+    (9, "invalidation_price", "float"),
+    (10, "first_target_price", "float"),
+    (11, "factor_score", "float"),
+    (12, "material_change", "bool"),
+    (13, "entry_signal", "bool"),
+    (14, "hold_signal", "bool"),
+    (15, "weakening_signal", "bool"),
+    (16, "exit_or_invalidated_signal", "bool"),
 )
 
 
@@ -124,6 +156,8 @@ def signal_to_tq_row(signal: Mapping[str, Any]) -> list[Any]:
 
     Each element position matches TQ_COLUMN_SPEC (1-indexed ID).
     """
+    if signal.get("schema_version") == "tdx_prediction_signal_v1":
+        return prediction_signal_to_tq_row(signal)
     action = str(signal.get("action", "NONE"))
     position_state = str(signal.get("position_state", "no_position"))
     confidence = _float_val(signal.get("candidate_confidence"))
@@ -161,9 +195,33 @@ def signal_to_tq_row(signal: Mapping[str, Any]) -> list[Any]:
     ]
 
 
+def prediction_signal_to_tq_row(signal: Mapping[str, Any]) -> list[Any]:
+    """Map formula-ready prediction fields onto the existing 16-column TQ path."""
+
+    state = str(signal.get("state", "WATCH")).upper()
+    return [
+        1,
+        PREDICTION_STATE_CODE.get(state, 0),
+        int(round(_float_val(signal.get("entry_probability")) * 100)),
+        int(round(_float_val(signal.get("continuation_probability")) * 100)),
+        int(round(_float_val(signal.get("exit_probability")) * 100)),
+        round(_float_val(signal.get("expected_return")) * 10_000, 4),
+        _float_val(signal.get("entry_zone_low")),
+        _float_val(signal.get("entry_zone_high")),
+        _float_val(signal.get("invalidation_price")),
+        _float_val(signal.get("first_target_price")),
+        _float_val(signal.get("factor_score")),
+        _bool_int(signal.get("material_change")),
+        1 if state == "ENTRY" else 0,
+        1 if state == "HOLD" else 0,
+        1 if state == "WEAKENING" else 0,
+        1 if state in {"EXIT", "INVALIDATED"} else 0,
+    ]
+
+
 def signal_timestamp(signal: Mapping[str, Any]) -> str:
     """Extract a "YYYYMMDDHHMMSS" timestamp from generated_at, falling back to now."""
-    ts = str(signal.get("generated_at", ""))
+    ts = str(signal.get("generated_at") or signal.get("timestamp") or "")
     try:
         dt = datetime.fromisoformat(ts)
     except (ValueError, TypeError):
@@ -222,6 +280,11 @@ def publish_to_tq(
         for sym, sigs in sorted(by_symbol.items()):
             for s in sigs:
                 sample_rows.append({"symbol": sym, "timestamp": signal_timestamp(s), "row": signal_to_tq_row(s)})
+        prediction_schema = bool(signals) and all(
+            signal.get("schema_version") == "tdx_prediction_signal_v1"
+            for signal in signals
+        )
+        column_spec = PREDICTION_TQ_COLUMN_SPEC if prediction_schema else TQ_COLUMN_SPEC
         return {
             "dry_run": True,
             "platform": platform.system(),
@@ -229,7 +292,7 @@ def publish_to_tq(
             "symbol_count": len(by_symbol),
             "symbols": sorted(by_symbol.keys()),
             "sample_rows": sample_rows[:5],
-            "column_spec": {col_id: name for col_id, name, _ in TQ_COLUMN_SPEC},
+            "column_spec": {col_id: name for col_id, name, _ in column_spec},
         }
 
     # -- LAZY import from tqcenter (only on Windows live path) --

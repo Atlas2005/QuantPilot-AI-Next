@@ -1,6 +1,6 @@
 # 通达信公式：QuantPilot 人工信号桥
 
-本文档提供三个通达信公式文本，供人工选股与持仓监控使用。
+本文档提供日频人工信号和盘中预测信号的通达信公式文本，供人工选股与持仓监控使用。
 QuantPilot 负责分析，通达信只负责显示和人工操作。
 
 ## 前提
@@ -29,6 +29,77 @@ QuantPilot 负责分析，通达信只负责显示和人工操作。
 | 14 | freshness_valid         | bool    | 数据未过期                             |
 | 15 | buy_signal              | bool    | 买入信号（action==BUY）                |
 | 16 | sell_signal             | bool    | 卖出信号（action==SELL）               |
+
+### TDX Level1 盘中预测记录的列映射
+
+当输入 JSON 的 `schema_version` 为 `tdx_prediction_signal_v1` 时，同一个
+`publish_tdx_signals_tq_v1.py` 会自动切换到以下映射。不要把本表和上面的
+日频/账户映射混用于同一次发布。
+
+| ID | 字段名                             | 类型  | 含义 |
+|----|------------------------------------|-------|------|
+| 1  | signal_valid                       | bool  | 预测记录有效 |
+| 2  | prediction_state_code              | int   | 0=WATCH, 1=ENTRY, 2=HOLD, 3=WEAKENING, 4=EXIT, 5=INVALIDATED |
+| 3  | entry_probability_pct              | int   | 入场/上涨概率 × 100 |
+| 4  | continuation_probability_pct       | int   | 延续概率 × 100 |
+| 5  | exit_probability_pct               | int   | 退出/下跌概率 × 100 |
+| 6  | expected_return_bps                | float | 预期收益（基点）；确定性未训练归一化，不代表已验证 ML 概率 |
+| 7  | entry_zone_low                     | float | 入场区间下沿 |
+| 8  | entry_zone_high                    | float | 入场区间上沿 |
+| 9  | invalidation_price                 | float | 失效价 |
+| 10 | first_target_price                 | float | 第一目标价 |
+| 11 | factor_score                       | float | 复用因子模块的综合分 |
+| 12 | material_change                    | bool  | 相对上一条已发布记录是否发生实质变化 |
+| 13 | entry_signal                       | bool  | ENTRY 状态 |
+| 14 | hold_signal                        | bool  | HOLD 状态 |
+| 15 | weakening_signal                   | bool  | WEAKENING 状态 |
+| 16 | exit_or_invalidated_signal         | bool  | EXIT 或 INVALIDATED 状态 |
+
+`reason_code`、完整 `evidence_refs` 和 `source_components` 是字符串，不能进入
+TQ 的 16 列数值通道；它们保留在同次输出的 `latest_prediction.json` 和
+`latest_prediction.csv` 中。
+
+## 公式：QP_PREDICTION（盘中预测主图叠加）
+
+此公式仅用于 `tdx_prediction_signal_v1` 发布结果。
+
+```c
+{ QuantPilot TDX Level1 盘中预测 - 主图叠加 }
+{ 只显示预测状态和价位；不读取账户，不下单 }
+
+SIGNAL_VALID := SIGNALS_TQ#1;
+PRED_STATE   := SIGNALS_TQ#2;
+ENTRY_PROB   := SIGNALS_TQ#3;
+CONT_PROB    := SIGNALS_TQ#4;
+EXIT_PROB    := SIGNALS_TQ#5;
+ENTRY_LOW    := SIGNALS_TQ#7;
+ENTRY_HIGH   := SIGNALS_TQ#8;
+INVALIDATION := SIGNALS_TQ#9;
+TARGET1      := SIGNALS_TQ#10;
+MATERIAL     := SIGNALS_TQ#12;
+ENTRY_SIG    := SIGNALS_TQ#13;
+HOLD_SIG     := SIGNALS_TQ#14;
+WEAKENING    := SIGNALS_TQ#15;
+EXIT_SIG     := SIGNALS_TQ#16;
+
+VALID := SIGNAL_VALID = 1 AND MATERIAL = 1;
+
+ENTRY_LOW_LINE: IF(VALID, ENTRY_LOW, DRAWNULL), COLORCYAN, DOTLINE;
+ENTRY_HIGH_LINE: IF(VALID, ENTRY_HIGH, DRAWNULL), COLORCYAN, DOTLINE;
+INVALIDATION_LINE: IF(VALID, INVALIDATION, DRAWNULL), COLORGREEN, DOTLINE;
+TARGET1_LINE: IF(VALID, TARGET1, DRAWNULL), COLORRED, DOTLINE;
+
+DRAWICON(VALID AND ENTRY_SIG = 1, LOW * 0.99, 1);
+DRAWICON(VALID AND EXIT_SIG = 1, HIGH * 1.01, 2);
+DRAWTEXT(VALID AND ENTRY_SIG = 1, LOW * 0.98,
+        'QP-ENTRY ' + NUMTOSTR(ENTRY_PROB, 0) + '%'), COLORRED;
+DRAWTEXT(VALID AND HOLD_SIG = 1, LOW * 0.98,
+        'QP-HOLD ' + NUMTOSTR(CONT_PROB, 0) + '%'), COLORYELLOW;
+DRAWTEXT(VALID AND WEAKENING = 1, HIGH * 1.02,
+        'QP-WEAKENING'), COLORGRAY;
+DRAWTEXT(VALID AND EXIT_SIG = 1, HIGH * 1.02,
+        'QP-EXIT ' + NUMTOSTR(EXIT_PROB, 0) + '%'), COLORGREEN;
+```
 
 ## 公式 1: QP_XG（选股公式）
 
