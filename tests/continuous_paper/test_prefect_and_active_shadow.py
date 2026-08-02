@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import json
 import sys
 import types
 
@@ -246,7 +247,7 @@ def test_one_cycle_cli_forwards_normalized_allowed_roles_and_shared_payload(
         DeepSeekAdvisoryRole.RESEARCH_DESK,
         DeepSeekAdvisoryRole.INVESTMENT_COMMITTEE,
     )
-    assert "status=completed" in capsys.readouterr().out
+    assert json.loads(capsys.readouterr().out)["status"] == "completed"
 
 
 def test_one_cycle_cli_publishes_existing_experience_plan_to_tq_block(
@@ -294,7 +295,16 @@ def test_one_cycle_cli_publishes_existing_experience_plan_to_tq_block(
     def publish(value, **kwargs):
         captured["plan"] = value
         captured.update(kwargs)
-        return {"status": "candidate_block_published", "block_name": "QP体验"}
+        return {
+            "status": "candidate_block_published",
+            "sector_create_response": {"accepted": True, "error_id": 0},
+            "user_block_response": {"accepted": True, "error_id": 0},
+            "message_response": {"accepted": True, "error_id": 0},
+            "block_code": kwargs["block_code"],
+            "block_name": kwargs["block_name"],
+            "published_symbols": ["000002.SZ", "000001.SZ"],
+            "visibility_success": True,
+        }
 
     monkeypatch.setattr(run_script, "publish_plan_to_installed_tq", publish)
     monkeypatch.setattr(
@@ -310,16 +320,25 @@ def test_one_cycle_cli_publishes_existing_experience_plan_to_tq_block(
             "--experience-plan-path", str(plan_path),
             "--publish-tq-visibility",
             "--tdx-user-dir", r"D:\tongdaxin\PYPlugins\user",
+            "--tq-block-code", "QPX2",
+            "--tq-block-name", "量化体验",
+            "--no-tq-block-show",
         ],
     )
 
     run_script.main()
 
     assert captured["plan"] is plan
-    assert captured["block_name"] == "QP体验"
+    assert captured["block_code"] == "QPX2"
+    assert captured["block_name"] == "量化体验"
+    assert captured["show"] is False
     assert plan_path.exists()
-    output = capsys.readouterr().out
-    assert "tq_visibility_status=candidate_block_published" in output
+    output = json.loads(capsys.readouterr().out)
+    assert output["tq_visibility_status"] == "candidate_block_published"
+    assert output["block_code"] == "QPX2"
+    assert output["block_name"] == "量化体验"
+    assert output["published_symbols"] == ["000002.SZ", "000001.SZ"]
+    assert output["visibility_success"] is True
 
 
 def test_flow_forwards_one_payload_and_serialized_options_to_shared_bridge(

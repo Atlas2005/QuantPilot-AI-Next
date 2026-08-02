@@ -51,7 +51,13 @@ def main() -> None:
     parser.add_argument("--experience-top-n", type=int, default=10)
     parser.add_argument("--publish-tq-visibility", action="store_true")
     parser.add_argument("--tdx-user-dir", default="")
-    parser.add_argument("--tq-block-name", default="QP体验")
+    parser.add_argument("--tq-block-code", default="QPTY")
+    parser.add_argument("--tq-block-name", default="QP候选")
+    parser.add_argument(
+        "--tq-block-show",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     args = parser.parse_args()
 
     if args.publish_tq_visibility and not args.experience_plan_path:
@@ -101,7 +107,9 @@ def main() -> None:
     experience_plan_path = None
     experience_candidate_count = 0
     tq_visibility_status = "not_requested"
+    tq_block_code = None
     tq_block_name = None
+    tq_visibility = None
     if args.experience_plan_path:
         production_report = json.loads(Path(args.report_path).read_text(encoding="utf-8"))
         plan = build_next_day_experience_plan_v1(
@@ -116,16 +124,55 @@ def main() -> None:
                 plan,
                 tdx_user_dir=args.tdx_user_dir,
                 initialize_path=__file__,
+                block_code=args.tq_block_code,
                 block_name=args.tq_block_name,
+                show=args.tq_block_show,
             )
             tq_visibility_status = str(visibility["status"])
+            tq_block_code = str(visibility["block_code"])
             tq_block_name = str(visibility["block_name"])
+            tq_visibility = visibility
     print(
-        f"session_id={result.session_id} status={result.status} run_id={result.run_id} "
-        f"experience_candidate_count={experience_candidate_count} "
-        f"experience_plan_path={experience_plan_path} "
-        f"tq_visibility_status={tq_visibility_status} "
-        f"tq_block_name={tq_block_name}"
+        json.dumps(
+            {
+                "session_id": result.session_id,
+                "status": result.status,
+                "run_id": result.run_id,
+                "experience_candidate_count": experience_candidate_count,
+                "experience_plan_path": experience_plan_path,
+                "tq_visibility_status": tq_visibility_status,
+                "tq_visibility": tq_visibility,
+                "sector_create_response": (
+                    tq_visibility.get("sector_create_response")
+                    if tq_visibility is not None
+                    else None
+                ),
+                "user_block_response": (
+                    tq_visibility.get("user_block_response")
+                    if tq_visibility is not None
+                    else None
+                ),
+                "message_response": (
+                    tq_visibility.get("message_response")
+                    if tq_visibility is not None
+                    else None
+                ),
+                "block_code": tq_block_code,
+                "block_name": tq_block_name,
+                "published_symbols": (
+                    tq_visibility.get("published_symbols", [])
+                    if tq_visibility is not None
+                    else []
+                ),
+                "visibility_success": (
+                    tq_visibility.get("visibility_success")
+                    if tq_visibility is not None
+                    else None
+                ),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
     )
 
 

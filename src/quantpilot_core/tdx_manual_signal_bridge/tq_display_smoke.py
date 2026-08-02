@@ -121,6 +121,7 @@ def inspect_tqcenter_api(api: Any, module_path: Path) -> dict[str, Any]:
         "formula_set_data_info",
         "exec_to_tdx",
         "send_warn",
+        "create_sector",
         "send_user_block",
         "send_message",
         "close",

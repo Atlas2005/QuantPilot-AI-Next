@@ -120,7 +120,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--publish-to-tq", action="store_true")
     parser.add_argument("--tdx-plugin-dir", default=None)
-    parser.add_argument("--tq-block-name", default="QP体验")
+    parser.add_argument("--tq-block-code", default="QPTY")
+    parser.add_argument("--tq-block-name", default="QP候选")
+    parser.add_argument(
+        "--tq-block-show",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     return parser
 
 
@@ -346,7 +352,9 @@ def _run_live_shadow(
         if args.publish_to_tq and plan is not None:
             plan_visibility = publish_experience_plan_visibility(
                 plan,
+                block_code=args.tq_block_code,
                 block_name=args.tq_block_name,
+                show=args.tq_block_show,
             )
         tq_publisher = (
             LiveTQVisibilityPublisher(tdx_plugin_dir=args.tdx_plugin_dir)
@@ -391,6 +399,37 @@ def _run_live_shadow(
         "timing_status": "EXPERIMENTAL SHADOW",
         "trained_model_role": "challenger_only_unless_prequalified",
         "tq_plan_visibility": plan_visibility,
+        "sector_create_response": (
+            plan_visibility.get("sector_create_response")
+            if plan_visibility is not None
+            else None
+        ),
+        "user_block_response": (
+            plan_visibility.get("user_block_response")
+            if plan_visibility is not None
+            else None
+        ),
+        "message_response": (
+            plan_visibility.get("message_response")
+            if plan_visibility is not None
+            else None
+        ),
+        "block_code": (
+            plan_visibility.get("block_code") if plan_visibility is not None else None
+        ),
+        "block_name": (
+            plan_visibility.get("block_name") if plan_visibility is not None else None
+        ),
+        "published_symbols": (
+            plan_visibility.get("published_symbols", [])
+            if plan_visibility is not None
+            else []
+        ),
+        "visibility_success": (
+            plan_visibility.get("visibility_success")
+            if plan_visibility is not None
+            else None
+        ),
         "ordinary_chart_overlay_status": "pending_windows_visual_confirmation",
         "tq_warning_fallback_active": bool(args.publish_to_tq),
     }
@@ -402,6 +441,13 @@ def _run_live_shadow(
         "report_path": report_path,
         "collector": collector_report.as_dict(),
         "tq_plan_visibility": plan_visibility,
+        "sector_create_response": report["sector_create_response"],
+        "user_block_response": report["user_block_response"],
+        "message_response": report["message_response"],
+        "block_code": report["block_code"],
+        "block_name": report["block_name"],
+        "published_symbols": report["published_symbols"],
+        "visibility_success": report["visibility_success"],
         "ordinary_chart_overlay_status": "pending_windows_visual_confirmation",
         "tq_warning_fallback_active": bool(args.publish_to_tq),
         **sink.report(),

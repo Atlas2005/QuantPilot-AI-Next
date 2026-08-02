@@ -69,7 +69,8 @@ python scripts/smoke_tdx_tq_display_v1.py --tdx-user-dir "D:\tongdaxin\PYPlugins
 
 普通 K 线叠加未证明不会阻塞体验流程。回退直接复用现有体验计划和生命周期：
 
-- 盘后把现有有序 top-N 候选写入 `QP体验` 自定义板块；不重新选股；
+- 盘后把现有有序 top-N 候选写入代码为 `QPTY`、客户端显示名为
+  `QP候选` 的自定义板块；不重新选股；
 - 在 ENTRY、WEAKENING、EXIT、INVALIDATED 状态切换时调用 `send_warn`；
 - 盘后在本机 API 支持时调用 `send_message`，内容包含候选排名和已缓存的
   DeepSeek 立场；
@@ -78,18 +79,23 @@ python scripts/smoke_tdx_tq_display_v1.py --tdx-user-dir "D:\tongdaxin\PYPlugins
 盘后命令（将前三个输入路径替换成当日已有生产文件；不需要手工编辑 JSON）：
 
 ```powershell
-python scripts/run_continuous_paper_cycle_v1.py --production-manifest "runtime\production_candidate_manifest_v1.json" --decision-session 2026-08-03 --state-path "runtime\continuous_paper_state.json" --report-path "runtime\continuous_paper_2026-08-03.json" --input-json "runtime\continuous_paper_input_2026-08-03.json" --experience-plan-path "runtime\tdx_experience_plan_2026-08-04.json" --experience-top-n 10 --publish-tq-visibility --tdx-user-dir "D:\tongdaxin\PYPlugins\user" --tq-block-name "QP体验"
+python scripts/run_continuous_paper_cycle_v1.py --production-manifest "runtime\production_candidate_manifest_v1.json" --decision-session 2026-08-03 --state-path "runtime\continuous_paper_state.json" --report-path "runtime\continuous_paper_2026-08-03.json" --input-json "runtime\continuous_paper_input_2026-08-03.json" --experience-plan-path "runtime\tdx_experience_plan_2026-08-04.json" --experience-top-n 10 --publish-tq-visibility --tdx-user-dir "D:\tongdaxin\PYPlugins\user" --tq-block-code QPTY --tq-block-name "QP候选"
 ```
 
 盘中 live-shadow 命令（只监控体验计划内的标的，并同时启用 TQ warning 回退）：
 
 ```powershell
-python scripts/run_tdx_prediction_integration_v1.py --mode live-shadow --experience-plan "runtime\tdx_experience_plan_2026-08-04.json" --tdx-user-dir "D:\tongdaxin\PYPlugins\user" --start-time 20260804093000 --end-time 20260804150000 --history-count 500 --duration 14400 --store-provider memory --report-path "runtime\tdx_live_shadow_2026-08-04.json" --tdx-output-dir "runtime\tdx_signals_2026-08-04" --publish-to-tq --tq-block-name "QP体验"
+python scripts/run_tdx_prediction_integration_v1.py --mode live-shadow --experience-plan "runtime\tdx_experience_plan_2026-08-04.json" --tdx-user-dir "D:\tongdaxin\PYPlugins\user" --start-time 20260804093000 --end-time 20260804150000 --history-count 500 --duration 14400 --store-provider memory --report-path "runtime\tdx_live_shadow_2026-08-04.json" --tdx-output-dir "runtime\tdx_signals_2026-08-04" --publish-to-tq --tq-block-code QPTY --tq-block-name "QP候选"
 ```
 
-`send_user_block`、`send_warn`、`send_message` 会按实际安装的 `tqcenter.py`
-公开签名绑定参数；未知的必填参数不会被猜测。`send_message` 不可用时不会撤销
-已经成功写入的候选板块。普通 K 线状态始终保持
+TDX/TQ 明确区分稳定短代码 `block_code` 和客户端显示名 `block_name`。
+程序先调用 `create_sector(block_code="QPTY", block_name="QP候选")`，再调用
+`send_user_block(block_code="QPTY", ...)`。**不能把显示名 `QP候选` 当作
+`send_user_block` 的 `block_code`。** `send_user_block`、`send_warn`、
+`send_message` 会按实际安装的 `tqcenter.py` 公开签名绑定参数；未知的必填参数
+不会被猜测。空响应或非零 `ErrorId` 不会被报告为成功；仅当板块可用且股票发布
+返回 `ErrorId=0` 时，`visibility_success` 才为 `true`。`send_message` 不可用时
+不会撤销已经成功写入的候选板块。普通 K 线状态始终保持
 `pending_windows_visual_confirmation`，直到图表上实际看到数值。
 
 ## TQ 列映射（16 列）

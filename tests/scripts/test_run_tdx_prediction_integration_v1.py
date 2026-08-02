@@ -216,7 +216,16 @@ def test_live_shadow_cli_uses_plan_for_candidate_block_and_warning_publisher(
         runner,
         "publish_experience_plan_visibility",
         lambda value, **kwargs: block_calls.append((value, kwargs))
-        or {"status": "candidate_block_published", "block_name": kwargs["block_name"]},
+        or {
+            "status": "candidate_block_published",
+            "sector_create_response": {"accepted": True, "error_id": 0},
+            "user_block_response": {"accepted": True, "error_id": 0},
+            "message_response": {"accepted": True, "error_id": 0},
+            "block_code": kwargs["block_code"],
+            "block_name": kwargs["block_name"],
+            "published_symbols": ["000001.SZ"],
+            "visibility_success": True,
+        },
     )
     monkeypatch.setattr(
         runner,
@@ -235,15 +244,25 @@ def test_live_shadow_cli_uses_plan_for_candidate_block_and_warning_publisher(
             "--tdx-output-dir", str(tmp_path / "tdx"),
             "--store-provider", "memory",
             "--publish-to-tq",
-            "--tq-block-name", "QP体验",
+            "--tq-block-code", "QPX1",
+            "--tq-block-name", "量化候选",
+            "--no-tq-block-show",
         ]
     )
 
     payload = json.loads(capsys.readouterr().out)
     assert result == 0
     assert block_calls[0][0] == plan
-    assert block_calls[0][1]["block_name"] == "QP体验"
+    assert block_calls[0][1] == {
+        "block_code": "QPX1",
+        "block_name": "量化候选",
+        "show": False,
+    }
     assert payload["tq_plan_visibility"]["status"] == "candidate_block_published"
+    assert payload["block_code"] == "QPX1"
+    assert payload["block_name"] == "量化候选"
+    assert payload["published_symbols"] == ["000001.SZ"]
+    assert payload["visibility_success"] is True
     assert payload["tq_warning_fallback_active"] is True
 
 

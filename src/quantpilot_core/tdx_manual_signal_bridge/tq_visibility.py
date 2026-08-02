@@ -14,6 +14,8 @@ from quantpilot_core.tdx_manual_signal_bridge.tq_publisher import (
 
 
 VISIBLE_WARNING_STATES = frozenset({"ENTRY", "WEAKENING", "EXIT", "INVALIDATED"})
+DEFAULT_TQ_BLOCK_CODE = "QPTY"
+DEFAULT_TQ_BLOCK_NAME = "QP候选"
 STATE_LABEL_ZH = {
     "ENTRY": "买",
     "WEAKENING": "弱",
@@ -30,7 +32,9 @@ def publish_experience_plan_visibility(
     plan: Mapping[str, Any],
     *,
     api: Any | None = None,
-    block_name: str = "QP体验",
+    block_code: str = DEFAULT_TQ_BLOCK_CODE,
+    block_name: str = DEFAULT_TQ_BLOCK_NAME,
+    show: bool = True,
 ) -> dict[str, Any]:
     """Publish the already-selected plan as a TDX user block and summary message."""
 
@@ -48,11 +52,40 @@ def publish_experience_plan_visibility(
     )
     if not symbols:
         raise ValueError("experience plan contains no candidate symbols")
-    block = _invoke_visibility_api(
+    normalized_block_code = str(block_code).strip()
+    normalized_block_name = str(block_name).strip()
+    if not normalized_block_code:
+        raise ValueError("block_code must be non-empty")
+    if not normalized_block_name:
+        raise ValueError("block_name must be non-empty")
+    sector = _invoke_visibility_api(
         resolved,
-        "send_user_block",
-        {"block_name": str(block_name), "stock_list": list(symbols)},
+        "create_sector",
+        {
+            "block_code": normalized_block_code,
+            "block_name": normalized_block_name,
+        },
+        raise_on_api_failure=False,
     )
+    sector_already_existed = _is_explicit_already_exists(sector)
+    sector_can_be_checked = bool(sector["succeeded"] or sector_already_existed)
+    block = _not_attempted_call("sector_creation_failed")
+    if sector_can_be_checked:
+        block = _invoke_visibility_api(
+            resolved,
+            "send_user_block",
+            {
+                "block_code": normalized_block_code,
+                "stocks": list(symbols),
+                "show": bool(show),
+            },
+            raise_on_api_failure=False,
+        )
+    sector_usable = bool(
+        sector["succeeded"]
+        or (sector_already_existed and block["succeeded"])
+    )
+    visibility_success = bool(sector_usable and block["succeeded"])
     message_text = build_after_close_message(plan, candidates=candidates)
     try:
         message = _invoke_visibility_api(
@@ -60,20 +93,30 @@ def publish_experience_plan_visibility(
             "send_message",
             {"message": message_text},
             required=False,
+            raise_on_api_failure=False,
         )
-    except (TQVisibilityContractError, RuntimeError) as exc:
-        message = {
-            "attempted": True,
-            "succeeded": False,
-            "error_type": type(exc).__name__,
-            "sanitized_error": " ".join(str(exc).split())[:500],
-        }
+    except TQVisibilityContractError as exc:
+        message = _failed_call(exc)
     return {
         "schema_version": "tq_visibility_fallback_v1",
-        "status": "candidate_block_published",
-        "block_name": str(block_name),
+        "status": (
+            "candidate_block_published"
+            if visibility_success
+            else "candidate_block_publish_failed"
+        ),
+        "block_code": normalized_block_code,
+        "block_name": normalized_block_name,
+        "show": bool(show),
         "symbols": list(symbols),
+        "published_symbols": list(symbols) if visibility_success else [],
         "candidate_count": len(symbols),
+        "visibility_success": visibility_success,
+        "sector_already_existed": sector_already_existed,
+        "sector_usable": sector_usable,
+        "sector_create_response": sector.get("response"),
+        "user_block_response": block.get("response"),
+        "message_response": message.get("response"),
+        "create_sector": sector,
         "send_user_block": block,
         "send_message": message,
         "full_provenance": "existing_experience_plan_and_json_csv",
@@ -248,7 +291,9 @@ def publish_plan_to_installed_tq(
     *,
     tdx_user_dir: str | Path,
     initialize_path: str,
-    block_name: str = "QP体验",
+    block_code: str = DEFAULT_TQ_BLOCK_CODE,
+    block_name: str = DEFAULT_TQ_BLOCK_NAME,
+    show: bool = True,
 ) -> dict[str, Any]:
     """Open one exact local TQ session, publish the plan, then close it."""
 
@@ -266,7 +311,9 @@ def publish_plan_to_installed_tq(
         report = publish_experience_plan_visibility(
             plan,
             api=api,
+            block_code=block_code,
             block_name=block_name,
+            show=show,
         )
     finally:
         if initialized:
@@ -299,6 +346,7 @@ def _invoke_visibility_api(
     semantic_values: Mapping[str, Any],
     *,
     required: bool = True,
+    raise_on_api_failure: bool = True,
 ) -> dict[str, Any]:
     method = getattr(api, method_name, None)
     if not callable(method):
@@ -354,23 +402,43 @@ def _invoke_visibility_api(
                 kwargs[parameter.name] = value
     raw = method(*args, **kwargs)
     response = normalize_tq_response(raw)
-    if response.get("accepted") is False:
-        raise RuntimeError(
-            f"{method_name} failed: {response.get('sanitized_error', 'TQ API error')}"
-        )
-    return {
+    succeeded = response.get("accepted") is True
+    result = {
         "attempted": True,
-        "succeeded": True,
+        "succeeded": succeeded,
         "signature": str(signature),
         "argument_names": list(kwargs),
         "positional_argument_count": len(args),
         "response": response,
     }
+    if not succeeded:
+        result["error_type"] = str(
+            response.get("error_type") or "IndeterminateTQResponse"
+        )
+        result["sanitized_error"] = str(
+            response.get("sanitized_error")
+            or response.get("message")
+            or f"{method_name} did not return ErrorId=0"
+        )
+    if not succeeded and raise_on_api_failure:
+        raise RuntimeError(
+            f"{method_name} failed: {response.get('sanitized_error', 'TQ API error')}"
+        )
+    return result
 
 
 def _canonical_kwargs(method_name: str, values: Mapping[str, Any]) -> dict[str, Any]:
+    if method_name == "create_sector":
+        return {
+            "block_code": values["block_code"],
+            "block_name": values["block_name"],
+        }
     if method_name == "send_user_block":
-        return {"block_name": values["block_name"], "stock_list": values["stock_list"]}
+        return {
+            "block_code": values["block_code"],
+            "stocks": values["stocks"],
+            "show": values["show"],
+        }
     if method_name == "send_message":
         return {"message": values["message"]}
     if method_name == "send_warn":
@@ -386,10 +454,16 @@ def _canonical_kwargs(method_name: str, values: Mapping[str, Any]) -> dict[str, 
 
 def _semantic_key(method_name: str, parameter_name: str) -> str | None:
     normalized = "".join(character for character in parameter_name.lower() if character.isalnum())
-    if method_name == "send_user_block":
-        if normalized in {"blockname", "block", "groupname", "group", "name"}:
+    if method_name == "create_sector":
+        if normalized in {"blockcode", "sectorcode", "code"}:
+            return "block_code"
+        if normalized in {"blockname", "sectorname", "name"}:
             return "block_name"
+    elif method_name == "send_user_block":
+        if normalized in {"blockcode", "sectorcode", "code"}:
+            return "block_code"
         if normalized in {
+            "stocks",
             "stocklist",
             "codelist",
             "stockcodes",
@@ -397,7 +471,9 @@ def _semantic_key(method_name: str, parameter_name: str) -> str | None:
             "stocks",
             "symbols",
         }:
-            return "stock_list"
+            return "stocks"
+        if normalized in {"show", "display", "visible", "open"}:
+            return "show"
     elif method_name == "send_message":
         if normalized in {"message", "msg", "content", "text", "info"}:
             return "message"
@@ -413,3 +489,43 @@ def _semantic_key(method_name: str, parameter_name: str) -> str | None:
         if normalized in {"reason", "message", "msg", "content", "text", "info", "remark"}:
             return "reason"
     return None
+
+
+def _is_explicit_already_exists(call: Mapping[str, Any]) -> bool:
+    if call.get("succeeded") is True:
+        return False
+    response = call.get("response")
+    if not isinstance(response, Mapping):
+        return False
+    message = str(response.get("message") or "").casefold()
+    return any(
+        marker in message
+        for marker in (
+            "already exists",
+            "already exist",
+            "sector exists",
+            "block exists",
+            "已存在",
+            "已经存在",
+            "重复创建",
+        )
+    )
+
+
+def _not_attempted_call(reason: str) -> dict[str, Any]:
+    return {
+        "attempted": False,
+        "succeeded": False,
+        "reason": reason,
+        "response": None,
+    }
+
+
+def _failed_call(exc: Exception) -> dict[str, Any]:
+    return {
+        "attempted": True,
+        "succeeded": False,
+        "error_type": type(exc).__name__,
+        "sanitized_error": " ".join(str(exc).split())[:500],
+        "response": None,
+    }

@@ -16,18 +16,48 @@ from quantpilot_core.tdx_manual_signal_bridge.tq_visibility import (
 
 
 class _VisibilityApi:
-    def __init__(self) -> None:
-        self.block_calls: list[tuple[str, list[str]]] = []
+    def __init__(
+        self,
+        *,
+        create_response: object = None,
+        block_response: object = None,
+        message_response: object = None,
+    ) -> None:
+        self.create_response = (
+            {"ErrorId": 0, "Msg": "ok"}
+            if create_response is None
+            else create_response
+        )
+        self.block_response = (
+            {"ErrorId": 0, "Msg": "ok"}
+            if block_response is None
+            else block_response
+        )
+        self.message_response = (
+            '{"ErrorId":"0","Msg":"ok"}'
+            if message_response is None
+            else message_response
+        )
+        self.call_order: list[str] = []
+        self.create_calls: list[tuple[str, str]] = []
+        self.block_calls: list[tuple[str, list[str], bool]] = []
         self.message_calls: list[str] = []
         self.warn_calls: list[dict[str, str]] = []
 
-    def send_user_block(self, block_name: str, stock_list: list[str]):
-        self.block_calls.append((block_name, stock_list))
-        return {"ErrorId": 0, "Msg": "ok"}
+    def create_sector(self, block_code: str, block_name: str):
+        self.call_order.append("create_sector")
+        self.create_calls.append((block_code, block_name))
+        return self.create_response
+
+    def send_user_block(self, block_code: str, stocks: list[str], show: bool):
+        self.call_order.append("send_user_block")
+        self.block_calls.append((block_code, stocks, show))
+        return self.block_response
 
     def send_message(self, message: str):
+        self.call_order.append("send_message")
         self.message_calls.append(message)
-        return '{"ErrorId":"0","Msg":"ok"}'
+        return self.message_response
 
     def send_warn(
         self,
@@ -86,13 +116,94 @@ def _signal(state: str = "ENTRY", **overrides: Any) -> dict[str, Any]:
 def test_after_close_plan_uses_existing_order_for_user_block_and_message() -> None:
     api = _VisibilityApi()
 
-    report = publish_experience_plan_visibility(_plan(), api=api, block_name="QP体验")
+    report = publish_experience_plan_visibility(_plan(), api=api)
 
-    assert api.block_calls == [("QP体验", ["000002.SZ", "000001.SZ"])]
+    assert api.call_order[:2] == ["create_sector", "send_user_block"]
+    assert api.create_calls == [("QPTY", "QP候选")]
+    assert api.block_calls == [("QPTY", ["000002.SZ", "000001.SZ"], True)]
     assert "2:000002.SZ:bullish" in api.message_calls[0]
     assert report["status"] == "candidate_block_published"
+    assert report["block_code"] == "QPTY"
+    assert report["block_name"] == "QP候选"
+    assert report["published_symbols"] == ["000002.SZ", "000001.SZ"]
+    assert report["visibility_success"] is True
+    assert report["sector_create_response"]["accepted"] is True
+    assert report["user_block_response"]["accepted"] is True
+    assert report["message_response"]["accepted"] is True
     assert report["full_provenance"] == "existing_experience_plan_and_json_csv"
     assert report["broker_or_order_api_calls"] is False
+
+
+def test_custom_block_code_name_and_show_are_separate_and_configurable() -> None:
+    api = _VisibilityApi()
+
+    report = publish_experience_plan_visibility(
+        _plan(),
+        api=api,
+        block_code="QPX1",
+        block_name="量化候选",
+        show=False,
+    )
+
+    assert api.create_calls == [("QPX1", "量化候选")]
+    assert api.block_calls == [("QPX1", ["000002.SZ", "000001.SZ"], False)]
+    assert all(call[0] != "量化候选" for call in api.block_calls)
+    assert report["block_code"] == "QPX1"
+    assert report["block_name"] == "量化候选"
+    assert report["show"] is False
+
+
+@pytest.mark.parametrize(
+    ("create_response", "block_response", "failed_stage"),
+    [
+        ({}, {"ErrorId": 0}, "sector"),
+        ({"ErrorId": 9, "Msg": "create failed"}, {"ErrorId": 0}, "sector"),
+        ({"ErrorId": 0}, {}, "block"),
+        ({"ErrorId": 0}, {"ErrorId": 8, "Msg": "block failed"}, "block"),
+    ],
+)
+def test_empty_or_nonzero_sector_and_block_responses_fail_visibility(
+    create_response,
+    block_response,
+    failed_stage,
+) -> None:
+    api = _VisibilityApi(
+        create_response=create_response,
+        block_response=block_response,
+    )
+
+    report = publish_experience_plan_visibility(_plan(), api=api)
+
+    assert report["visibility_success"] is False
+    assert report["status"] == "candidate_block_publish_failed"
+    assert report["published_symbols"] == []
+    if failed_stage == "sector":
+        assert api.block_calls == []
+        assert report["sector_create_response"]["accepted"] is not True
+    else:
+        assert api.block_calls
+        assert report["user_block_response"]["accepted"] is not True
+
+
+def test_explicit_already_existing_sector_continues_only_when_publication_works() -> None:
+    usable = _VisibilityApi(
+        create_response={"ErrorId": 12, "Msg": "板块已存在"},
+        block_response={"ErrorId": 0, "Msg": "ok"},
+    )
+    unusable = _VisibilityApi(
+        create_response={"ErrorId": 12, "Msg": "板块已存在"},
+        block_response={"ErrorId": 13, "Msg": "unknown block"},
+    )
+
+    usable_report = publish_experience_plan_visibility(_plan(), api=usable)
+    unusable_report = publish_experience_plan_visibility(_plan(), api=unusable)
+
+    assert usable_report["sector_already_existed"] is True
+    assert usable_report["sector_usable"] is True
+    assert usable_report["visibility_success"] is True
+    assert unusable_report["sector_already_existed"] is True
+    assert unusable_report["sector_usable"] is False
+    assert unusable_report["visibility_success"] is False
 
 
 def test_warning_payloads_filter_hold_and_include_rank_stance_state_and_provenance() -> None:
@@ -165,6 +276,9 @@ def test_historical_baseline_does_not_emit_stale_warning_and_next_transition_doe
 
 def test_unknown_required_public_api_parameter_is_not_guessed() -> None:
     class _UnknownApi:
+        def create_sector(self, block_code, block_name):
+            return {"ErrorId": 0}
+
         def send_user_block(self, mystery):
             return None
 
@@ -177,6 +291,9 @@ def test_unknown_required_public_api_parameter_is_not_guessed() -> None:
 
 def test_opaque_positional_visibility_signature_is_not_called() -> None:
     class _OpaqueApi:
+        def create_sector(self, block_code, block_name):
+            return {"ErrorId": 0}
+
         def send_user_block(self, *args):
             raise AssertionError("opaque signature must not be guessed")
 
@@ -192,8 +309,11 @@ def test_optional_message_contract_failure_does_not_undo_candidate_block() -> No
         def __init__(self) -> None:
             self.calls = []
 
-        def send_user_block(self, block_name, stock_list):
-            self.calls.append((block_name, stock_list))
+        def create_sector(self, block_code, block_name):
+            return {"ErrorId": 0}
+
+        def send_user_block(self, block_code, stocks, show):
+            self.calls.append((block_code, stocks, show))
             return {"ErrorId": 0}
 
         def send_message(self, unsupported_required_parameter):
@@ -203,7 +323,7 @@ def test_optional_message_contract_failure_does_not_undo_candidate_block() -> No
 
     report = publish_experience_plan_visibility(_plan(), api=api)
 
-    assert api.calls == [("QP体验", ["000002.SZ", "000001.SZ"])]
+    assert api.calls == [("QPTY", ["000002.SZ", "000001.SZ"], True)]
     assert report["send_user_block"]["succeeded"] is True
     assert report["send_message"]["succeeded"] is False
     assert report["send_message"]["error_type"] == "TQVisibilityContractError"
@@ -241,7 +361,8 @@ def test_after_close_installed_adapter_uses_one_owned_lifecycle(
             "module_path": str(module_path),
             "module_sha256": "a" * 64,
             "functions": {
-                "send_user_block": {"available": True, "signature": "(block_name, stock_list)"},
+                "create_sector": {"available": True, "signature": "(block_code, block_name)"},
+                "send_user_block": {"available": True, "signature": "(block_code, stocks, show)"},
                 "send_message": {"available": True, "signature": "(message)"},
             },
         },
@@ -256,4 +377,4 @@ def test_after_close_installed_adapter_uses_one_owned_lifecycle(
     assert len(api.initialize_calls) == 1
     assert api.close_count == 1
     assert report["symbols"] == ["000002.SZ", "000001.SZ"]
-    assert report["api_signatures"]["send_user_block"] == "(block_name, stock_list)"
+    assert report["api_signatures"]["send_user_block"] == "(block_code, stocks, show)"
