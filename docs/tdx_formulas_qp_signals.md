@@ -5,9 +5,42 @@ QuantPilot 负责分析，通达信只负责显示和人工操作。
 
 ## 前提
 
-- 必须已安装 TQCenter（天勤）插件并配置 SIGNALS_TQ 虚拟合约。
-- `publish_tdx_signals_tq_v1.py` 已成功运行并推送了 16 列数据。
-- 公式通过 `SIGNALS_TQ` 读取数据。
+- 必须已安装 TQCenter（天勤）插件，且通达信已经打开并登录。
+- 外部 Python 脚本是支持的启动方式；脚本必须先调用 `tq.initialize(...)`，并在看图期间保持同一个连接存活。
+- 公式的已验证语法是 `SIGNALS_TQ(ID, TYPE)`。本桥使用 `TYPE=0`，例如
+  `T1:SIGNALS_TQ(1,0);`。
+- `send_bt_data` 的 `data_list` 是按信号 ID 组织的列式矩阵：外层每一项对应
+  一个 `SIGNALS_TQ` ID，内层值与 `time_list` 一一对应；`count` 是信号列数，
+  不是时间点数。
+- `ErrorId=0` 只证明 TQ 接受了传输，不证明普通 K 线公式已经能够读到数据。
+
+### Windows 普通 K 线资格烟雾测试
+
+在仓库根目录运行以下一条命令；把 `--start` 改为普通
+`000001.SZ` 一分钟图中连续存在的 7 根 K 线的第一根时间：
+
+```powershell
+python scripts/smoke_tdx_tq_display_v1.py --tdx-user-dir "D:\tongdaxin\PYPlugins\user" --symbol 000001.SZ --start 20260731144000 --hold-seconds 300
+```
+
+命令先发送官方最小的 2 时间点 × 2 数值列，再在同一连接中发送保留这两个
+测试值的 QuantPilot 16 列载荷。烟雾测试期间不要关闭 Python 窗口。在普通
+`000001.SZ` 一分钟图上先使用：
+
+```c
+T1:SIGNALS_TQ(1,0);
+T2:SIGNALS_TQ(2,0);
+```
+
+应看到 `111.11/112.22` 和 `221.11/222.22`。随后加载本文的
+`QP_PREDICTION`，应看到“买 / 持 / 弱 / 卖 / 失效”以及入场、失效、目标价位。
+命令输出 JSON Lines，包含实际加载的 `tqcenter.py` 路径和 SHA-256、公开 API
+签名、精确载荷形状、TQ 返回值和 `run_id`。`formula_set_data_info`、
+`exec_to_tdx` 和返回的 `run_id` 都不会被当作本次发送的输入。
+
+当前支持状态：`send_bt_data` 传输已支持；普通 K 线叠加在这条 Windows
+烟雾测试产生可见结果前仍为 **pending / 未证明**。不要把 `ErrorId=0` 写成
+“叠加成功”。
 
 ## TQ 列映射（16 列）
 
@@ -67,20 +100,20 @@ TQ 的 16 列数值通道；它们保留在同次输出的 `latest_prediction.js
 { QuantPilot TDX Level1 盘中预测 - 主图叠加 }
 { 只显示预测状态和价位；不读取账户，不下单 }
 
-SIGNAL_VALID := SIGNALS_TQ#1;
-PRED_STATE   := SIGNALS_TQ#2;
-ENTRY_PROB   := SIGNALS_TQ#3;
-CONT_PROB    := SIGNALS_TQ#4;
-EXIT_PROB    := SIGNALS_TQ#5;
-ENTRY_LOW    := SIGNALS_TQ#7;
-ENTRY_HIGH   := SIGNALS_TQ#8;
-INVALIDATION := SIGNALS_TQ#9;
-TARGET1      := SIGNALS_TQ#10;
-MATERIAL     := SIGNALS_TQ#12;
-ENTRY_SIG    := SIGNALS_TQ#13;
-HOLD_SIG     := SIGNALS_TQ#14;
-WEAKENING    := SIGNALS_TQ#15;
-EXIT_SIG     := SIGNALS_TQ#16;
+SIGNAL_VALID := SIGNALS_TQ(1,0);
+PRED_STATE   := SIGNALS_TQ(2,0);
+ENTRY_PROB   := SIGNALS_TQ(3,0);
+CONT_PROB    := SIGNALS_TQ(4,0);
+EXIT_PROB    := SIGNALS_TQ(5,0);
+ENTRY_LOW    := SIGNALS_TQ(7,0);
+ENTRY_HIGH   := SIGNALS_TQ(8,0);
+INVALIDATION := SIGNALS_TQ(9,0);
+TARGET1      := SIGNALS_TQ(10,0);
+MATERIAL     := SIGNALS_TQ(12,0);
+ENTRY_SIG    := SIGNALS_TQ(13,0);
+HOLD_SIG     := SIGNALS_TQ(14,0);
+WEAKENING    := SIGNALS_TQ(15,0);
+EXIT_SIG     := SIGNALS_TQ(16,0);
 
 VALID := SIGNAL_VALID = 1 AND MATERIAL = 1;
 
@@ -117,17 +150,17 @@ DeepSeek 立场、预测提供方和 `EXPERIMENTAL SHADOW` 标签保留在同一
 { 用途：条件选股，筛选 BUY 信号标的 }
 { 注意：此为参考信号，不构成精准买卖点建议 }
 
-SIGNAL_VALID := SIGNALS_TQ#1;     { signal_valid }
-CANDIDATE    := SIGNALS_TQ#2;     { candidate_flag }
-ACTION       := SIGNALS_TQ#3;     { action_code }
-FRESH        := SIGNALS_TQ#14;    { freshness_valid }
-BUY_SIG      := SIGNALS_TQ#15;    { buy_signal }
-CONFIDENCE   := SIGNALS_TQ#4;     { confidence_pct }
-RISK         := SIGNALS_TQ#7;     { risk_pct }
-FACTOR_RANK  := SIGNALS_TQ#6;     { factor_rank }
-T1_SELLABLE  := SIGNALS_TQ#10;    { t1_sellable }
-POS_STATE    := SIGNALS_TQ#9;     { position_state_code }
-QUANTITY     := SIGNALS_TQ#11;    { current_quantity }
+SIGNAL_VALID := SIGNALS_TQ(1,0);     { signal_valid }
+CANDIDATE    := SIGNALS_TQ(2,0);     { candidate_flag }
+ACTION       := SIGNALS_TQ(3,0);     { action_code }
+FRESH        := SIGNALS_TQ(14,0);    { freshness_valid }
+BUY_SIG      := SIGNALS_TQ(15,0);    { buy_signal }
+CONFIDENCE   := SIGNALS_TQ(4,0);     { confidence_pct }
+RISK         := SIGNALS_TQ(7,0);     { risk_pct }
+FACTOR_RANK  := SIGNALS_TQ(6,0);     { factor_rank }
+T1_SELLABLE  := SIGNALS_TQ(10,0);    { t1_sellable }
+POS_STATE    := SIGNALS_TQ(9,0);     { position_state_code }
+QUANTITY     := SIGNALS_TQ(11,0);    { current_quantity }
 
 { 选股条件：有效 + 新鲜 + BUY + 置信度阈值 + 未持仓 }
 COND1 := SIGNAL_VALID = 1;
@@ -147,16 +180,16 @@ QP_XG: COND1 AND COND2 AND COND3 AND COND4 AND COND5 AND COND6;
 { QuantPilot 人工信号桥 - 排序公式 QP_RANK }
 { 用途：副图显示因子排名、置信度、风险等关键列 }
 
-SIGNAL_VALID := SIGNALS_TQ#1;
-ACTION       := SIGNALS_TQ#3;
-CONFIDENCE   := SIGNALS_TQ#4;
-FACTOR_RAW   := SIGNALS_TQ#5;
-FACTOR_RANK  := SIGNALS_TQ#6;
-RISK         := SIGNALS_TQ#7;
-LIQUIDITY    := SIGNALS_TQ#8;
-FRESH        := SIGNALS_TQ#14;
-BUY_SIG      := SIGNALS_TQ#15;
-SELL_SIG     := SIGNALS_TQ#16;
+SIGNAL_VALID := SIGNALS_TQ(1,0);
+ACTION       := SIGNALS_TQ(3,0);
+CONFIDENCE   := SIGNALS_TQ(4,0);
+FACTOR_RAW   := SIGNALS_TQ(5,0);
+FACTOR_RANK  := SIGNALS_TQ(6,0);
+RISK         := SIGNALS_TQ(7,0);
+LIQUIDITY    := SIGNALS_TQ(8,0);
+FRESH        := SIGNALS_TQ(14,0);
+BUY_SIG      := SIGNALS_TQ(15,0);
+SELL_SIG     := SIGNALS_TQ(16,0);
 
 { 有效性过滤 }
 VALID := SIGNAL_VALID = 1 AND FRESH = 1;
@@ -183,17 +216,17 @@ DRAWTEXT(VALID AND FACTOR_RANK > 0, CONFIDENCE,
 { 用途：显示持仓状态、T+1 锁定、成本参考 }
 { 重要：此公式只显示状态，不宣称是已验证的 15 分钟精准买卖点 }
 
-SIGNAL_VALID := SIGNALS_TQ#1;
-ACTION       := SIGNALS_TQ#3;
-CONFIDENCE   := SIGNALS_TQ#4;
-POS_STATE    := SIGNALS_TQ#9;
-T1_SELLABLE  := SIGNALS_TQ#10;
-QUANTITY     := SIGNALS_TQ#11;
-AVG_COST     := SIGNALS_TQ#12;
-HOLDING      := SIGNALS_TQ#13;
-FRESH        := SIGNALS_TQ#14;
-BUY_SIG      := SIGNALS_TQ#15;
-SELL_SIG     := SIGNALS_TQ#16;
+SIGNAL_VALID := SIGNALS_TQ(1,0);
+ACTION       := SIGNALS_TQ(3,0);
+CONFIDENCE   := SIGNALS_TQ(4,0);
+POS_STATE    := SIGNALS_TQ(9,0);
+T1_SELLABLE  := SIGNALS_TQ(10,0);
+QUANTITY     := SIGNALS_TQ(11,0);
+AVG_COST     := SIGNALS_TQ(12,0);
+HOLDING      := SIGNALS_TQ(13,0);
+FRESH        := SIGNALS_TQ(14,0);
+BUY_SIG      := SIGNALS_TQ(15,0);
+SELL_SIG     := SIGNALS_TQ(16,0);
 
 VALID := SIGNAL_VALID = 1 AND FRESH = 1;
 
@@ -234,16 +267,16 @@ DRAWTEXT(VALID AND SELL_SIG = 1 AND POS_STATE = 2,
 { QuantPilot 人工信号桥 - 综合概览 }
 { 在主图叠加显示信号摘要 }
 
-SIGNAL_VALID := SIGNALS_TQ#1;
-ACTION       := SIGNALS_TQ#3;
-CONFIDENCE   := SIGNALS_TQ#4;
-FACTOR_RANK  := SIGNALS_TQ#6;
-POS_STATE    := SIGNALS_TQ#9;
-QUANTITY     := SIGNALS_TQ#11;
-AVG_COST     := SIGNALS_TQ#12;
-FRESH        := SIGNALS_TQ#14;
-BUY_SIG      := SIGNALS_TQ#15;
-SELL_SIG     := SIGNALS_TQ#16;
+SIGNAL_VALID := SIGNALS_TQ(1,0);
+ACTION       := SIGNALS_TQ(3,0);
+CONFIDENCE   := SIGNALS_TQ(4,0);
+FACTOR_RANK  := SIGNALS_TQ(6,0);
+POS_STATE    := SIGNALS_TQ(9,0);
+QUANTITY     := SIGNALS_TQ(11,0);
+AVG_COST     := SIGNALS_TQ(12,0);
+FRESH        := SIGNALS_TQ(14,0);
+BUY_SIG      := SIGNALS_TQ(15,0);
+SELL_SIG     := SIGNALS_TQ(16,0);
 
 VALID := SIGNAL_VALID = 1 AND FRESH = 1;
 
@@ -300,8 +333,10 @@ TQ 16 列限制由 `send_bt_data` 协议决定，不可扩展。JSON/CSV 输出�
 
 ## 注意事项
 
-- 这些公式依赖 SIGNALS_TQ 虚拟合约数据，需要 TQCenter 插件配合使用。
+- 这些公式依赖 `SIGNALS_TQ(ID,0)` 数据，需要 TQCenter 插件和仍在运行的
+  初始化 Python 会话配合使用。
 - QP_XG 只有一个布尔输出（`QP_XG`），符合通达信选股公式规范。
 - 所有信号均为参考性质，不构成精准买卖点建议。
 - 实际交易决策由人工完成，QuantPilot 不下达任何订单。
-- `SIGNALS_TQ#N` 语法表示读取 TQ 虚拟合约的第 N 列数据。
+- `SIGNALS_TQ(N,0)` 表示读取本次 TQ 数据会话的第 N 个信号列；不要再使用
+  本文旧版本中的 `SIGNALS_TQ#N` 写法。

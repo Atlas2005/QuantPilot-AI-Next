@@ -1,7 +1,7 @@
 """Tests for the publish_tdx_signals_tq_v1.py module.
 
 Covers:
-- Row-major data_list (each row = one timestamp = [ID1, …, ID16])
+- Column-major data_list (each outer list = one SIGNALS_TQ ID)
 - Per-symbol send_bt_data
 - tqcenter mock (not fictional tq module)
 - buy_signal requires signal_valid + NOT signal_stale
@@ -26,7 +26,9 @@ from scripts.publish_tdx_signals_tq_v1 import (
     POSITION_STATE_CODE,
     TQ_COLUMN_SPEC,
     build_tq_data_lists,
+    build_tq_send_payload,
     build_tq_time_list,
+    normalize_tq_response,
     publish_to_tq,
     signal_to_tq_row,
     signal_to_tq_columns,
@@ -66,7 +68,7 @@ def _signal(**overrides) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Row-major conversion tests
+# Signal-row conversion tests
 # ---------------------------------------------------------------------------
 
 
@@ -136,20 +138,31 @@ class TestSignalToTQRow:
 
 
 # ---------------------------------------------------------------------------
-# Row-major data_list tests
+# Column-major protocol payload tests
 # ---------------------------------------------------------------------------
 
 
 class TestTQDataLists:
-    def test_build_data_lists_row_major(self):
-        """data_list is row-major: each inner list = one timestamp row."""
+    def test_build_data_lists_column_major(self):
+        """Each outer list is one SIGNALS_TQ ID across all timestamps."""
         signals = [_signal(action="BUY"), _signal(action="SELL", symbol="000001.SZ")]
         data_list = build_tq_data_lists(signals)
-        assert len(data_list) == 2  # 2 rows (one per signal)
-        assert len(data_list[0]) == 16  # each row has 16 columns
-        assert len(data_list[1]) == 16
-        # First row should be BUY
-        assert data_list[0][2] == 1  # BUY
+        assert len(data_list) == 16
+        assert {len(column) for column in data_list} == {2}
+        assert data_list[2] == [1, 3]  # action_code for BUY then SELL
+
+    def test_send_payload_count_is_signal_column_count(self):
+        signals = [
+            _signal(action="BUY", generated_at="2026-01-02T14:55:00+08:00"),
+            _signal(action="HOLD", generated_at="2026-01-02T14:56:00+08:00"),
+        ]
+        payload = build_tq_send_payload("SH600000", signals)
+
+        assert payload["stock_code"] == "600000.SH"
+        assert payload["count"] == 16
+        assert len(payload["time_list"]) == 2
+        assert len(payload["data_list"]) == 16
+        assert {len(column) for column in payload["data_list"]} == {2}
 
     def test_build_time_list(self):
         signals = [
@@ -159,6 +172,10 @@ class TestTQDataLists:
         time_list = build_tq_time_list(signals)
         assert len(time_list) == 2
         assert time_list[0] == "20260102145500"
+
+    def test_timestamp_is_converted_to_shanghai(self):
+        signals = [_signal(generated_at="2026-01-02T06:55:00Z")]
+        assert build_tq_time_list(signals) == ["20260102145500"]
 
     def test_build_time_list_fallback(self):
         signals = [_signal(generated_at="invalid")]
@@ -208,9 +225,12 @@ class TestDryRun:
 
 class TestTQCenterMock:
     def test_per_symbol_send_bt_data(self):
-        """Each stock_code gets its own send_bt_data call with row-major data_list."""
+        """Each stock_code gets one column-major send_bt_data call."""
         mock_tqcenter = MagicMock()
         mock_tq = MagicMock()
+        mock_tq.send_bt_data.return_value = (
+            '{"ErrorId":"0","Msg":"发送TQ数据成功","run_id":"1"}'
+        )
         mock_tqcenter.tq = mock_tq
 
         signals = [
@@ -232,6 +252,9 @@ class TestTQCenterMock:
         # tq.close was called
         mock_tq.close.assert_called_once()
 
+        assert result["transport_accepted"] is True
+        assert result["ordinary_chart_overlay_status"] == "pending_windows_visual_confirmation"
+
         # send_bt_data called twice (once per symbol), sorted by symbol
         assert mock_tq.send_bt_data.call_count == 2
 
@@ -243,18 +266,19 @@ class TestTQCenterMock:
 
         # 000001.SZ (sorted first)
         call_sz = calls_by_symbol["000001.SZ"]
-        assert call_sz["count"] == 1
-        assert call_sz["data_list"][0][2] == 3  # SELL
+        assert call_sz["count"] == 16
+        assert call_sz["data_list"][2][0] == 3  # SELL action column
 
         # 600000.SH (sorted second)
         call_sh = calls_by_symbol["600000.SH"]
-        assert call_sh["count"] == 1
-        assert call_sh["data_list"][0][2] == 1  # BUY
+        assert call_sh["count"] == 16
+        assert call_sh["data_list"][2][0] == 1  # BUY action column
 
     def test_no_order_api_called(self):
         """Verify that order_stock, cancel_order are NEVER called."""
         mock_tqcenter = MagicMock()
         mock_tq = MagicMock()
+        mock_tq.send_bt_data.return_value = '{"ErrorId":0,"Msg":"ok"}'
         mock_tqcenter.tq = mock_tq
 
         signals = [_signal(action="BUY")]
@@ -273,6 +297,7 @@ class TestTQCenterMock:
         """Multiple timestamps for the same symbol → single send_bt_data call."""
         mock_tqcenter = MagicMock()
         mock_tq = MagicMock()
+        mock_tq.send_bt_data.return_value = {"ErrorId": 0, "Msg": "ok", "run_id": 7}
         mock_tqcenter.tq = mock_tq
 
         signals = [
@@ -289,8 +314,44 @@ class TestTQCenterMock:
         assert result["row_count"] == 2
         mock_tq.send_bt_data.assert_called_once()
         call = mock_tq.send_bt_data.call_args.kwargs
-        assert call["count"] == 2
-        assert len(call["data_list"]) == 2  # 2 rows
+        assert call["count"] == 16
+        assert len(call["data_list"]) == 16
+        assert {len(column) for column in call["data_list"]} == {2}
+        assert call["data_list"][2] == [1, 2]
+
+    def test_rejected_transport_is_not_reported_as_chart_success(self):
+        mock_tqcenter = MagicMock()
+        mock_tq = MagicMock()
+        mock_tq.send_bt_data.return_value = '{"ErrorId":"7","Msg":"bad payload"}'
+        mock_tqcenter.tq = mock_tq
+
+        with patch.dict(sys.modules, {"tqcenter": mock_tqcenter}):
+            with patch.object(tq_module, "platform") as mock_plat:
+                mock_plat.system.return_value = "Windows"
+                with pytest.raises(RuntimeError, match="rejected"):
+                    publish_to_tq([_signal()], dry_run=False)
+
+        mock_tq.close.assert_called_once()
+
+
+class TestTQResponseNormalization:
+    def test_success_json_string_preserves_run_id(self):
+        result = normalize_tq_response(
+            '{"ErrorId":"0","Msg":"发送TQ数据成功","run_id":"1"}'
+        )
+        assert result == {
+            "accepted": True,
+            "error_id": "0",
+            "message": "发送TQ数据成功",
+            "run_id": "1",
+        }
+
+    def test_success_mapping(self):
+        assert normalize_tq_response({"ErrorId": 0})["accepted"] is True
+
+    @pytest.mark.parametrize("raw", [False, "not-json", {"ErrorId": 5, "Msg": "failed"}])
+    def test_failure_responses(self, raw):
+        assert normalize_tq_response(raw)["accepted"] is False
 
 
 class TestTQColumnSpec:

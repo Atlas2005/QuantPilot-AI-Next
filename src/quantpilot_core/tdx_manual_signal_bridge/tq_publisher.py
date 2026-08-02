@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import math
 import platform
 from datetime import datetime
 from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo
+
+from quantpilot_core.real_data_provider import canonicalize_tdx_level1_symbol
 
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
@@ -133,9 +137,13 @@ signal_to_tq_columns = signal_to_tq_row
 def signal_timestamp(signal: Mapping[str, Any]) -> str:
     value = str(signal.get("generated_at") or signal.get("timestamp") or "")
     try:
-        parsed = datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (TypeError, ValueError):
         parsed = datetime.now(SHANGHAI_TZ)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=SHANGHAI_TZ)
+    else:
+        parsed = parsed.astimezone(SHANGHAI_TZ)
     return parsed.strftime("%Y%m%d%H%M%S")
 
 
@@ -144,7 +152,99 @@ def build_tq_time_list(signals: Sequence[Mapping[str, Any]]) -> list[str]:
 
 
 def build_tq_data_lists(signals: Sequence[Mapping[str, Any]]) -> list[list[Any]]:
-    return [signal_to_tq_row(signal) for signal in signals]
+    """Build TQ's column-major data matrix.
+
+    ``send_bt_data`` addresses each outer list by ``SIGNALS_TQ(ID, TYPE)``.
+    Each inner list therefore contains one signal ID's values across every
+    timestamp.  ``count`` is the number of these signal columns, not the
+    number of timestamps.
+    """
+
+    rows = [signal_to_tq_row(signal) for signal in signals]
+    if not rows:
+        return []
+    width = len(rows[0])
+    if width > 16:
+        raise ValueError("TQ send_bt_data supports at most 16 signal columns")
+    if any(len(row) != width for row in rows):
+        raise ValueError("TQ rows must all have the same number of columns")
+    return [[_protocol_number(row[column]) for row in rows] for column in range(width)]
+
+
+def build_tq_send_payload(
+    symbol: str,
+    signals: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Return the exact keyword payload accepted by ``tq.send_bt_data``."""
+
+    if not signals:
+        raise ValueError("signals must contain at least one record")
+    canonical_symbol = canonicalize_tdx_level1_symbol(symbol)
+    ordered = sorted(signals, key=signal_timestamp)
+    time_list = build_tq_time_list(ordered)
+    data_list = build_tq_data_lists(ordered)
+    if not data_list:
+        raise ValueError("TQ payload must contain at least one data column")
+    if any(len(column) != len(time_list) for column in data_list):
+        raise ValueError("every TQ data column must align one-to-one with time_list")
+    return {
+        "stock_code": canonical_symbol,
+        "time_list": time_list,
+        "data_list": data_list,
+        "count": len(data_list),
+    }
+
+
+def normalize_tq_response(raw: Any) -> dict[str, Any]:
+    """Normalize a TQ JSON/mapping result without treating it as chart proof."""
+
+    value = raw
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            return {
+                "accepted": False,
+                "error_type": type(exc).__name__,
+                "sanitized_error": "TQ response is not valid UTF-8",
+            }
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            return {
+                "accepted": False,
+                "error_type": type(exc).__name__,
+                "sanitized_error": "TQ response is not valid JSON",
+            }
+    if value is False:
+        return {
+            "accepted": False,
+            "error_type": "ExplicitFalseResponse",
+            "sanitized_error": "TQ returned False",
+        }
+    if value is None:
+        return {"accepted": None, "response_type": "NoneType"}
+    if not isinstance(value, Mapping):
+        return {
+            "accepted": False,
+            "error_type": "UnexpectedResponseType",
+            "sanitized_error": f"unexpected TQ response type: {type(value).__name__}",
+        }
+    error_id = value.get("ErrorId", value.get("error_id"))
+    accepted = str(error_id).strip() in {"0", "0.0"} if error_id is not None else None
+    result: dict[str, Any] = {
+        "accepted": accepted,
+        "error_id": error_id,
+        "message": _sanitize_text(value.get("Msg", value.get("message", ""))),
+    }
+    run_id = value.get("run_id", value.get("RunId"))
+    if run_id is not None:
+        result["run_id"] = run_id
+    if accepted is False:
+        result["error_type"] = "TQApiError"
+        result["sanitized_error"] = result["message"] or f"TQ ErrorId={error_id}"
+    return result
 
 
 def publish_to_tq(
@@ -166,7 +266,8 @@ def publish_to_tq(
         )
     by_symbol: dict[str, list[Mapping[str, Any]]] = {}
     for signal in signals:
-        by_symbol.setdefault(str(signal.get("symbol", "")), []).append(signal)
+        symbol = canonicalize_tdx_level1_symbol(signal.get("symbol", ""))
+        by_symbol.setdefault(symbol, []).append(signal)
     if dry_run:
         sample_rows = [
             {
@@ -192,6 +293,9 @@ def publish_to_tq(
             "column_spec": {column: name for column, name, _ in column_spec},
             "prediction_state_labels_zh": dict(PREDICTION_STATE_LABEL_ZH),
             "visible_marker_policy": "lifecycle_state_transitions_only",
+            "data_orientation": "column_major_by_signal_id",
+            "count_semantics": "signal_column_count",
+            "ordinary_chart_overlay_status": "not_exercised_dry_run",
         }
     try:
         from tqcenter import tq  # type: ignore[import-untyped]
@@ -202,20 +306,23 @@ def publish_to_tq(
         ) from exc
     symbol_count = 0
     row_count = 0
+    responses: list[dict[str, Any]] = []
     try:
         if manage_tq_lifecycle:
             tq.initialize(__file__)
         for symbol, rows in sorted(by_symbol.items()):
-            time_list = [signal_timestamp(signal) for signal in rows]
-            data_list = [signal_to_tq_row(signal) for signal in rows]
-            tq.send_bt_data(
-                stock_code=symbol,
-                time_list=time_list,
-                data_list=data_list,
-                count=len(time_list),
-            )
+            payload = build_tq_send_payload(symbol, rows)
+            raw_response = tq.send_bt_data(**payload)
+            response = normalize_tq_response(raw_response)
+            response["symbol"] = symbol
+            responses.append(response)
+            if response.get("accepted") is False:
+                raise RuntimeError(
+                    "TQ send_bt_data rejected the payload: "
+                    f"{response.get('sanitized_error', 'unknown TQ error')}"
+                )
             symbol_count += 1
-            row_count += len(time_list)
+            row_count += len(payload["time_list"])
     finally:
         if manage_tq_lifecycle:
             tq.close()
@@ -226,7 +333,32 @@ def publish_to_tq(
         "row_count": row_count,
         "manage_tq_lifecycle": manage_tq_lifecycle,
         "visible_marker_policy": "lifecycle_state_transitions_only",
+        "data_orientation": "column_major_by_signal_id",
+        "count_semantics": "signal_column_count",
+        "transport_responses": responses,
+        "transport_accepted": bool(responses) and all(
+            response.get("accepted") is True for response in responses
+        ),
+        "ordinary_chart_overlay_status": "pending_windows_visual_confirmation",
     }
+
+
+def _protocol_number(value: Any) -> int | float:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    try:
+        converted = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("TQ signal values must be numeric") from exc
+    if not math.isfinite(converted):
+        raise ValueError("TQ signal values must be finite")
+    return converted
+
+
+def _sanitize_text(value: Any) -> str:
+    return " ".join(str(value or "").split())[:500]
 
 
 def _bool_int(value: Any) -> int:
