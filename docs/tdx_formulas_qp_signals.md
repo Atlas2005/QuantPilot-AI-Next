@@ -49,7 +49,7 @@ QuantPilot 负责分析，通达信只负责显示和人工操作。
 | 9  | invalidation_price                 | float | 失效价 |
 | 10 | first_target_price                 | float | 第一目标价 |
 | 11 | intraday_score                     | float | 固定、未训练的盘中特征综合分 |
-| 12 | material_change                    | bool  | 相对上一条已发布记录是否发生实质变化 |
+| 12 | material_change                    | bool  | 可见生命周期状态发生切换；同状态不重复发标记 |
 | 13 | entry_signal                       | bool  | ENTRY 状态 |
 | 14 | hold_signal                        | bool  | HOLD 状态 |
 | 15 | weakening_signal                   | bool  | WEAKENING 状态 |
@@ -91,15 +91,22 @@ TARGET1_LINE: IF(VALID, TARGET1, DRAWNULL), COLORRED, DOTLINE;
 
 DRAWICON(VALID AND ENTRY_SIG = 1, LOW * 0.99, 1);
 DRAWICON(VALID AND EXIT_SIG = 1, HIGH * 1.01, 2);
-DRAWTEXT(VALID AND ENTRY_SIG = 1, LOW * 0.98,
-        'QP-ENTRY ' + NUMTOSTR(ENTRY_PROB, 0) + '%'), COLORRED;
-DRAWTEXT(VALID AND HOLD_SIG = 1, LOW * 0.98,
-        'QP-HOLD ' + NUMTOSTR(CONT_PROB, 0) + '%'), COLORYELLOW;
-DRAWTEXT(VALID AND WEAKENING = 1, HIGH * 1.02,
-        'QP-WEAKENING'), COLORGRAY;
-DRAWTEXT(VALID AND EXIT_SIG = 1, HIGH * 1.02,
-        'QP-EXIT ' + NUMTOSTR(EXIT_PROB, 0) + '%'), COLORGREEN;
+DRAWTEXT(VALID AND PRED_STATE = 1, LOW * 0.98,
+        '买 ' + NUMTOSTR(ENTRY_PROB, 0) + '%'), COLORRED;
+DRAWTEXT(VALID AND PRED_STATE = 2, LOW * 0.98,
+        '持 ' + NUMTOSTR(CONT_PROB, 0) + '%'), COLORYELLOW;
+DRAWTEXT(VALID AND PRED_STATE = 3, HIGH * 1.02,
+        '弱'), COLORGRAY;
+DRAWTEXT(VALID AND PRED_STATE = 4, HIGH * 1.02,
+        '卖 ' + NUMTOSTR(EXIT_PROB, 0) + '%'), COLORGREEN;
+DRAWTEXT(VALID AND PRED_STATE = 5, HIGH * 1.02,
+        '失效'), COLORGREEN;
 ```
+
+盘中体验使用的 `latest_prediction.json` 只包含生命周期状态切换，因此上述
+“买/持/弱/卖/失效”不会在每根 K 线上重复绘制。候选排名、盘后量化分、
+DeepSeek 立场、预测提供方和 `EXPERIMENTAL SHADOW` 标签保留在同一 JSON
+记录中；TQ 的 16 列数值上限无法再容纳这些字符串字段。
 
 ## 公式 1: QP_XG（选股公式）
 
@@ -252,10 +259,11 @@ DRAWTEXT(VALID AND POS_STATE > 0, HIGH * 1.04,
 ## 安装说明
 
 1. 将上述公式文本复制到通达信公式管理器。
-2. QP_XG 安装为**选股公式**（条件选股）。
-3. QP_RANK 安装为**副图公式**。
-4. QP_STATE 安装为**副图公式**。
-5. QP_OVERVIEW 安装为**主图叠加公式**（可选）。
+2. 盘中体验将 `QP_PREDICTION` 安装为**主图叠加公式**。
+3. QP_XG 安装为**选股公式**（条件选股）。
+4. QP_RANK 安装为**副图公式**。
+5. QP_STATE 安装为**副图公式**。
+6. QP_OVERVIEW 安装为**主图叠加公式**（可选）。
 
 ## TQ 16 列限制
 

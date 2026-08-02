@@ -18,8 +18,10 @@ from quantpilot_core.tdx_manual_signal_bridge.exporter import (
     signal_to_row,
 )
 from quantpilot_core.tdx_manual_signal_bridge.writer import (
+    TDX_PREDICTION_OUTCOME_CSV_HEADER,
     TDX_PREDICTION_SIGNAL_CSV_HEADER,
     write_prediction_signals_atomic,
+    write_prediction_outcomes_atomic,
     write_signals_atomic,
     write_signals_csv_atomic,
     write_signals_json_atomic,
@@ -28,6 +30,7 @@ from quantpilot_core.tdx_manual_signal_bridge.writer import (
 __all__ = [
     "TDX_SIGNAL_CSV_HEADER",
     "TDX_PREDICTION_SIGNAL_CSV_HEADER",
+    "TDX_PREDICTION_OUTCOME_CSV_HEADER",
     "TdxSignal",
     "TdxSignalAction",
     "export_signals",
@@ -36,6 +39,7 @@ __all__ = [
     "signal_to_dict",
     "signal_to_row",
     "write_prediction_signals_atomic",
+    "write_prediction_outcomes_atomic",
     "write_signals_atomic",
     "write_signals_csv_atomic",
     "write_signals_json_atomic",

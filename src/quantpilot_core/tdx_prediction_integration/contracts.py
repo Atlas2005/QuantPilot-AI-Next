@@ -46,6 +46,14 @@ class CandidateEvidence:
     factor_composite_score: float
     evidence_refs: tuple[str, ...] = ()
     source: str = "tdx_manual_signal_bridge.export_signals"
+    name: str | None = None
+    candidate_rank: int | None = None
+    quant_score: float | None = None
+    deepseek_stance: str = "neutral"
+    deepseek_stance_provenance: str = "not_structured"
+    after_close_ai_stance: str = "neutral"
+    stance_provenance: str = "not_available"
+    experience_plan_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +139,18 @@ class PredictionSignal:
     model_artifact_digest: str | None = None
     material_change: bool = True
     schema_version: str = TDX_PREDICTION_SCHEMA_VERSION
+    signal_id: str = ""
+    state_label_zh: str = ""
+    decision_price: float | None = None
+    candidate_name: str | None = None
+    candidate_rank: int | None = None
+    after_close_quant_score: float | None = None
+    deepseek_stance: str = "neutral"
+    deepseek_stance_provenance: str = "not_structured"
+    after_close_ai_stance: str = "neutral"
+    stance_provenance: str = "not_available"
+    experience_plan_id: str | None = None
+    shadow_status: str = "EXPERIMENTAL SHADOW"
 
     def as_dict(self) -> Mapping[str, Any]:
         return asdict(self)

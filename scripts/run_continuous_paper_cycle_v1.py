@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+from pathlib import Path
 
 from quantpilot_core.continuous_paper import (
     ActiveShadowConfig,
@@ -16,6 +18,8 @@ from quantpilot_core.continuous_paper import (
     load_production_pipeline_config,
     normalize_active_shadow_roles,
 )
+from quantpilot_core.daily_paper_loop.report import write_report_atomic
+from quantpilot_core.tdx_prediction_integration import build_next_day_experience_plan_v1
 
 
 def main() -> None:
@@ -36,6 +40,12 @@ def main() -> None:
     parser.add_argument("--max-physical-model-calls", type=int, default=0)
     parser.add_argument("--max-estimated-api-cost", type=float, default=0.0)
     parser.add_argument("--estimated-cost-per-call", type=float, default=0.0)
+    parser.add_argument(
+        "--experience-plan-path",
+        default=None,
+        help="Optional compact next-day TDX experience plan output path.",
+    )
+    parser.add_argument("--experience-top-n", type=int, default=10)
     args = parser.parse_args()
 
     try:
@@ -77,8 +87,21 @@ def main() -> None:
             active_shadow=shadow,
         )
     )
+    experience_plan_path = None
+    experience_candidate_count = 0
+    if args.experience_plan_path:
+        production_report = json.loads(Path(args.report_path).read_text(encoding="utf-8"))
+        plan = build_next_day_experience_plan_v1(
+            production_report,
+            active_shadow_report=result.shadow_report,
+            top_n=args.experience_top_n,
+        )
+        experience_plan_path = write_report_atomic(plan, args.experience_plan_path)
+        experience_candidate_count = int(plan["candidate_count"])
     print(
-        f"session_id={result.session_id} status={result.status} run_id={result.run_id}"
+        f"session_id={result.session_id} status={result.status} run_id={result.run_id} "
+        f"experience_candidate_count={experience_candidate_count} "
+        f"experience_plan_path={experience_plan_path}"
     )
 
 

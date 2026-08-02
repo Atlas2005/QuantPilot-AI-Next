@@ -34,6 +34,7 @@ from quantpilot_core.tdx_prediction_integration.intraday_features import (
     IntradayFeatureSnapshot,
     compute_intraday_features_v1,
 )
+from quantpilot_core.daily_paper_loop.state import payload_digest
 
 
 CALIBRATION_LABEL = "deterministic_untrained_atr_scaled_probability_mapping_v1"
@@ -41,6 +42,15 @@ CALIBRATION_LABEL = "deterministic_untrained_atr_scaled_probability_mapping_v1"
 ENTRY_PROBABILITY_THRESHOLD = 0.62
 EXIT_PROBABILITY_THRESHOLD = 0.66
 INVALIDATION_EXIT_PROBABILITY_THRESHOLD = 0.80
+
+PREDICTION_STATE_LABEL_ZH = {
+    PredictionState.WATCH.value: "观察",
+    PredictionState.ENTRY.value: "买",
+    PredictionState.HOLD.value: "持",
+    PredictionState.WEAKENING.value: "弱",
+    PredictionState.EXIT.value: "卖",
+    PredictionState.INVALIDATED.value: "失效",
+}
 
 
 @dataclass
@@ -117,6 +127,8 @@ class TDXPredictionEngineV1:
         self._last_material: dict[str, PredictionSignal] = {}
         self._all_predictions: list[PredictionSignal] = []
         self._material_signals: list[PredictionSignal] = []
+        self._visible_transition_signals: list[PredictionSignal] = []
+        self._last_visible_state: dict[str, str] = {}
         self._lifecycles = {
             symbol: _SignalLifecycle() for symbol in self.symbols
         }
@@ -132,6 +144,12 @@ class TDXPredictionEngineV1:
     @property
     def material_signals(self) -> tuple[PredictionSignal, ...]:
         return tuple(self._material_signals)
+
+    @property
+    def visible_transition_signals(self) -> tuple[PredictionSignal, ...]:
+        """Chart-facing lifecycle transitions, excluding WATCH and repeated states."""
+
+        return tuple(self._visible_transition_signals)
 
     @property
     def lifecycle_counts(self) -> Mapping[str, int]:
@@ -222,6 +240,12 @@ class TDXPredictionEngineV1:
                 material = self._is_material(signal)
                 signal = replace(signal, material_change=material)
                 self._all_predictions.append(signal)
+                if (
+                    signal.state != PredictionState.WATCH.value
+                    and self._last_visible_state.get(symbol) != signal.state
+                ):
+                    self._last_visible_state[symbol] = signal.state
+                    self._visible_transition_signals.append(signal)
                 if material:
                     self._last_material[symbol] = signal
                     self._material_signals.append(signal)
@@ -445,11 +469,23 @@ class TDXPredictionEngineV1:
             )
             if any(item.risk_flag_count for item in cached):
                 reasons.append("cached_deepseek_risk_flags_present")
+        decision_timestamp = feature_bar.end.isoformat()
+        state = transition.state.value
+        signal_id = "tdx-signal-" + payload_digest(
+            {
+                "symbol": features.symbol,
+                "decision_timestamp": decision_timestamp,
+                "state": state,
+                "experience_plan_id": (
+                    candidate.experience_plan_id if candidate is not None else None
+                ),
+            }
+        )[:24]
         return PredictionSignal(
             symbol=features.symbol,
-            decision_timestamp=feature_bar.end.isoformat(),
-            data_cutoff_timestamp=feature_bar.end.isoformat(),
-            state=transition.state.value,
+            decision_timestamp=decision_timestamp,
+            data_cutoff_timestamp=decision_timestamp,
+            state=state,
             entry_probability=round(entry_probability, 6),
             continuation_probability=round(continuation_probability, 6),
             exit_probability=round(exit_probability, 6),
@@ -473,6 +509,33 @@ class TDXPredictionEngineV1:
             horizon_probabilities=horizon_probabilities,
             deterministic_baseline_probabilities=deterministic_probabilities,
             model_artifact_digest=model_artifact_digest,
+            signal_id=signal_id,
+            state_label_zh=PREDICTION_STATE_LABEL_ZH[state],
+            decision_price=round(float(feature_bar.close), 4),
+            candidate_name=candidate.name if candidate is not None else None,
+            candidate_rank=(
+                candidate.candidate_rank if candidate is not None else None
+            ),
+            after_close_quant_score=(
+                candidate.quant_score if candidate is not None else None
+            ),
+            deepseek_stance=(
+                candidate.deepseek_stance if candidate is not None else "neutral"
+            ),
+            deepseek_stance_provenance=(
+                candidate.deepseek_stance_provenance
+                if candidate is not None
+                else "not_structured"
+            ),
+            after_close_ai_stance=(
+                candidate.after_close_ai_stance if candidate is not None else "neutral"
+            ),
+            stance_provenance=(
+                candidate.stance_provenance if candidate is not None else "not_available"
+            ),
+            experience_plan_id=(
+                candidate.experience_plan_id if candidate is not None else None
+            ),
         )
 
     def _is_material(self, current: PredictionSignal) -> bool:
@@ -645,6 +708,8 @@ def candidate_context_from_report(report: Mapping[str, Any] | None) -> Mapping[s
                 float(signal.factor_composite_score_raw), 0.0, 1.0
             ),
             evidence_refs=tuple(signal.evidence_refs),
+            candidate_rank=int(signal.factor_rank) or None,
+            quant_score=float(signal.factor_composite_score_raw),
         )
     return output
 

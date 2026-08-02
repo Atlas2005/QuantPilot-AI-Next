@@ -116,7 +116,23 @@ def main() -> int:
         default=100_000.0,
         help="Initial capital if state does not exist yet.",
     )
+    parser.add_argument(
+        "--signal-id",
+        default=None,
+        help="Optional existing TDX prediction signal to associate with this fill.",
+    )
+    parser.add_argument(
+        "--signals-path",
+        default=None,
+        help="Atomic latest_prediction.json containing --signal-id.",
+    )
     args = parser.parse_args()
+
+    signal_association = _load_signal_association(
+        signal_id=args.signal_id,
+        signals_path=args.signals_path,
+        symbol=args.symbol,
+    )
 
     # -- deferred imports --
     from quantpilot_core.a_share_market_reality_execution.execution import (
@@ -232,7 +248,11 @@ def main() -> int:
             realized_pnl=0.0,
             reason="manual_fill_v1",
             source_agent="manual",
-            metadata={"trade_date": args.trade_date, "manual_fill": True},
+            metadata={
+                "trade_date": args.trade_date,
+                "manual_fill": True,
+                **signal_association,
+            },
         )
 
         new_account = PaperAccount(
@@ -316,7 +336,11 @@ def main() -> int:
             realized_pnl=trade_pnl,
             reason="manual_fill_v1",
             source_agent="manual",
-            metadata={"trade_date": args.trade_date, "manual_fill": True},
+            metadata={
+                "trade_date": args.trade_date,
+                "manual_fill": True,
+                **signal_association,
+            },
         )
 
         new_account = PaperAccount(
@@ -373,11 +397,52 @@ def main() -> int:
                 "state_hash": persisted.state_hash,
                 "state_path": str(state_path),
                 "trade_log_count": len(new_account.trade_log),
+                "signal_id": signal_association.get("signal_id"),
+                "signal_associated": bool(signal_association),
             },
             indent=2,
         )
     )
     return 0
+
+
+def _load_signal_association(
+    *,
+    signal_id: str | None,
+    signals_path: str | None,
+    symbol: str,
+) -> dict[str, object]:
+    if signal_id is None:
+        if signals_path is not None:
+            raise ValueError("--signals-path requires --signal-id")
+        return {}
+    if signals_path is None:
+        raise ValueError("--signal-id requires --signals-path")
+    payload = json.loads(Path(signals_path).read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        raise ValueError("prediction signals file must contain a JSON array")
+    signal = next(
+        (
+            item
+            for item in payload
+            if isinstance(item, dict) and str(item.get("signal_id", "")) == signal_id
+        ),
+        None,
+    )
+    if signal is None:
+        raise ValueError(f"signal_id not found in prediction signals: {signal_id}")
+    if str(signal.get("symbol", "")) != symbol:
+        raise ValueError("manual fill symbol does not match associated signal")
+    return {
+        "signal_id": signal_id,
+        "signal_state": signal.get("state"),
+        "signal_decision_timestamp": signal.get(
+            "decision_timestamp", signal.get("timestamp")
+        ),
+        "signal_prediction_provider": signal.get("prediction_provider"),
+        "signal_experience_plan_id": signal.get("experience_plan_id"),
+        "signal_source_path": str(Path(signals_path)),
+    }
 
 
 if __name__ == "__main__":

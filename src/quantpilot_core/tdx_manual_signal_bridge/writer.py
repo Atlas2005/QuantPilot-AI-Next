@@ -37,6 +37,28 @@ TDX_PREDICTION_SIGNAL_CSV_HEADER: tuple[str, ...] = (
     "material_change",
 )
 
+TDX_PREDICTION_OUTCOME_CSV_HEADER: tuple[str, ...] = (
+    "signal_id",
+    "symbol",
+    "candidate_rank",
+    "decision_timestamp",
+    "state",
+    "prediction_provider",
+    "deepseek_stance",
+    "decision_price",
+    "return_5m",
+    "return_15m",
+    "return_30m",
+    "correct_5m",
+    "correct_15m",
+    "correct_30m",
+    "maximum_favourable_excursion",
+    "maximum_adverse_excursion",
+    "simulated_cost",
+    "simulated_after_cost_result",
+    "resolution_status",
+)
+
 
 def write_signals_json_atomic(signals: Sequence[TdxSignal], path: str | Path) -> str:
     """Write signals as newline-delimited JSON (one object per line), atomically.
@@ -104,6 +126,32 @@ def write_prediction_signals_atomic(
         path=out / csv_filename,
         suffix=".csv",
         formatter=_format_prediction_csv,
+    )
+    return json_path, csv_path
+
+
+def write_prediction_outcomes_atomic(
+    outcomes: Sequence[Mapping[str, Any]],
+    output_dir: str | Path,
+    *,
+    json_filename: str = "latest_prediction_outcomes.json",
+    csv_filename: str = "latest_prediction_outcomes.csv",
+) -> tuple[str, str]:
+    """Write the prediction outcome ledger through the established atomic path."""
+
+    records = tuple(dict(outcome) for outcome in outcomes)
+    out = Path(output_dir)
+    json_path = _write_signals_atomic(
+        signals=records,
+        path=out / json_filename,
+        suffix=".json",
+        formatter=_format_prediction_json,
+    )
+    csv_path = _write_signals_atomic(
+        signals=records,
+        path=out / csv_filename,
+        suffix=".csv",
+        formatter=_format_prediction_outcome_csv,
     )
     return json_path, csv_path
 
@@ -190,6 +238,16 @@ def _format_prediction_csv(
         )
 
 
+def _format_prediction_outcome_csv(
+    outcomes: Sequence[Mapping[str, Any]],
+    handle: Any,
+) -> None:
+    writer = csv.writer(handle, lineterminator="\n")
+    writer.writerow(TDX_PREDICTION_OUTCOME_CSV_HEADER)
+    for outcome in outcomes:
+        writer.writerow([outcome.get(key) for key in TDX_PREDICTION_OUTCOME_CSV_HEADER])
+
+
 def _prediction_record(signal: Mapping[str, Any]) -> Mapping[str, Any]:
     sequence_fields = {"context_data_asofs", "evidence_refs", "source_components"}
     required = set(TDX_PREDICTION_SIGNAL_CSV_HEADER) - sequence_fields
@@ -220,6 +278,18 @@ def _prediction_record(signal: Mapping[str, Any]) -> Mapping[str, Any]:
         "deterministic_baseline_probabilities",
         "model_artifact_digest",
         "calibration_label",
+        "signal_id",
+        "state_label_zh",
+        "decision_price",
+        "candidate_name",
+        "candidate_rank",
+        "after_close_quant_score",
+        "deepseek_stance",
+        "deepseek_stance_provenance",
+        "after_close_ai_stance",
+        "stance_provenance",
+        "experience_plan_id",
+        "shadow_status",
     ):
         if key in signal:
             record[key] = signal[key]

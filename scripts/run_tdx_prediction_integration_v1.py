@@ -11,7 +11,11 @@ from typing import Any, Mapping, Sequence
 from quantpilot_core.continuous_paper import initialize_reporting_store
 from quantpilot_core.daily_paper_loop.report import write_report_atomic
 from quantpilot_core.real_data_provider import LiveLevel1Collector, TDXLevel1Provider
-from quantpilot_core.tdx_manual_signal_bridge import write_prediction_signals_atomic
+from quantpilot_core.tdx_manual_signal_bridge import (
+    write_prediction_outcomes_atomic,
+    write_prediction_signals_atomic,
+)
+from quantpilot_core.tdx_manual_signal_bridge.tq_publisher import publish_to_tq
 from quantpilot_core.tdx_prediction_integration import (
     LiveShadowPredictionSink,
     PredictionContext,
@@ -20,9 +24,12 @@ from quantpilot_core.tdx_prediction_integration import (
     TDXPredictionEngineV1,
     V4WalkForwardProbabilityProvider,
     V4WalkForwardTrainingConfig,
+    build_end_of_day_experience_review_v1,
     cached_deepseek_evidence_from_payload,
     candidate_context_from_report,
+    experience_plan_symbols,
     prediction_signal_record,
+    prediction_context_from_experience_plan,
     run_historical_replay,
     train_and_qualify_v4_walk_forward_v1,
 )
@@ -33,10 +40,10 @@ def _parser() -> argparse.ArgumentParser:
         description="TDX qualification, historical replay, and live-shadow integration v1.",
     )
     parser.add_argument(
-        "--mode", required=True, choices=("replay", "live-shadow", "qualify")
+        "--mode", required=True, choices=("replay", "live-shadow", "qualify", "review")
     )
-    parser.add_argument("--symbols", required=True, help="Comma-separated explicit symbols.")
-    parser.add_argument("--tdx-user-dir", required=True)
+    parser.add_argument("--symbols", default="", help="Comma-separated explicit symbols.")
+    parser.add_argument("--tdx-user-dir", default="")
     parser.add_argument("--start-time", default="")
     parser.add_argument("--end-time", default="")
     parser.add_argument("--history-count", type=int, default=500)
@@ -76,6 +83,11 @@ def _parser() -> argparse.ArgumentParser:
         help="Optional existing daily-paper/candidate JSON report.",
     )
     parser.add_argument(
+        "--experience-plan",
+        default=None,
+        help="After-close plan; symbols and cached AI context are loaded automatically.",
+    )
+    parser.add_argument(
         "--deepseek-evidence",
         default=None,
         help="Optional cached AgentFinding-shaped JSON; never triggers a live call.",
@@ -93,25 +105,52 @@ def _parser() -> argparse.ArgumentParser:
         "--tdx-output-dir",
         default=".cache/tdx_prediction/tdx_signals",
     )
+    parser.add_argument(
+        "--signals-path",
+        default=None,
+        help="Review input; defaults to <tdx-output-dir>/latest_prediction.json.",
+    )
+    parser.add_argument(
+        "--state-path",
+        default=None,
+        help="Optional daily paper state containing signal-associated manual fills.",
+    )
+    parser.add_argument("--publish-to-tq", action="store_true")
+    parser.add_argument("--tdx-plugin-dir", default=None)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        symbols = _symbols(args.symbols)
+        plan = _load_optional_json(args.experience_plan)
+        symbols = _resolve_symbols(args.symbols, plan)
+        if not str(args.tdx_user_dir).strip():
+            raise ValueError("--tdx-user-dir is required for TDX modes")
         if args.history_count <= 0:
             raise ValueError("--history-count must be positive")
         if args.duration < 0:
             raise ValueError("--duration must be non-negative")
-        context = PredictionContext(
-            candidates=candidate_context_from_report(_load_optional_json(args.candidate_report)),
-            deepseek_evidence=cached_deepseek_evidence_from_payload(
-                _load_optional_json(args.deepseek_evidence)
-            ),
-            deepseek_live_calls_enabled=False,
+        context = (
+            prediction_context_from_experience_plan(plan)
+            if plan is not None
+            else PredictionContext(
+                candidates=candidate_context_from_report(
+                    _load_optional_json(args.candidate_report)
+                ),
+                deepseek_evidence=cached_deepseek_evidence_from_payload(
+                    _load_optional_json(args.deepseek_evidence)
+                ),
+                deepseek_live_calls_enabled=False,
+            )
         )
         provider = TDXLevel1Provider(args.tdx_user_dir)
+        if args.mode == "review":
+            if plan is None:
+                raise ValueError("--experience-plan is required for review")
+            summary = _run_review(args, provider, symbols, plan)
+            print(json.dumps({"status": "ok", **summary}, sort_keys=True))
+            return 0
         if args.mode == "qualify":
             summary = _run_qualification(args, provider, symbols)
             print(json.dumps({"status": "ok", **summary}, sort_keys=True))
@@ -128,11 +167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 prediction_provider=prediction_provider_name,
                 prediction_horizon_bars=int(args.prediction_horizon),
                 prediction_start_timestamp=(
-                    str(trained_provider.artifact_metadata["oos_inference_start"])
-                    if trained_provider is not None
-                    and trained_provider.qualified
-                    and trained_provider.artifact_metadata.get("oos_inference_start")
-                    else None
+                    _prediction_start_timestamp(plan, trained_provider)
                 ),
                 prediction_provider_unavailable_reason=unavailable_reason,
             ),
@@ -191,13 +226,17 @@ def _run_replay(
         ),
     )
     report_path = write_report_atomic(result.report, args.report_path)
-    records = tuple(prediction_signal_record(signal) for signal in result.material_signals)
+    records = tuple(
+        prediction_signal_record(signal)
+        for signal in engine.visible_transition_signals
+    )
     json_path, csv_path = write_prediction_signals_atomic(records, args.tdx_output_dir)
     return {
         "mode": "replay",
         "symbols": list(engine.symbols),
         "bar_count": len(bars),
         "material_signal_count": len(result.material_signals),
+        "visible_transition_count": len(engine.visible_transition_signals),
         "signal_count_by_state": result.report["signal_count_by_state"],
         "lifecycle_counts": result.report["lifecycle_counts"],
         "report_path": report_path,
@@ -297,10 +336,21 @@ def _run_live_shadow(
             dividend_type="none",
             fill_data=False,
         )
+        tq_publisher = (
+            lambda records: publish_to_tq(
+                records,
+                tdx_plugin_dir=args.tdx_plugin_dir,
+                dry_run=False,
+                manage_tq_lifecycle=False,
+            )
+            if args.publish_to_tq
+            else None
+        )
         sink = LiveShadowPredictionSink(
             store,
             engine,
             output_dir=str(args.tdx_output_dir),
+            publisher=tq_publisher,
         )
         sink.prime(history)
         collector = LiveLevel1Collector(
@@ -323,6 +373,16 @@ def _run_live_shadow(
         "historical_prime_bar_count": len(history),
         "deepseek_live_calls": False,
         "broker_or_order_api_calls": False,
+        "experience_plan_id": next(
+            (
+                candidate.experience_plan_id
+                for candidate in engine.context.candidates.values()
+                if candidate.experience_plan_id
+            ),
+            None,
+        ),
+        "timing_status": "EXPERIMENTAL SHADOW",
+        "trained_model_role": "challenger_only_unless_prequalified",
     }
     report_path = write_report_atomic(report, args.report_path)
     return {
@@ -340,6 +400,98 @@ def _symbols(value: str) -> tuple[str, ...]:
     if not symbols:
         raise ValueError("--symbols must contain at least one symbol")
     return symbols
+
+
+def _resolve_symbols(
+    explicit: str,
+    plan: Mapping[str, Any] | None,
+) -> tuple[str, ...]:
+    if plan is None:
+        return _symbols(explicit)
+    planned = experience_plan_symbols(plan)
+    if not planned:
+        raise ValueError("experience plan contains no candidates")
+    if explicit.strip() and _symbols(explicit) != planned:
+        raise ValueError("--symbols must exactly match the experience plan when both are supplied")
+    return planned
+
+
+def _prediction_start_timestamp(
+    plan: Mapping[str, Any] | None,
+    trained_provider: V4WalkForwardProbabilityProvider | None,
+) -> str | None:
+    plan_start = None
+    if plan is not None and plan.get("target_session"):
+        plan_start = f"{plan['target_session']}T09:30:00+08:00"
+    model_start = (
+        str(trained_provider.artifact_metadata["oos_inference_start"])
+        if trained_provider is not None
+        and trained_provider.qualified
+        and trained_provider.artifact_metadata.get("oos_inference_start")
+        else None
+    )
+    if plan_start is None:
+        return model_start
+    if model_start is None:
+        return plan_start
+    return max(plan_start, model_start)
+
+
+def _run_review(
+    args: argparse.Namespace,
+    provider: TDXLevel1Provider,
+    symbols: Sequence[str],
+    plan: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    provider.initialize()
+    try:
+        bars = provider.get_historical_intraday_bars(
+            symbols,
+            period="1m",
+            fields=("Open", "High", "Low", "Close", "Volume", "Amount"),
+            start_time=str(args.start_time),
+            end_time=str(args.end_time),
+            count=int(args.history_count),
+            dividend_type="none",
+            fill_data=False,
+        )
+    finally:
+        provider.close()
+    signals_path = Path(
+        args.signals_path
+        or (Path(args.tdx_output_dir) / "latest_prediction.json")
+    )
+    signal_payload = json.loads(signals_path.read_text(encoding="utf-8"))
+    if not isinstance(signal_payload, list):
+        raise ValueError("prediction signals file must contain a JSON array")
+    state = _load_optional_json(args.state_path)
+    review = build_end_of_day_experience_review_v1(
+        plan,
+        tuple(item for item in signal_payload if isinstance(item, Mapping)),
+        bars,
+        paper_state=state,
+        order_quantity=int(args.order_quantity),
+    )
+    report_path = write_report_atomic(review, args.report_path)
+    outcome_json, outcome_csv = write_prediction_outcomes_atomic(
+        tuple(review["outcomes"]),
+        args.tdx_output_dir,
+    )
+    return {
+        "mode": "review",
+        "symbols": list(symbols),
+        "bar_count": len(bars),
+        "signals_path": str(signals_path),
+        "outcome_count": len(review["outcomes"]),
+        "unresolved_count": len(review["unresolved_signals"]),
+        "report_path": report_path,
+        "outcome_json_path": outcome_json,
+        "outcome_csv_path": outcome_csv,
+        "hit_rates": review["hit_rates"],
+        "after_cost_simulated_profit": review["after_cost_simulated_profit"],
+        "deepseek_live_calls": False,
+        "broker_or_order_api_calls": False,
+    }
 
 
 def _load_optional_json(path: str | None) -> Mapping[str, Any] | None:
