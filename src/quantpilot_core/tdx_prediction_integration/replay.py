@@ -388,6 +388,7 @@ def _replay_report(
         **lifecycle_counts,
         "lifecycle_counts": lifecycle_counts,
         "material_signal_count": len(engine.material_signals),
+        "prediction_provider": dict(engine.prediction_provider_status),
         "prediction_evaluation": prediction_metrics,
         "trade_executability": {
             **execution_summary,
@@ -476,11 +477,27 @@ def _replay_report(
             "paper_trading.PaperAccount",
         ],
         "probability_semantics": (
-            "deterministic neutral-centered ATR-scaled mapping of signed intraday "
-            "features; "
-            "not a trained or validated probability model"
+            "the requested qualified provider supplies lifecycle probabilities when "
+            "applicable; deterministic_baseline remains a rejected benchmark and "
+            "explicitly labeled fallback"
         ),
         "probability_mapping": dict(intraday_probability_mapping_semantics()),
+        "trained_probability_mapping": {
+            "entry_probability": (
+                f"calibrated {engine.config.prediction_horizon_bars}-completed-1m-bar "
+                "upside probability"
+            ),
+            "continuation_probability": "calibrated 5-completed-1m-bar upside probability",
+            "exit_probability": (
+                f"one minus calibrated {engine.config.prediction_horizon_bars}-bar "
+                "upside probability"
+            ),
+            "expected_move": (
+                "probability direction scaled by current causal ATR; not a fitted "
+                "return forecast"
+            ),
+        },
+        "deterministic_baseline_role": "rejected benchmark and explicit fallback diagnostic",
         "intraday_feature_semantics": dict(intraday_feature_semantics()),
         "threshold_selection": "fixed before replay; not optimized on this replay sample",
         "deepseek_live_calls": False,
@@ -502,8 +519,10 @@ def _prediction_metrics(
     results: dict[str, Mapping[str, Any]] = {}
     for horizon in horizons:
         probabilities: list[float] = []
+        deterministic_probabilities: list[float] = []
         labels: list[float] = []
         hits = 0
+        deterministic_hits = 0
         for prediction in predictions:
             future = _future_bar(
                 by_symbol[prediction.symbol],
@@ -517,9 +536,21 @@ def _prediction_metrics(
                 continue
             forward_return = future.close / cutoff_bar.close - 1.0
             label = 1.0 if forward_return > 0 else 0.0
-            predicted_up = prediction.entry_probability >= prediction.exit_probability
+            probability = float(
+                prediction.horizon_probabilities.get(
+                    str(horizon), prediction.entry_probability
+                )
+            )
+            deterministic_probability = float(
+                prediction.deterministic_baseline_probabilities.get(
+                    str(horizon), prediction.entry_probability
+                )
+            )
+            predicted_up = probability >= 0.5
             hits += bool(bool(label) == predicted_up)
-            probabilities.append(float(prediction.entry_probability))
+            deterministic_hits += bool(bool(label) == (deterministic_probability >= 0.5))
+            probabilities.append(probability)
+            deterministic_probabilities.append(deterministic_probability)
             labels.append(label)
         evaluated = len(labels)
         class_frequency = sum(labels) / evaluated if evaluated else None
@@ -529,6 +560,7 @@ def _prediction_metrics(
             if class_frequency is not None else None
         )
         constant_brier = _brier_score([0.5] * evaluated, labels)
+        deterministic_brier = _brier_score(deterministic_probabilities, labels)
         results[f"{horizon}_completed_1m_bars"] = {
             "prediction_count": evaluated,
             "model_directional_hit_rate": (
@@ -553,6 +585,17 @@ def _prediction_metrics(
                 model_brier,
                 constant_brier,
             ),
+            "deterministic_baseline": {
+                "role": "rejected benchmark only",
+                "directional_hit_rate": (
+                    round(deterministic_hits / evaluated, 6) if evaluated else None
+                ),
+                "brier_score": deterministic_brier,
+                "brier_skill_score_vs_constant_0_5": _brier_skill_score(
+                    deterministic_brier,
+                    constant_brier,
+                ),
+            },
         }
     selected = results.get(f"{brier_horizon}_completed_1m_bars", {})
     return {
@@ -581,6 +624,10 @@ def _prediction_metrics(
             "full-replay observed positive-class frequency; evaluation reference only"
         ),
         "prediction_correctness_is_separate_from_execution": True,
+        "provider_counts": dict(
+            sorted(Counter(item.prediction_provider for item in predictions).items())
+        ),
+        "fallback_prediction_count": sum(item.provider_fallback for item in predictions),
     }
 
 

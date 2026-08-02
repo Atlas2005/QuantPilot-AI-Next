@@ -1094,6 +1094,65 @@ def _feature_frame(rows: Sequence[Mapping[str, Any]], features: Sequence[str]) -
     )
 
 
+def fit_tabular_estimator_with_validation_v1(
+    model: Any,
+    train_rows: Sequence[Mapping[str, Any]],
+    validation_rows: Sequence[Mapping[str, Any]],
+    *,
+    features: Sequence[str],
+    target_label: str,
+) -> Any:
+    """Fit a repository-supported tabular estimator on an explicit time split.
+
+    The original factor trainer is daily-row specific, but its estimator
+    boundary is not.  This public compatibility API lets completed intraday
+    adapters reuse the same pandas feature-frame and validation-aware fit path
+    without duplicating the V1/V4-era trainer plumbing.
+    """
+
+    if not train_rows:
+        raise ValueError("train_rows must not be empty")
+    if not validation_rows:
+        raise ValueError("validation_rows must not be empty")
+    x_train = _feature_frame(train_rows, features)
+    y_train = [float(row[target_label]) for row in train_rows]
+    x_validation = _feature_frame(validation_rows, features)
+    y_validation = [float(row[target_label]) for row in validation_rows]
+    return _fit_model(model, x_train, y_train, x_validation, y_validation)
+
+
+def tabular_feature_frame_v1(
+    rows: Sequence[Mapping[str, Any]],
+    features: Sequence[str],
+) -> pd.DataFrame:
+    """Build the same ordered numeric feature frame used by ML factor training."""
+
+    return _feature_frame(rows, features)
+
+
+def build_lightgbm_binary_classifier_v1(
+    *,
+    lightgbm_importer: Callable[[str], Any] | None = None,
+) -> Any:
+    """Build the binary counterpart of the repository's LightGBM regressor.
+
+    LightGBM is already the optional ``ml`` dependency used by this module.
+    Import remains lazy so non-ML and macOS adapter tests do not require it.
+    """
+
+    module = (lightgbm_importer or importlib.import_module)("lightgbm")
+    return module.LGBMClassifier(
+        objective="binary",
+        n_estimators=40,
+        learning_rate=0.05,
+        max_depth=3,
+        random_state=17,
+        verbosity=-1,
+        deterministic=True,
+        force_col_wise=True,
+    )
+
+
 def _fit_model(
     model: Any,
     x_train: pd.DataFrame,

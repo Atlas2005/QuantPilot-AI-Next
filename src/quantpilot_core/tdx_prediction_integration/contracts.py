@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol, runtime_checkable
 
 from quantpilot_core.a_share_market_reality_execution import AShareExecutionConfig
 from quantpilot_core.paper_trading import PaperFillCostAssumptions
@@ -31,6 +31,10 @@ class PredictionEngineConfig:
     min_feature_bars: int = 15
     material_probability_delta: float = 0.05
     material_expected_move_delta: float = 0.005
+    prediction_provider: str = "deterministic_baseline"
+    prediction_horizon_bars: int = 15
+    prediction_start_timestamp: str | None = None
+    prediction_provider_unavailable_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +68,37 @@ class PredictionContext:
 
 
 @dataclass(frozen=True)
+class ProbabilityProviderOutput:
+    """Causal probabilities returned by an optional trained backend."""
+
+    provider_id: str
+    horizon_probabilities: Mapping[str, float]
+    calibration_label: str
+    model_artifact_digest: str | None
+    source_components: tuple[str, ...] = ()
+    reason_codes: tuple[str, ...] = ()
+
+
+@runtime_checkable
+class IntradayProbabilityProvider(Protocol):
+    """Optional probability-only extension point for the shared TDX engine."""
+
+    provider_id: str
+    qualified: bool
+    fallback_reason: str | None
+
+    @property
+    def artifact_metadata(self) -> Mapping[str, Any]: ...
+
+    def predict(
+        self,
+        features: Any,
+        *,
+        decision_timestamp: str,
+    ) -> ProbabilityProviderOutput | None: ...
+
+
+@dataclass(frozen=True)
 class PredictionSignal:
     symbol: str
     decision_timestamp: str
@@ -84,6 +119,16 @@ class PredictionSignal:
     source_components: tuple[str, ...]
     intraday_score: float
     calibration_label: str
+    prediction_provider: str = "deterministic_baseline"
+    prediction_provider_requested: str = "deterministic_baseline"
+    provider_qualified: bool = False
+    provider_fallback: bool = False
+    provider_fallback_reason: str | None = None
+    horizon_probabilities: Mapping[str, float] = field(default_factory=dict)
+    deterministic_baseline_probabilities: Mapping[str, float] = field(
+        default_factory=dict
+    )
+    model_artifact_digest: str | None = None
     material_change: bool = True
     schema_version: str = TDX_PREDICTION_SCHEMA_VERSION
 

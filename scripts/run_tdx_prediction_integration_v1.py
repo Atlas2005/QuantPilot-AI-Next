@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the shared TDX prediction engine in historical replay or live shadow."""
+"""Qualify or run the shared TDX replay/live-shadow prediction engine."""
 
 from __future__ import annotations
 
@@ -18,18 +18,23 @@ from quantpilot_core.tdx_prediction_integration import (
     PredictionEngineConfig,
     ReplayConfig,
     TDXPredictionEngineV1,
+    V4WalkForwardProbabilityProvider,
+    V4WalkForwardTrainingConfig,
     cached_deepseek_evidence_from_payload,
     candidate_context_from_report,
     prediction_signal_record,
     run_historical_replay,
+    train_and_qualify_v4_walk_forward_v1,
 )
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="TDX historical replay and live-shadow prediction integration v1.",
+        description="TDX qualification, historical replay, and live-shadow integration v1.",
     )
-    parser.add_argument("--mode", required=True, choices=("replay", "live-shadow"))
+    parser.add_argument(
+        "--mode", required=True, choices=("replay", "live-shadow", "qualify")
+    )
     parser.add_argument("--symbols", required=True, help="Comma-separated explicit symbols.")
     parser.add_argument("--tdx-user-dir", required=True)
     parser.add_argument("--start-time", default="")
@@ -39,6 +44,32 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--feature-interval", type=int, default=5, choices=(3, 5, 15, 30))
     parser.add_argument("--initial-cash", type=float, default=100_000.0)
     parser.add_argument("--order-quantity", type=int, default=100)
+    parser.add_argument(
+        "--prediction-provider",
+        choices=(
+            "deterministic-baseline",
+            "v4-walk-forward",
+            "deterministic_baseline",
+            "v4_walk_forward",
+        ),
+        default="deterministic-baseline",
+    )
+    parser.add_argument(
+        "--model-artifact",
+        default=".cache/tdx_prediction/v4_walk_forward_model.json",
+    )
+    parser.add_argument(
+        "--qualification-report-path",
+        default=".cache/tdx_prediction/v4_walk_forward_qualification.json",
+    )
+    parser.add_argument("--walk-forward-fold-count", type=int, default=3)
+    parser.add_argument("--minimum-oos-samples", type=int, default=100)
+    parser.add_argument(
+        "--prediction-horizon",
+        type=int,
+        default=15,
+        choices=(5, 15, 30),
+    )
     parser.add_argument(
         "--candidate-report",
         default=None,
@@ -80,14 +111,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             deepseek_live_calls_enabled=False,
         )
+        provider = TDXLevel1Provider(args.tdx_user_dir)
+        if args.mode == "qualify":
+            summary = _run_qualification(args, provider, symbols)
+            print(json.dumps({"status": "ok", **summary}, sort_keys=True))
+            return 0
+        prediction_provider_name = str(args.prediction_provider).replace("-", "_")
+        trained_provider, unavailable_reason = _load_prediction_provider(
+            prediction_provider_name,
+            args.model_artifact,
+        )
         engine = TDXPredictionEngineV1(
             symbols,
             config=PredictionEngineConfig(
                 feature_interval_minutes=int(args.feature_interval),
+                prediction_provider=prediction_provider_name,
+                prediction_horizon_bars=int(args.prediction_horizon),
+                prediction_start_timestamp=(
+                    str(trained_provider.artifact_metadata["oos_inference_start"])
+                    if trained_provider is not None
+                    and trained_provider.qualified
+                    and trained_provider.artifact_metadata.get("oos_inference_start")
+                    else None
+                ),
+                prediction_provider_unavailable_reason=unavailable_reason,
             ),
             context=context,
+            probability_provider=trained_provider,
         )
-        provider = TDXLevel1Provider(args.tdx_user_dir)
         if args.mode == "replay":
             summary = _run_replay(args, provider, engine)
         else:
@@ -136,6 +187,7 @@ def _run_replay(
         config=ReplayConfig(
             initial_cash=float(args.initial_cash),
             order_quantity=int(args.order_quantity),
+            brier_horizon=int(args.prediction_horizon),
         ),
     )
     report_path = write_report_atomic(result.report, args.report_path)
@@ -155,7 +207,76 @@ def _run_replay(
         "trade_executability": result.report["trade_executability"],
         "net_profitability": result.report["net_profitability"],
         "no_lookahead_audit": result.report["no_lookahead_audit"],
+        "prediction_provider": result.report["prediction_provider"],
     }
+
+
+def _run_qualification(
+    args: argparse.Namespace,
+    provider: TDXLevel1Provider,
+    symbols: Sequence[str],
+) -> Mapping[str, Any]:
+    provider.initialize()
+    try:
+        bars = provider.get_historical_intraday_bars(
+            symbols,
+            period="1m",
+            fields=("Open", "High", "Low", "Close", "Volume", "Amount"),
+            start_time=str(args.start_time),
+            end_time=str(args.end_time),
+            count=int(args.history_count),
+            dividend_type="none",
+            fill_data=False,
+        )
+    finally:
+        provider.close()
+    result = train_and_qualify_v4_walk_forward_v1(
+        bars,
+        V4WalkForwardTrainingConfig(
+            feature_interval_minutes=int(args.feature_interval),
+            fold_count=int(args.walk_forward_fold_count),
+            min_oos_samples_per_horizon=int(args.minimum_oos_samples),
+            primary_prediction_horizon=int(args.prediction_horizon),
+            initial_cash=float(args.initial_cash),
+            order_quantity=int(args.order_quantity),
+            artifact_path=args.model_artifact,
+            report_path=args.qualification_report_path,
+            metadata={
+                "runtime": "windows_tdx_local_history",
+                "thresholds_tuned_on_july_samples": False,
+            },
+        ),
+    )
+    return {
+        "mode": "qualify",
+        "symbols": list(symbols),
+        "bar_count": len(bars),
+        "prediction_provider": "v4_walk_forward",
+        "provider_qualification_status": result.report[
+            "provider_qualification_status"
+        ],
+        "qualification_reasons": result.report["qualification_reasons"],
+        "model_artifact_path": result.artifact_path,
+        "qualification_report_path": result.report_path,
+        "model_artifact_digest": result.artifact["artifact_digest"],
+        "deepseek_live_calls": False,
+        "broker_or_order_api_calls": False,
+    }
+
+
+def _load_prediction_provider(
+    provider_name: str,
+    artifact_path: str,
+) -> tuple[V4WalkForwardProbabilityProvider | None, str | None]:
+    if provider_name == "deterministic_baseline":
+        return None, None
+    try:
+        provider = V4WalkForwardProbabilityProvider.from_path(artifact_path)
+    except Exception as exc:
+        return None, f"model_artifact_unavailable:{type(exc).__name__}:{exc}"
+    if not provider.qualified:
+        return provider, provider.fallback_reason or "model_artifact_not_qualified"
+    return provider, None
 
 
 def _run_live_shadow(

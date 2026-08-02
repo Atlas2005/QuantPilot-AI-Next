@@ -3,6 +3,8 @@
 from quantpilot_core.tdx_prediction_integration.contracts import (
     CachedDeepSeekEvidence,
     CandidateEvidence,
+    IntradayProbabilityProvider,
+    ProbabilityProviderOutput,
     PredictionContext,
     PredictionEngineConfig,
     PredictionSignal,
@@ -29,11 +31,27 @@ from quantpilot_core.tdx_prediction_integration.intraday_features import (
 )
 from quantpilot_core.tdx_prediction_integration.live_shadow import LiveShadowPredictionSink
 from quantpilot_core.tdx_prediction_integration.replay import run_historical_replay
+from quantpilot_core.tdx_prediction_integration.trained_probability import (
+    DEFAULT_V4_MODEL_ARTIFACT_PATH,
+    DEFAULT_V4_QUALIFICATION_REPORT_PATH,
+    INTRADAY_MODEL_FEATURES,
+    V4_WALK_FORWARD_PROVIDER_ID,
+    V4WalkForwardProbabilityProvider,
+    V4WalkForwardQualificationResult,
+    V4WalkForwardTrainingConfig,
+    build_intraday_feature_label_rows_v1,
+    build_intraday_walk_forward_folds_v1,
+    train_and_qualify_v4_walk_forward_v1,
+)
 
 __all__ = [
     "CALIBRATION_LABEL",
     "CachedDeepSeekEvidence",
     "CandidateEvidence",
+    "DEFAULT_V4_MODEL_ARTIFACT_PATH",
+    "DEFAULT_V4_QUALIFICATION_REPORT_PATH",
+    "INTRADAY_MODEL_FEATURES",
+    "IntradayProbabilityProvider",
     "IntradayFeatureSnapshot",
     "LiveShadowPredictionSink",
     "PredictionContext",
@@ -42,9 +60,16 @@ __all__ = [
     "PredictionState",
     "ReplayConfig",
     "ReplayResult",
+    "ProbabilityProviderOutput",
     "TDXPredictionEngineV1",
     "TDX_PREDICTION_ENGINE_VERSION",
     "TDX_PREDICTION_SCHEMA_VERSION",
+    "V4_WALK_FORWARD_PROVIDER_ID",
+    "V4WalkForwardProbabilityProvider",
+    "V4WalkForwardQualificationResult",
+    "V4WalkForwardTrainingConfig",
+    "build_intraday_feature_label_rows_v1",
+    "build_intraday_walk_forward_folds_v1",
     "cached_deepseek_evidence_from_payload",
     "candidate_context_from_report",
     "compute_intraday_features_v1",
@@ -54,4 +79,5 @@ __all__ = [
     "normalize_intraday_score_v1",
     "prediction_signal_record",
     "run_historical_replay",
+    "train_and_qualify_v4_walk_forward_v1",
 ]

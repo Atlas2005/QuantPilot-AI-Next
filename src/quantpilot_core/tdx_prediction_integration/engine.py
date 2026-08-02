@@ -23,6 +23,7 @@ from quantpilot_core.tdx_manual_signal_bridge import export_signals
 from quantpilot_core.tdx_prediction_integration.contracts import (
     CachedDeepSeekEvidence,
     CandidateEvidence,
+    IntradayProbabilityProvider,
     PredictionContext,
     PredictionEngineConfig,
     PredictionSignal,
@@ -70,6 +71,7 @@ class TDXPredictionEngineV1:
         *,
         config: PredictionEngineConfig | None = None,
         context: PredictionContext | None = None,
+        probability_provider: IntradayProbabilityProvider | None = None,
     ) -> None:
         self.symbols = tuple(
             dict.fromkeys(
@@ -89,9 +91,24 @@ class TDXPredictionEngineV1:
             raise ValueError("material_probability_delta must be in (0, 1]")
         if self.config.material_expected_move_delta <= 0:
             raise ValueError("material_expected_move_delta must be positive")
+        if self.config.prediction_provider not in {
+            "deterministic_baseline",
+            "v4_walk_forward",
+        }:
+            raise ValueError(
+                "prediction_provider must be deterministic_baseline or v4_walk_forward"
+            )
+        if self.config.prediction_horizon_bars not in {5, 15, 30}:
+            raise ValueError("prediction_horizon_bars must be 5, 15, or 30")
+        if (
+            probability_provider is not None
+            and probability_provider.provider_id != self.config.prediction_provider
+        ):
+            raise ValueError("probability provider does not match prediction_provider")
         self.context = context or PredictionContext()
         if self.context.deepseek_live_calls_enabled:
             raise ValueError("TDX prediction integration does not permit live DeepSeek calls")
+        self.probability_provider = probability_provider
         self._minute_bars: dict[str, list[NormalizedIntradayBar]] = {
             symbol: [] for symbol in self.symbols
         }
@@ -126,6 +143,39 @@ class TDXPredictionEngineV1:
             ),
             "exit_count": self._lifecycle_exit_count,
             "invalidation_count": self._lifecycle_invalidation_count,
+        }
+
+    @property
+    def prediction_provider_status(self) -> Mapping[str, Any]:
+        provider = self.probability_provider
+        qualified = bool(provider is not None and provider.qualified)
+        reason = self.config.prediction_provider_unavailable_reason
+        if (
+            self.config.prediction_provider != "deterministic_baseline"
+            and provider is None
+            and reason is None
+        ):
+            reason = "probability_provider_not_configured"
+        if provider is not None and not qualified:
+            reason = provider.fallback_reason or "model_artifact_not_qualified"
+        if self.config.prediction_provider == "deterministic_baseline":
+            reason = None
+        return {
+            "requested": self.config.prediction_provider,
+            "active_when_applicable": (
+                self.config.prediction_provider
+                if qualified or self.config.prediction_provider == "deterministic_baseline"
+                else "deterministic_baseline"
+            ),
+            "qualified": qualified,
+            "fallback_active": (
+                self.config.prediction_provider != "deterministic_baseline"
+                and not qualified
+            ),
+            "fallback_reason": reason,
+            "artifact": (
+                dict(provider.artifact_metadata) if provider is not None else None
+            ),
         }
 
     def process_completed_bars(
@@ -199,6 +249,12 @@ class TDXPredictionEngineV1:
         return bars[-1] if bars else None
 
     def _due_symbols(self, cutoff: datetime) -> tuple[str, ...]:
+        if self.config.prediction_start_timestamp is not None:
+            start = datetime.fromisoformat(self.config.prediction_start_timestamp)
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=cutoff.tzinfo)
+            if cutoff < start.astimezone(cutoff.tzinfo):
+                return ()
         due: list[str] = []
         for symbol in self.symbols:
             features = self._feature_bars(symbol, cutoff)
@@ -220,11 +276,84 @@ class TDXPredictionEngineV1:
             self.context.candidates.get(features.symbol),
             feature_bar.end,
         )
-        calibrated = normalize_intraday_score_v1(features, candidate=candidate)
-        entry_probability = calibrated["entry_probability"]
-        continuation_probability = calibrated["continuation_probability"]
-        exit_probability = calibrated["exit_probability"]
-        expected_move = calibrated["expected_move"]
+        deterministic = normalize_intraday_score_v1(features, candidate=candidate)
+        deterministic_probabilities = {
+            str(horizon): round(float(deterministic["entry_probability"]), 8)
+            for horizon in (5, 15, 30)
+        }
+        requested_provider = self.config.prediction_provider
+        provider = self.probability_provider
+        active_provider = "deterministic_baseline"
+        provider_qualified = False
+        provider_fallback = requested_provider != "deterministic_baseline"
+        provider_fallback_reason = (
+            self.config.prediction_provider_unavailable_reason
+            if provider_fallback else None
+        )
+        if provider_fallback and provider is None and provider_fallback_reason is None:
+            provider_fallback_reason = "probability_provider_not_configured"
+        model_artifact_digest = None
+        provider_components: tuple[str, ...] = ()
+        provider_reasons: tuple[str, ...] = ()
+        calibration_label = CALIBRATION_LABEL
+        horizon_probabilities = dict(deterministic_probabilities)
+        if requested_provider != "deterministic_baseline" and provider is not None:
+            provider_qualified = bool(provider.qualified)
+            if not provider_qualified:
+                provider_fallback_reason = (
+                    provider.fallback_reason or "model_artifact_not_qualified"
+                )
+            else:
+                output = provider.predict(
+                    features,
+                    decision_timestamp=feature_bar.end.isoformat(),
+                )
+                if output is None:
+                    provider_fallback_reason = "qualified_model_not_applicable_at_timestamp"
+                else:
+                    required = {"5", "15", "30"}
+                    if required - set(output.horizon_probabilities):
+                        raise ValueError("trained provider omitted a required horizon probability")
+                    candidate_probabilities = {
+                        key: float(output.horizon_probabilities[key]) for key in required
+                    }
+                    if not all(
+                        math.isfinite(value) and 0.0 <= value <= 1.0
+                        for value in candidate_probabilities.values()
+                    ):
+                        raise ValueError("trained provider returned an invalid probability")
+                    horizon_probabilities = {
+                        key: round(value, 8)
+                        for key, value in candidate_probabilities.items()
+                    }
+                    active_provider = output.provider_id
+                    provider_fallback = False
+                    provider_fallback_reason = None
+                    model_artifact_digest = output.model_artifact_digest
+                    provider_components = output.source_components
+                    provider_reasons = output.reason_codes
+                    calibration_label = output.calibration_label
+        primary_probability = float(
+            horizon_probabilities[str(self.config.prediction_horizon_bars)]
+        )
+        if active_provider == "deterministic_baseline":
+            entry_probability = float(deterministic["entry_probability"])
+            continuation_probability = float(deterministic["continuation_probability"])
+            exit_probability = float(deterministic["exit_probability"])
+            expected_move = float(deterministic["expected_move"])
+            intraday_score = float(deterministic["intraday_score"])
+        else:
+            entry_probability = primary_probability
+            continuation_probability = float(horizon_probabilities["5"])
+            exit_probability = 1.0 - primary_probability
+            expected_move = _clip(
+                (2.0 * primary_probability - 1.0)
+                * max(float(features.atr_14_fraction_of_close), 0.0005)
+                * math.sqrt(float(self.config.prediction_horizon_bars)),
+                -0.10,
+                0.10,
+            )
+            intraday_score = primary_probability - 0.5
         volatility = max(features.atr_14_fraction_of_close, 0.0)
         width = _clip(max(0.003, volatility * 1.5), 0.003, 0.02)
         invalidation_fraction = _clip(max(0.01, volatility * 2.5), 0.01, 0.06)
@@ -251,7 +380,18 @@ class TDXPredictionEngineV1:
                 self._lifecycle_exit_count += 1
             else:
                 self._lifecycle_invalidation_count += 1
-        reasons = list(calibrated["reason_codes"])
+        reasons = (
+            list(deterministic["reason_codes"])
+            if active_provider == "deterministic_baseline"
+            else ["deterministic_baseline_computed_for_benchmark_only"]
+        )
+        reasons.extend(provider_reasons)
+        reasons.append(f"prediction_provider_requested:{requested_provider}")
+        reasons.append(f"prediction_provider_used:{active_provider}")
+        if provider_fallback:
+            reasons.append("trained_probability_provider_fallback")
+            if provider_fallback_reason:
+                reasons.append(f"provider_fallback_reason:{provider_fallback_reason}")
         reasons.append(transition.reason_code)
         if transition.lifecycle_id is not None:
             reasons.append(f"signal_lifecycle_id:{transition.lifecycle_id}")
@@ -265,10 +405,19 @@ class TDXPredictionEngineV1:
         components = [
             "quantpilot_core.tdx_prediction_integration.intraday_features.compute_intraday_features_v1",
             "quantpilot_core.real_data_provider.aggregate_intraday_bars",
-            CALIBRATION_LABEL,
+            (
+                CALIBRATION_LABEL
+                if active_provider == "deterministic_baseline"
+                else f"benchmark_only:{CALIBRATION_LABEL}"
+            ),
         ]
+        components.extend(provider_components)
         if candidate is not None:
-            reasons.append("daily_candidate_prior_present")
+            reasons.append(
+                "daily_candidate_prior_present"
+                if active_provider == "deterministic_baseline"
+                else "daily_candidate_context_present_not_trained_model_feature"
+            )
             reasons.append(
                 f"daily_candidate_decision_session:{candidate.decision_session}"
             )
@@ -314,8 +463,16 @@ class TDXPredictionEngineV1:
             evidence_refs=tuple(dict.fromkeys(evidence_refs)),
             context_data_asofs=tuple(dict.fromkeys(context_data_asofs)),
             source_components=tuple(dict.fromkeys(components)),
-            intraday_score=round(float(calibrated["intraday_score"]), 6),
-            calibration_label=CALIBRATION_LABEL,
+            intraday_score=round(intraday_score, 6),
+            calibration_label=calibration_label,
+            prediction_provider=active_provider,
+            prediction_provider_requested=requested_provider,
+            provider_qualified=provider_qualified,
+            provider_fallback=provider_fallback,
+            provider_fallback_reason=provider_fallback_reason,
+            horizon_probabilities=horizon_probabilities,
+            deterministic_baseline_probabilities=deterministic_probabilities,
+            model_artifact_digest=model_artifact_digest,
         )
 
     def _is_material(self, current: PredictionSignal) -> bool:

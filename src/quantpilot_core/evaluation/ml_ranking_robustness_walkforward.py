@@ -320,6 +320,97 @@ def apply_label_boundary_purge(
     return replace(dataset, rows=tuple(kept_rows), train_validation_test_split=split), audit
 
 
+def purge_forward_label_overlap_v1(
+    rows: Sequence[Mapping[str, Any]],
+    split: Mapping[str, Any],
+    *,
+    decision_field: str,
+    targets: Mapping[str, str],
+) -> tuple[tuple[Mapping[str, Any], ...], Mapping[str, Any]]:
+    """Purge rows whose explicit forward-label end crosses a time boundary.
+
+    ``apply_label_boundary_purge`` remains the daily trading-day adapter.  This
+    companion is the smallest generic extension needed by completed intraday
+    rows, where missing minutes and the lunch break make an explicit target-end
+    timestamp safer than converting minutes into a number of daily rows.
+    ``targets`` maps each label field to its corresponding label-end field.
+    """
+
+    if not targets:
+        raise ValueError("targets must not be empty")
+    removed = {"train": 0, "validation": 0, "test": 0}
+    kept: list[Mapping[str, Any]] = []
+    overlap_examples: list[Mapping[str, Any]] = []
+    for row in rows:
+        split_name = _explicit_row_split_name(row, split, decision_field)
+        if split_name is None:
+            kept.append(row)
+            continue
+        boundary = split.get(split_name, {}).get("end")
+        missing_test_target = False
+        crossing: tuple[str, str] | None = None
+        for label_field, end_field in targets.items():
+            label_end = row.get(end_field)
+            label = row.get(label_field)
+            if split_name == "test" and (label is None or label_end is None):
+                missing_test_target = True
+                break
+            if (
+                split_name in {"train", "validation"}
+                and label is not None
+                and label_end is not None
+                and boundary is not None
+                and str(label_end) > str(boundary)
+            ):
+                crossing = (label_field, str(label_end))
+                break
+        if missing_test_target:
+            removed["test"] += 1
+            continue
+        if crossing is not None:
+            removed[split_name] += 1
+            overlap_examples.append(
+                {
+                    "split": split_name,
+                    "decision_timestamp": str(row[decision_field]),
+                    "target_label": crossing[0],
+                    "label_end_timestamp": crossing[1],
+                    "boundary": str(boundary),
+                }
+            )
+            continue
+        kept.append(row)
+    remaining = tuple(kept)
+    violations = []
+    for row in remaining:
+        split_name = _explicit_row_split_name(row, split, decision_field)
+        if split_name not in {"train", "validation"}:
+            continue
+        boundary = split.get(split_name, {}).get("end")
+        for label_field, end_field in targets.items():
+            if (
+                row.get(label_field) is not None
+                and row.get(end_field) is not None
+                and boundary is not None
+                and str(row[end_field]) > str(boundary)
+            ):
+                violations.append(
+                    f"{split_name}:{row[decision_field]}:{label_field}"
+                )
+    audit = {
+        "method": "explicit_forward_label_end_boundary_purge_v1",
+        "decision_field": decision_field,
+        "targets": dict(targets),
+        "removed_train_rows": removed["train"],
+        "removed_validation_rows": removed["validation"],
+        "removed_test_rows": removed["test"],
+        "label_overlap_examples": tuple(overlap_examples[:10]),
+        "leakage_audit_passed": not violations,
+        "violations": tuple(violations),
+    }
+    return remaining, audit
+
+
 def _run_one_fold(
     *,
     fold_index: int,
@@ -1093,6 +1184,23 @@ def _row_split_name(row: Mapping[str, Any], split: Mapping[str, Any]) -> str | N
     for name in ("train", "validation", "test"):
         bounds = split.get(name, {})
         if bounds.get("start") is not None and bounds.get("end") is not None and str(bounds["start"]) <= date <= str(bounds["end"]):
+            return name
+    return None
+
+
+def _explicit_row_split_name(
+    row: Mapping[str, Any],
+    split: Mapping[str, Any],
+    decision_field: str,
+) -> str | None:
+    decision = str(row[decision_field])
+    for name in ("train", "validation", "test"):
+        bounds = split.get(name, {})
+        if (
+            bounds.get("start") is not None
+            and bounds.get("end") is not None
+            and str(bounds["start"]) <= decision <= str(bounds["end"])
+        ):
             return name
     return None
 

@@ -122,7 +122,10 @@ def intraday_feature_semantics() -> Mapping[str, str]:
         "vwap": "current Shanghai session cumulative amount divided by cumulative volume",
         "relative_volume": "latest primary-bar volume divided by up to 20 prior primary bars",
         "multi_timeframe": "two-bar momentum over completed 15-minute and 30-minute bars",
-        "training": "deterministic fixed baseline; no fitted or calibrated model",
+        "training": (
+            "model-agnostic causal feature adapter; deterministic_baseline fits no "
+            "parameters and v4_walk_forward fits only declared chronological folds"
+        ),
     }
 
 

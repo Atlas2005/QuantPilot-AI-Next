@@ -51,6 +51,7 @@ class LiveShadowPredictionSink(Level1MarketDataSink):
     def report(self) -> dict[str, Any]:
         return {
             "prediction_engine": "tdx_prediction_engine_v1",
+            "prediction_provider": dict(self.engine.prediction_provider_status),
             "prediction_count": len(self.engine.all_predictions),
             "material_signal_count": len(self.engine.material_signals),
             "lifecycle_counts": dict(self.engine.lifecycle_counts),

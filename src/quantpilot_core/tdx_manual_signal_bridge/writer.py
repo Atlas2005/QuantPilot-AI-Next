@@ -204,7 +204,23 @@ def _prediction_record(signal: Mapping[str, Any]) -> Mapping[str, Any]:
         ):
             raise ValueError(f"prediction {field_name} must be a sequence")
         sequences[field_name] = list(values)
-    return {
+    record = {
         key: (sequences[key] if key in sequence_fields else signal[key])
         for key in TDX_PREDICTION_SIGNAL_CSV_HEADER
     }
+    # JSON keeps provider provenance and honest per-horizon probabilities.
+    # The established CSV/TQ transport remains column-compatible.
+    for key in (
+        "prediction_provider",
+        "prediction_provider_requested",
+        "provider_qualified",
+        "provider_fallback",
+        "provider_fallback_reason",
+        "horizon_probabilities",
+        "deterministic_baseline_probabilities",
+        "model_artifact_digest",
+        "calibration_label",
+    ):
+        if key in signal:
+            record[key] = signal[key]
+    return record
