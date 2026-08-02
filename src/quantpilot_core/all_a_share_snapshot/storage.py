@@ -1,6 +1,11 @@
 """Deterministic Parquet partitions and manifest integrity primitives."""
 from __future__ import annotations
-import hashlib, importlib, json, os
+
+import errno
+import hashlib
+import importlib
+import json
+import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from quantpilot_core.all_a_share_snapshot.parquet_runtime import require_pyarrow
@@ -44,12 +49,72 @@ def table_for(dataset: str, rows: Sequence[Mapping[str, Any]]) -> Any:
             item[name]=value
         normalized.append(item)
     return pa.Table.from_pylist(normalized, schema=schema)
+
+
+def temporary_path(path: Path) -> Path:
+    """Return the private path used while atomically replacing ``path``."""
+    return path.with_name("." + path.name + ".tmp")
+
+
+def discard_temporary(path: Path) -> None:
+    """Remove only an incomplete temporary sibling, never the canonical file."""
+    temporary_path(path).unlink(missing_ok=True)
+
+
+def _sync_file(path: Path) -> None:
+    """Flush a completed file through a descriptor owned by this context.
+
+    Windows' CRT can reject ``fsync``/``_commit`` for a read-only descriptor.
+    Reopening the path read/write avoids sharing PyArrow's already-closed file
+    handle and keeps ``fileno`` and ``fsync`` inside the owning context.
+    """
+    with path.open("rb+") as handle:
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _sync_directory(path: Path) -> None:
+    """Best-effort directory sync on platforms that expose directory fds."""
+    if os.name == "nt" or not hasattr(os, "O_DIRECTORY"):
+        return
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        try:
+            os.fsync(descriptor)
+        except OSError as exc:
+            unsupported = {errno.EBADF, errno.EINVAL, errno.EPERM}
+            for name in ("ENOTSUP", "EOPNOTSUPP"):
+                value = getattr(errno, name, None)
+                if value is not None:
+                    unsupported.add(value)
+            if exc.errno not in unsupported:
+                raise
+    finally:
+        os.close(descriptor)
+
+
 def atomic_write(dataset: str, path: Path, rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
-    runtime=require_pyarrow().module; pq=importlib.import_module("pyarrow" + ".parquet")
-    path.parent.mkdir(parents=True, exist_ok=True); table=table_for(dataset, rows); tmp=path.with_name("."+path.name+".tmp")
-    pq.write_table(table, tmp, compression="zstd")
-    with tmp.open("rb") as fh: os.fsync(fh.fileno())
-    os.replace(tmp,path)
+    pq = importlib.import_module("pyarrow" + ".parquet")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    table = table_for(dataset, rows)
+    tmp = temporary_path(path)
+    discard_temporary(path)
+    try:
+        # Give PyArrow a path so it owns and closes its own file handle before
+        # this process opens a separate descriptor for durable finalization.
+        pq.write_table(table, tmp, compression="zstd")
+        _sync_file(tmp)
+        # Every temporary-file handle is closed before Windows sees replace.
+        os.replace(tmp, path)
+        _sync_directory(path.parent)
+    except BaseException:
+        # Preserve any completed canonical partition.  Only the private sibling
+        # from this failed attempt is eligible for cleanup.
+        try:
+            discard_temporary(path)
+        except OSError:
+            pass
+        raise
     return {"path":str(path),"row_count":table.num_rows,"sha256":file_hash(path),"schema_fingerprint":schema_fingerprint(table.schema)}
 def read_table(path: Path) -> Any:
     # ParquetDataset infers Hive columns from the parent trade_date= directory,

@@ -16,8 +16,8 @@ from quantpilot_core.all_a_share_snapshot.contracts import (
 )
 from quantpilot_core.all_a_share_snapshot.pit import listed_universe
 from quantpilot_core.all_a_share_snapshot.storage import (
-    FORMAT_VERSION, SCHEMA_VERSION, atomic_json, atomic_write, digest, file_hash,
-    read_table, schema_fingerprint, table_for,
+    FORMAT_VERSION, SCHEMA_VERSION, atomic_json, atomic_write, digest,
+    discard_temporary, file_hash, read_table, schema_fingerprint, table_for,
 )
 
 NAMECHANGE_RESPONSE_CAP = 10_000
@@ -103,12 +103,16 @@ def _partition_valid(root: Path, entry: Mapping[str, Any], dataset: str, trade_d
 def _store(root: Path, manifest: dict[str, Any], dataset: str, rows: Sequence[Mapping[str, Any]],
            trade_date: str | None, old: Mapping[str, Any] | None = None,
            audit: Mapping[str, Any] | None = None, path: str | None = None) -> None:
+    relative_path = path or _path(dataset, trade_date)
+    target = _artifact_path(root, relative_path)
+    # A private temporary sibling is never a completed checkpoint.  Remove it
+    # even when the canonical manifest partition is valid and can be resumed.
+    discard_temporary(target)
     if old and _partition_valid(root, old, dataset, trade_date):
         manifest["partitions"].append(dict(old)); manifest["resume_count"] += 1; return
     issues = _row_issues(dataset, rows, trade_date)
     if issues: raise ValueError("; ".join(issues))
-    relative_path = path or _path(dataset, trade_date)
-    info = dict(atomic_write(dataset, _artifact_path(root, relative_path), rows)); info["path"] = relative_path
+    info = dict(atomic_write(dataset, target, rows)); info["path"] = relative_path
     if audit is not None: info["instrument_audit"] = dict(audit)
     info.update(dataset=dataset, trade_date=trade_date); manifest["partitions"].append(info)
 
@@ -199,10 +203,19 @@ def _failure(dataset: str, exc: Exception, *, trade_date: str | None = None,
     cause = exc.cause if isinstance(exc, ProviderCallError) else exc
     attempts = exc.attempts if isinstance(exc, ProviderCallError) else 1
     rate_limited = isinstance(exc, ProviderCallError) and exc.rate_limited
-    retryable = rate_limited or isinstance(cause, (ConnectionError, TimeoutError, OSError))
+    provider_transport = (isinstance(exc, ProviderCallError)
+                          and isinstance(cause, (ConnectionError, TimeoutError, OSError)))
+    if rate_limited:
+        category = "retryable_rate_limit"
+    elif provider_transport:
+        category = "retryable_transport"
+    elif isinstance(cause, OSError) and not isinstance(cause, PermissionError):
+        category = "local_filesystem"
+    else:
+        category = "deterministic_or_provider"
     item: dict[str, Any] = {"dataset": dataset, "trade_date": trade_date, "required": required,
                             "exception_type": type(cause).__name__,
-                            "exception_category": "retryable_rate_limit" if rate_limited else ("retryable_transport" if retryable else "deterministic_or_provider"),
+                            "exception_category": category,
                             "reason": _sanitize_reason(cause), "attempt_count": attempts,
                             "retry_exhausted": isinstance(exc, ProviderCallError), "timestamp": _now()}
     if shard_index is not None:

@@ -56,6 +56,40 @@ def test_digest_is_timestamp_independent_and_resume_skips_valid_partitions(tmp_p
     assert not [x for x in p2.calls if x[0] in {"daily","adj_factor"}]
     assert second["resume_count"] > 0
 
+
+def test_resume_removes_orphan_temp_without_refetching_completed_partition(tmp_path: Path):
+    from quantpilot_core.all_a_share_snapshot.storage import file_hash, temporary_path
+
+    first,_=build(tmp_path)
+    entry=next(item for item in first["partitions"] if item["dataset"] == "stock_basic")
+    canonical=tmp_path/entry["path"]; original_hash=file_hash(canonical)
+    orphan=temporary_path(canonical); orphan.write_bytes(b"incomplete retry output")
+
+    provider=FakeProvider(); resumed=build_snapshot(
+        SnapshotConfig(root=str(tmp_path),start_date="20231009",end_date="20231010",test_only=True),
+        provider,
+    )
+
+    assert not [call for call in provider.calls if call[0] == "stock_basic"]
+    assert resumed["resume_count"] > 0 and file_hash(canonical) == original_hash
+    assert not orphan.exists() and validate_snapshot(tmp_path).ok
+
+
+def test_incomplete_temp_is_not_a_checkpoint_and_is_safely_replaced(tmp_path: Path):
+    from quantpilot_core.all_a_share_snapshot.storage import read_table, temporary_path
+
+    canonical=tmp_path/"stock_basic"/"part-00000.parquet"
+    canonical.parent.mkdir(parents=True); orphan=temporary_path(canonical)
+    orphan.write_bytes(b"incomplete parquet")
+    provider=FakeProvider(); manifest=build_snapshot(
+        SnapshotConfig(root=str(tmp_path),start_date="20231009",end_date="20231010",test_only=True),
+        provider,
+    )
+
+    assert [call for call in provider.calls if call[0] == "stock_basic"]
+    assert manifest["status"] == "completed" and read_table(canonical).num_rows == 3
+    assert not orphan.exists() and validate_snapshot(tmp_path).ok
+
 def test_relative_partition_paths_are_portable_and_unsafe_paths_are_rejected(tmp_path: Path):
     source=tmp_path / "source"; manifest,_=build(source)
     assert all(not Path(entry["path"]).is_absolute() and ".." not in Path(entry["path"]).parts for entry in manifest["partitions"])
