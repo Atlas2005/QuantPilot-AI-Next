@@ -1,4 +1,4 @@
-"""Shared factor-backed prediction engine for replay and live shadow."""
+"""Shared intraday prediction engine for replay and live shadow."""
 
 from __future__ import annotations
 
@@ -8,17 +8,11 @@ from dataclasses import asdict, replace
 from datetime import datetime
 from typing import Any
 
-import pandas as pd
-
 from quantpilot_core.deepseek_multi_agent import (
     AgentFinding,
     AgentRiskFlag,
     AgentRole,
     validate_agent_finding,
-)
-from quantpilot_core.evaluation import (
-    FactorRankingBaselineConfig,
-    run_factor_ranking_baseline_v1,
 )
 from quantpilot_core.real_data_provider import (
     NormalizedIntradayBar,
@@ -35,13 +29,17 @@ from quantpilot_core.tdx_prediction_integration.contracts import (
     PredictionState,
     TDX_PREDICTION_ENGINE_VERSION,
 )
+from quantpilot_core.tdx_prediction_integration.intraday_features import (
+    IntradayFeatureSnapshot,
+    compute_intraday_features_v1,
+)
 
 
-CALIBRATION_LABEL = "deterministic_untrained_factor_score_calibration_v1"
+CALIBRATION_LABEL = "deterministic_untrained_intraday_score_normalization_v1"
 
 
 class TDXPredictionEngineV1:
-    """Apply the existing factor baseline to completed higher-timeframe bars."""
+    """Apply fixed intraday features to completed higher-timeframe bars."""
 
     def __init__(
         self,
@@ -62,8 +60,8 @@ class TDXPredictionEngineV1:
         self.config = config or PredictionEngineConfig()
         if self.config.feature_interval_minutes not in {3, 5, 15, 30}:
             raise ValueError("feature_interval_minutes must be 3, 5, 15, or 30")
-        if self.config.min_feature_bars < 11:
-            raise ValueError("min_feature_bars must be at least 11")
+        if self.config.min_feature_bars < 15:
+            raise ValueError("min_feature_bars must be at least 15")
         if not 0 < self.config.material_probability_delta <= 1:
             raise ValueError("material_probability_delta must be in (0, 1]")
         if self.config.material_expected_move_delta <= 0:
@@ -119,13 +117,16 @@ class TDXPredictionEngineV1:
             due_symbols = self._due_symbols(cutoff)
             if not due_symbols:
                 continue
-            scores = self._factor_scores(cutoff)
             for symbol in due_symbols:
-                score = scores.get(symbol)
                 feature_bar = self._latest_complete_feature_bar(symbol, cutoff)
-                if score is None or feature_bar is None:
+                features = compute_intraday_features_v1(
+                    self._minute_bars[symbol],
+                    primary_interval_minutes=self.config.feature_interval_minutes,
+                    cutoff=cutoff,
+                )
+                if features is None or feature_bar is None:
                     continue
-                signal = self._prediction(score, feature_bar)
+                signal = self._prediction(features, feature_bar)
                 material = self._is_material(signal)
                 signal = replace(signal, material_change=material)
                 self._all_predictions.append(signal)
@@ -168,53 +169,22 @@ class TDXPredictionEngineV1:
             due.append(symbol)
         return tuple(due)
 
-    def _factor_scores(self, cutoff: datetime) -> Mapping[str, Any]:
-        rows: list[Mapping[str, Any]] = []
-        for symbol in self.symbols:
-            for bar in self._feature_bars(symbol, cutoff):
-                rows.append(
-                    {
-                        "date": bar.end.replace(tzinfo=None),
-                        "symbol": symbol,
-                        "open": bar.open,
-                        "high": bar.high,
-                        "low": bar.low,
-                        "close": bar.close,
-                        "volume": bar.volume,
-                        "amount": bar.amount,
-                    }
-                )
-        if not rows:
-            return {}
-        report = run_factor_ranking_baseline_v1(
-            pd.DataFrame(rows),
-            FactorRankingBaselineConfig(
-                ranking_mode=self.config.factor_ranking_mode,
-                target_symbol_count=len(self.symbols),
-                as_of_date=cutoff.replace(tzinfo=None).isoformat(),
-                min_liquidity_percentile=0.0,
-                artifact_path=None,
-                metadata={
-                    "provider": "tdx_level1_intraday_adapter",
-                    "run_context": "tdx_prediction_integration",
-                    "symbols_requested": self.symbols,
-                },
-            ),
-        )
-        return {score.symbol: score for score in report.factor_scores}
-
-    def _prediction(self, factor: Any, feature_bar: NormalizedIntradayBar) -> PredictionSignal:
+    def _prediction(
+        self,
+        features: IntradayFeatureSnapshot,
+        feature_bar: NormalizedIntradayBar,
+    ) -> PredictionSignal:
         candidate = _candidate_for_cutoff(
-            self.context.candidates.get(factor.symbol),
+            self.context.candidates.get(features.symbol),
             feature_bar.end,
         )
-        calibrated = calibrate_factor_score_v1(factor, candidate=candidate)
+        calibrated = normalize_intraday_score_v1(features, candidate=candidate)
         entry_probability = calibrated["entry_probability"]
         continuation_probability = calibrated["continuation_probability"]
         exit_probability = calibrated["exit_probability"]
         expected_move = calibrated["expected_move"]
-        volatility = max(float(factor.volatility_20d or 0.0), 0.0)
-        drawdown = float(factor.drawdown_20d or 0.0)
+        volatility = max(features.atr_14_fraction_of_close, 0.0)
+        drawdown = features.session_drawdown_from_high
         width = _clip(max(0.003, volatility * 1.5), 0.003, 0.02)
         invalidation_fraction = _clip(max(0.01, volatility * 2.5), 0.01, 0.06)
         target_fraction = _clip(max(0.015, abs(expected_move) * 1.75), 0.015, 0.10)
@@ -227,14 +197,14 @@ class TDXPredictionEngineV1:
         )
         reasons = list(calibrated["reason_codes"])
         reasons.append(
-            f"factor_windows_use_completed_{self.config.feature_interval_minutes}m_bars"
+            f"intraday_primary_interval:{self.config.feature_interval_minutes}m"
         )
         evidence_refs = [
-            f"tdx_factor_score:{factor.symbol}:{feature_bar.end.isoformat()}"
+            f"tdx_intraday_features:{features.symbol}:{feature_bar.end.isoformat()}"
         ]
         context_data_asofs: list[str] = []
         components = [
-            "quantpilot_core.evaluation.factor_ranking_baseline.run_factor_ranking_baseline_v1",
+            "quantpilot_core.tdx_prediction_integration.intraday_features.compute_intraday_features_v1",
             "quantpilot_core.real_data_provider.aggregate_intraday_bars",
             CALIBRATION_LABEL,
         ]
@@ -248,7 +218,7 @@ class TDXPredictionEngineV1:
             components.append(candidate.source)
         cached = _deepseek_for_symbol(
             self.context.deepseek_evidence,
-            factor.symbol,
+            features.symbol,
             cutoff=feature_bar.end,
         )
         if cached:
@@ -268,7 +238,7 @@ class TDXPredictionEngineV1:
             if any(item.risk_flag_count for item in cached):
                 reasons.append("cached_deepseek_risk_flags_present")
         return PredictionSignal(
-            symbol=factor.symbol,
+            symbol=features.symbol,
             decision_timestamp=feature_bar.end.isoformat(),
             data_cutoff_timestamp=feature_bar.end.isoformat(),
             state=state.value,
@@ -285,7 +255,7 @@ class TDXPredictionEngineV1:
             evidence_refs=tuple(dict.fromkeys(evidence_refs)),
             context_data_asofs=tuple(dict.fromkeys(context_data_asofs)),
             source_components=tuple(dict.fromkeys(components)),
-            factor_score=round(float(factor.composite_score), 6),
+            intraday_score=round(float(calibrated["intraday_score"]), 6),
             calibration_label=CALIBRATION_LABEL,
         )
 
@@ -305,47 +275,98 @@ class TDXPredictionEngineV1:
         )
 
 
-def calibrate_factor_score_v1(
-    factor: Any,
+def normalize_intraday_score_v1(
+    features: IntradayFeatureSnapshot,
     *,
     candidate: CandidateEvidence | None = None,
 ) -> Mapping[str, Any]:
-    """Bound factor outputs into probabilities without claiming trained calibration."""
+    """Bound explicitly intraday features without claiming trained calibration."""
 
-    momentum_20 = float(factor.momentum_20d or 0.0)
-    momentum_60 = float(factor.momentum_60d or 0.0)
-    volatility = max(float(factor.volatility_20d or 0.0), 0.0)
-    drawdown = min(float(factor.drawdown_20d or 0.0), 0.0)
-    composite = float(factor.composite_score)
+    momentum_fast = _clip(features.momentum_3_feature_bars, -0.06, 0.06)
+    momentum_slow = _clip(features.momentum_12_feature_bars, -0.12, 0.12)
+    trend = _clip(features.trend_sma_3_over_sma_12_return, -0.06, 0.06)
+    vwap_deviation = _clip(features.close_to_session_vwap_return, -0.08, 0.08)
+    momentum_15m = _clip(
+        float(features.momentum_2x15m_bars or 0.0),
+        -0.08,
+        0.08,
+    )
+    momentum_30m = _clip(
+        float(features.momentum_2x30m_bars or 0.0),
+        -0.12,
+        0.12,
+    )
+    relative_volume = _clip(
+        features.relative_volume_20_feature_bars - 1.0,
+        -1.0,
+        2.0,
+    )
+    volatility = max(features.atr_14_fraction_of_close, 0.0)
+    drawdown = min(features.session_drawdown_from_high, 0.0)
     daily_prior = 0.0
     if candidate is not None:
         daily_prior = 0.10 * (candidate.confidence - 0.5) + 0.08 * (
             candidate.factor_composite_score - 0.5
         )
     strength = (
-        1.15 * (composite - 0.5)
-        + 2.8 * momentum_20
-        + 1.2 * momentum_60
-        + (0.04 if factor.trend_filter else -0.04)
+        3.0 * momentum_fast
+        + 1.5 * momentum_slow
+        + 2.0 * trend
+        + 1.5 * vwap_deviation
+        + 1.0 * momentum_15m
+        + 0.75 * momentum_30m
+        + 0.02 * relative_volume * (1.0 if momentum_fast >= 0 else -1.0)
         + daily_prior
-        + 1.4 * drawdown
-        - min(0.15, volatility * 1.5)
+        + 1.2 * drawdown
+        - min(0.12, volatility * 0.75)
     )
-    expected_move = _clip(0.35 * momentum_20 + 0.15 * momentum_60 - 0.4 * volatility, -0.10, 0.10)
+    expected_move = _clip(
+        0.35 * momentum_fast
+        + 0.25 * momentum_slow
+        + 0.20 * trend
+        + 0.10 * momentum_15m
+        + 0.10 * momentum_30m
+        - 0.15 * volatility,
+        -0.10,
+        0.10,
+    )
     entry = _clip(0.5 + strength, 0.02, 0.98)
-    exit_probability = _clip(0.5 - strength - 0.8 * drawdown, 0.02, 0.98)
+    exit_probability = _clip(0.5 - strength - 1.5 * drawdown, 0.02, 0.98)
     continuation = _clip(
-        0.5 + 1.8 * momentum_20 + (0.06 if factor.trend_filter else -0.06) - volatility,
+        0.5
+        + 2.0 * momentum_fast
+        + 1.2 * trend
+        + 0.6 * momentum_15m
+        - volatility,
         0.02,
         0.98,
     )
     reasons = [
-        "factor_trend_positive" if factor.trend_filter else "factor_trend_nonpositive",
-        "factor_momentum_positive" if momentum_20 > 0 else "factor_momentum_nonpositive",
-        "factor_drawdown_guard" if drawdown <= -0.03 else "factor_drawdown_within_guard",
+        "intraday_trend_positive" if trend > 0 else "intraday_trend_nonpositive",
+        (
+            "intraday_momentum_positive"
+            if momentum_fast > 0
+            else "intraday_momentum_nonpositive"
+        ),
+        (
+            "price_above_session_vwap"
+            if vwap_deviation >= 0
+            else "price_below_session_vwap"
+        ),
+        (
+            "relative_volume_above_one"
+            if relative_volume > 0
+            else "relative_volume_at_or_below_one"
+        ),
+        (
+            "session_drawdown_guard"
+            if drawdown <= -0.05
+            else "session_drawdown_within_guard"
+        ),
         "probabilities_are_untrained_deterministic_normalization",
     ]
     return {
+        "intraday_score": _clip(0.5 + strength, 0.0, 1.0),
         "entry_probability": entry,
         "continuation_probability": continuation,
         "exit_probability": exit_probability,
@@ -518,7 +539,7 @@ def _clip(value: float, minimum: float, maximum: float) -> float:
 def engine_source_components() -> tuple[str, ...]:
     return (
         TDX_PREDICTION_ENGINE_VERSION,
-        "factor_ranking_baseline_v1",
+        "tdx_prediction_integration.compute_intraday_features_v1",
         "intraday_aggregation.aggregate_intraday_bars",
         "tdx_manual_signal_bridge.export_signals",
         "deepseek_multi_agent.AgentFinding_validation",

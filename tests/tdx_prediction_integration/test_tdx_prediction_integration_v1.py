@@ -13,6 +13,7 @@ import pytest
 from quantpilot_core.real_data_provider import (
     NormalizedIntradayBar,
     NormalizedLevel1Event,
+    normalize_tdx_historical_minute_bars,
 )
 from quantpilot_core.tdx_manual_signal_bridge import (
     TDX_PREDICTION_SIGNAL_CSV_HEADER,
@@ -26,9 +27,11 @@ from quantpilot_core.tdx_prediction_integration import (
     TDXPredictionEngineV1,
     cached_deepseek_evidence_from_payload,
     candidate_context_from_report,
+    compute_intraday_features_v1,
     prediction_signal_record,
     run_historical_replay,
 )
+from quantpilot_core.tdx_prediction_integration.replay import _no_lookahead_audit
 from scripts.publish_tdx_signals_tq_v1 import (
     PREDICTION_STATE_CODE,
     PREDICTION_TQ_COLUMN_SPEC,
@@ -82,7 +85,7 @@ def _engine(*, context: PredictionContext | None = None) -> TDXPredictionEngineV
         ("000001.SZ",),
         config=PredictionEngineConfig(
             feature_interval_minutes=5,
-            min_feature_bars=11,
+            min_feature_bars=15,
         ),
         context=context,
     )
@@ -135,17 +138,63 @@ def test_completed_higher_timeframes_only_and_probability_bounds() -> None:
     bars = _minute_bars(include_second_day=False)
     engine = _engine()
 
-    assert engine.process_completed_bars(bars[:54]) == ()
-    emitted = engine.process_completed_bars((bars[54],))
+    assert engine.process_completed_bars(bars[:74]) == ()
+    emitted = engine.process_completed_bars((bars[74],))
 
     assert emitted
     signal = emitted[0]
-    assert signal.decision_timestamp == bars[54].end.isoformat()
+    assert signal.decision_timestamp == bars[74].end.isoformat()
     assert signal.data_cutoff_timestamp == signal.decision_timestamp
     assert 0 <= signal.entry_probability <= 1
     assert 0 <= signal.continuation_probability <= 1
     assert 0 <= signal.exit_probability <= 1
     assert signal.calibration_label.startswith("deterministic_untrained")
+    assert "factor" not in signal.calibration_label
+
+
+def test_intraday_features_have_explicit_windows_and_units() -> None:
+    bars = _minute_bars(include_second_day=False)
+    features = compute_intraday_features_v1(
+        bars,
+        primary_interval_minutes=5,
+        cutoff=bars[89].end,
+    )
+
+    assert features is not None
+    assert features.primary_interval_minutes == 5
+    assert features.completed_primary_bar_count == 18
+    assert features.atr_14_feature_bars > 0
+    assert features.session_vwap > 0
+    assert features.relative_volume_20_feature_bars > 0
+    assert not any("20d" in name or "60d" in name for name in features.as_dict())
+    engine = _engine()
+    engine.process_completed_bars(bars)
+    assert engine.material_signals
+    assert all(
+        "factor_ranking_baseline" not in component
+        for signal in engine.material_signals
+        for component in signal.source_components
+    )
+
+
+def test_tdx_historical_timestamp_labels_bar_start() -> None:
+    timestamp = "20260803100100"
+    payload = {
+        "Open": {timestamp: "10.00"},
+        "High": {timestamp: "10.20"},
+        "Low": {timestamp: "9.90"},
+        "Close": {timestamp: "10.10"},
+        "Volume": {timestamp: "10"},
+        "Amount": {timestamp: "1.01"},
+    }
+
+    bar = normalize_tdx_historical_minute_bars(
+        payload,
+        requested_symbols=("000001.SZ",),
+    )[0]
+
+    assert bar.start.isoformat() == "2026-08-03T10:01:00+08:00"
+    assert bar.end.isoformat() == "2026-08-03T10:02:00+08:00"
 
 
 def test_future_bar_mutation_does_not_change_earlier_predictions() -> None:
@@ -185,7 +234,15 @@ def test_future_bar_mutation_does_not_change_earlier_predictions() -> None:
 
 def test_material_state_change_deduplication_is_idempotent() -> None:
     bars = _minute_bars(include_second_day=False)
-    engine = _engine()
+    engine = TDXPredictionEngineV1(
+        ("000001.SZ",),
+        config=PredictionEngineConfig(
+            feature_interval_minutes=5,
+            min_feature_bars=15,
+            material_probability_delta=0.9,
+            material_expected_move_delta=0.1,
+        ),
+    )
 
     first = engine.process_completed_bars(bars)
     second = engine.process_completed_bars(tuple(reversed(bars)))
@@ -282,7 +339,12 @@ def test_replay_separates_prediction_execution_profitability_and_t_plus_one() ->
     )
 
     report = result.report
-    assert report["prediction_evaluation"]["prediction_correctness_is_separate_from_execution"] is True
+    assert (
+        report["prediction_evaluation"][
+            "prediction_correctness_is_separate_from_execution"
+        ]
+        is True
+    )
     assert "trade_executability" in report
     assert "net_profitability" in report
     assert report["no_lookahead_audit"]["passed"] is True
@@ -291,22 +353,68 @@ def test_replay_separates_prediction_execution_profitability_and_t_plus_one() ->
     assert report["trade_executability"]["executable_signal_count"] >= 2
     assert report["net_profitability"]["transaction_cost_total"] > 0
     assert all(
-        datetime.fromisoformat(row["execution_timestamp"])
-        >= datetime.fromisoformat(row["prediction_decision_timestamp"])
+        row["execution_bar_index"] > row["decision_bar_index"]
+        and row["execution_delay_bars"] >= 1
         for row in result.execution_outcomes
     )
-    first_attempt_by_decision: dict[str, datetime] = {}
-    for row in result.execution_outcomes:
-        decision = str(row["prediction_decision_timestamp"])
-        executed = datetime.fromisoformat(str(row["execution_timestamp"]))
-        first_attempt_by_decision[decision] = min(
-            executed,
-            first_attempt_by_decision.get(decision, executed),
-        )
-    for decision_timestamp, first_attempt in first_attempt_by_decision.items():
-        decision = datetime.fromisoformat(decision_timestamp)
-        expected = next(bar.start for bar in bars if bar.start >= decision)
-        assert first_attempt == expected
+    one_bar_delay = next(
+        row for row in result.execution_outcomes if row["execution_delay_bars"] == 1
+    )
+    assert one_bar_delay["decision_bar_end"] == one_bar_delay["execution_bar_start"]
+    assert report["bar_timestamp_convention"].startswith(
+        "TDX timestamp is the one-minute bar start"
+    )
+
+    evaluation = report["prediction_evaluation"]
+    assert evaluation["model_brier_score"] is not None
+    assert evaluation["empirical_class_frequency_brier_score"] is not None
+    assert evaluation["constant_0_5_brier_score"] == pytest.approx(0.25)
+    assert "brier_skill_score_vs_empirical_frequency" in evaluation
+    assert evaluation["model_directional_hit_rate"] is not None
+    assert evaluation["naive_directional_hit_rate"] is not None
+    assert "simple_buy_and_hold_return" in report["net_profitability"]
+    assert "excess_net_return_versus_buy_and_hold" in report["net_profitability"]
+
+    assert report["signal_count_by_state"].keys() == {
+        "WATCH", "ENTRY", "HOLD", "WEAKENING", "EXIT", "INVALIDATED"
+    }
+    reconciliation = report["trade_executability"]["state_to_order_reconciliation"]
+    assert reconciliation["reconciled"] is True
+    assert reconciliation["attempted_order_count"] == len(result.execution_outcomes)
+    assert reconciliation["order_state_signal_count"] == (
+        reconciliation["entry_signal_count"]
+        + reconciliation["exit_signal_count"]
+        + reconciliation["invalidated_signal_count"]
+    )
+    for transition in reconciliation["transitions"]:
+        if (
+            transition["state"] in {"ENTRY", "EXIT"}
+            and not transition["attempted_order_count"]
+        ):
+            assert transition["no_attempt_reason"]
+
+
+def test_same_bar_index_execution_fails_no_lookahead_audit() -> None:
+    result = run_historical_replay(_minute_bars(), _engine())
+    outcome = dict(result.execution_outcomes[0])
+    outcome["execution_bar_index"] = outcome["decision_bar_index"]
+    outcome["execution_delay_bars"] = 0
+
+    audit = _no_lookahead_audit(result.all_predictions, (outcome,))
+
+    assert audit["passed"] is False
+    assert any(
+        "execution_not_after_decision_bar" in item
+        for item in audit["violations"]
+    )
+
+
+def test_invalidated_state_is_reachable() -> None:
+    engine = _engine()
+
+    engine.process_completed_bars(_minute_bars(include_second_day=False))
+
+    assert any(signal.state == "INVALIDATED" for signal in engine.all_predictions)
 
 
 def test_replay_is_deterministic() -> None:
@@ -363,6 +471,7 @@ def test_tdx_prediction_export_and_existing_tq_bridge_schema(tmp_path: Path) -> 
     assert csv_rows[0] == list(TDX_PREDICTION_SIGNAL_CSV_HEADER)
     assert len(tq_row) == 16
     assert tq_row[2] == round(record["entry_probability"] * 100)
+    assert tq_row[10] == record["intraday_score"]
     assert dry_run["column_spec"] == {
         column: name for column, name, _kind in PREDICTION_TQ_COLUMN_SPEC
     }

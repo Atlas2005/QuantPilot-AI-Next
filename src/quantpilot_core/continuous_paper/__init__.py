@@ -12,12 +12,18 @@ from .manifest_bridge import (
     normalize_production_input_payload,
 )
 from .service import ContinuousPaperCycle
-from .store import InMemoryReportingStore, PostgreSQLReportingStore, ReportingConflictError
+from .store import (
+    InMemoryReportingStore,
+    PostgreSQLReportingStore,
+    ReportingConflictError,
+    initialize_reporting_store,
+)
 
 __all__ = [
     "ActiveShadowConfig", "ActiveShadowRunner", "ContinuousPaperCycle",
     "ContinuousPaperCycleConfig", "ContinuousPaperCycleResult", "InMemoryReportingStore",
     "PostgreSQLReportingStore", "ReportingConflictError",
+    "initialize_reporting_store",
     "ReportingCycleBundle", "load_production_input_payload",
     "load_production_pipeline_config", "normalize_active_shadow_roles",
     "normalize_production_input_payload",

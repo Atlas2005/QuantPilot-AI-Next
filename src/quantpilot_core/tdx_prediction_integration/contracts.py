@@ -28,8 +28,7 @@ class PredictionEngineConfig:
     """Deterministic integration settings; no trained-accuracy claim is implied."""
 
     feature_interval_minutes: int = 5
-    factor_ranking_mode: str = "defensive_composite_v1"
-    min_feature_bars: int = 11
+    min_feature_bars: int = 15
     material_probability_delta: float = 0.05
     material_expected_move_delta: float = 0.005
 
@@ -83,7 +82,7 @@ class PredictionSignal:
     evidence_refs: tuple[str, ...]
     context_data_asofs: tuple[str, ...]
     source_components: tuple[str, ...]
-    factor_score: float
+    intraday_score: float
     calibration_label: str
     material_change: bool = True
     schema_version: str = TDX_PREDICTION_SCHEMA_VERSION

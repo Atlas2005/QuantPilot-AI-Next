@@ -48,7 +48,7 @@ QuantPilot 负责分析，通达信只负责显示和人工操作。
 | 8  | entry_zone_high                    | float | 入场区间上沿 |
 | 9  | invalidation_price                 | float | 失效价 |
 | 10 | first_target_price                 | float | 第一目标价 |
-| 11 | factor_score                       | float | 复用因子模块的综合分 |
+| 11 | intraday_score                     | float | 固定、未训练的盘中特征综合分 |
 | 12 | material_change                    | bool  | 相对上一条已发布记录是否发生实质变化 |
 | 13 | entry_signal                       | bool  | ENTRY 状态 |
 | 14 | hold_signal                        | bool  | HOLD 状态 |

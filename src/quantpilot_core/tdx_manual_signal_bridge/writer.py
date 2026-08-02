@@ -33,6 +33,7 @@ TDX_PREDICTION_SIGNAL_CSV_HEADER: tuple[str, ...] = (
     "evidence_refs",
     "context_data_asofs",
     "source_components",
+    "intraday_score",
     "material_change",
 )
 
@@ -183,6 +184,7 @@ def _format_prediction_csv(
                 "|".join(signal["evidence_refs"]),
                 "|".join(signal["context_data_asofs"]),
                 "|".join(signal["source_components"]),
+                signal["intraday_score"],
                 str(bool(signal["material_change"])).lower(),
             ]
         )

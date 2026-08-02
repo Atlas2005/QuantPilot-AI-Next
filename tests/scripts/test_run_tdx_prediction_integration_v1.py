@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -117,7 +120,11 @@ def test_live_shadow_cli_reuses_engine_and_never_requests_broker_calls(
 
     monkeypatch.setattr(runner, "TDXLevel1Provider", _Provider)
     monkeypatch.setattr(runner, "LiveLevel1Collector", Collector)
-    monkeypatch.setattr(runner, "_store", lambda _name: (Store(), "memory"))
+    monkeypatch.setattr(
+        runner,
+        "initialize_reporting_store",
+        lambda _name: (Store(), "memory"),
+    )
 
     result = runner.main(
         [
@@ -138,3 +145,32 @@ def test_live_shadow_cli_reuses_engine_and_never_requests_broker_calls(
     assert payload["broker_or_order_api_calls"] is False
     assert payload["deepseek_live_calls"] is False
     assert payload["prediction_engine"] == "tdx_prediction_engine_v1"
+
+
+def test_direct_cli_imports_with_only_src_on_pythonpath() -> None:
+    root = Path(__file__).resolve().parents[2]
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(root / "src")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(root / "scripts" / "run_tdx_prediction_integration_v1.py"),
+            "--help",
+        ],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "live-shadow" in result.stdout
+
+
+def test_prediction_cli_has_no_private_script_import() -> None:
+    source = Path(runner.__file__).read_text(encoding="utf-8")
+
+    assert "from scripts." not in source
+    assert "import scripts." not in source

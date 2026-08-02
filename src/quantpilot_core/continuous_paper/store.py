@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
@@ -29,6 +30,32 @@ class ReportingStore(Protocol):
     def persist_cycle(self, bundle: Any) -> None: ...
     def persist_market_data(self, events: Sequence[Any], bars: Sequence[Any]) -> None: ...
     def get_session(self, session_id: str) -> Mapping[str, Any] | None: ...
+
+
+def initialize_reporting_store(
+    provider: str,
+    *,
+    dsn: str | None = None,
+) -> tuple[ReportingStore, str]:
+    """Initialize the existing memory or PostgreSQL reporting store."""
+
+    if provider not in {"auto", "memory", "postgresql"}:
+        raise ValueError(f"unsupported reporting store provider: {provider}")
+    configured_dsn = dsn if dsn is not None else os.environ.get("QUANTPILOT_POSTGRES_DSN")
+    resolved = "postgresql" if provider == "auto" and configured_dsn else provider
+    if resolved == "auto":
+        resolved = "memory"
+    if resolved == "postgresql" and not configured_dsn:
+        raise RuntimeError(
+            "--store-provider postgresql requires QUANTPILOT_POSTGRES_DSN to be configured"
+        )
+    store: ReportingStore = (
+        PostgreSQLReportingStore(configured_dsn)
+        if resolved == "postgresql"
+        else InMemoryReportingStore()
+    )
+    store.initialize()
+    return store, resolved
 
 
 class InMemoryReportingStore:

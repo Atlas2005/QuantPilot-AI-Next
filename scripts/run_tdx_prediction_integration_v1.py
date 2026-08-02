@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from quantpilot_core.continuous_paper import initialize_reporting_store
 from quantpilot_core.daily_paper_loop.report import write_report_atomic
 from quantpilot_core.real_data_provider import LiveLevel1Collector, TDXLevel1Provider
 from quantpilot_core.tdx_manual_signal_bridge import write_prediction_signals_atomic
@@ -22,7 +23,6 @@ from quantpilot_core.tdx_prediction_integration import (
     prediction_signal_record,
     run_historical_replay,
 )
-from scripts.run_tdx_level1_adapter_v1 import _store
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -161,7 +161,7 @@ def _run_live_shadow(
     provider: TDXLevel1Provider,
     engine: TDXPredictionEngineV1,
 ) -> Mapping[str, Any]:
-    store, storage_backend = _store(args.store_provider)
+    store, storage_backend = initialize_reporting_store(args.store_provider)
     provider.initialize()
     try:
         history = provider.get_historical_intraday_bars(
