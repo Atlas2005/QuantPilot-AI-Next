@@ -34,6 +34,7 @@ continuous-paper = [
     "prefect>=3.1.16,<4",
 ]
 windows-runtime = [
+    "openai>=1,<2",
     "psycopg[binary]>=3.1,<4",
     "prefect>=3.1.16,<4",
     "pandas>=2,<3",

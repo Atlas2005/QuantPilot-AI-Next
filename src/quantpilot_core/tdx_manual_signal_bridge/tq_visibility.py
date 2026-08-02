@@ -240,6 +240,7 @@ class LiveTQVisibilityPublisher:
         try:
             overlay_result = publish_to_tq(
                 records,
+                api=self.api,
                 tdx_plugin_dir=self.tdx_plugin_dir,
                 dry_run=False,
                 manage_tq_lifecycle=False,

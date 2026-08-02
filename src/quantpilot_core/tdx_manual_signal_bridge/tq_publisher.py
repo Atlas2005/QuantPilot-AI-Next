@@ -273,6 +273,7 @@ def normalize_tq_response(raw: Any) -> dict[str, Any]:
 def publish_to_tq(
     signals: Sequence[Mapping[str, Any]],
     *,
+    api: Any | None = None,
     tdx_plugin_dir: str | None = None,
     dry_run: bool = False,
     manage_tq_lifecycle: bool = True,
@@ -320,13 +321,15 @@ def publish_to_tq(
             "count_semantics": "timestamp_record_count",
             "ordinary_chart_overlay_status": "not_exercised_dry_run",
         }
-    try:
-        from tqcenter import tq  # type: ignore[import-untyped]
-    except ImportError as exc:
-        raise RuntimeError(
-            "tqcenter (天勤) is not installed. "
-            "Install the TDX TQ plugin package before live publishing."
-        ) from exc
+    tq = api
+    if tq is None:
+        try:
+            from tqcenter import tq  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise RuntimeError(
+                "tqcenter (天勤) is not installed. "
+                "Install the TDX TQ plugin package before live publishing."
+            ) from exc
     symbol_count = 0
     row_count = 0
     responses: list[dict[str, Any]] = []

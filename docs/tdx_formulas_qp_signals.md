@@ -3,6 +3,11 @@
 本文档提供日频人工信号和盘中预测信号的通达信公式文本，供人工选股与持仓监控使用。
 QuantPilot 负责分析，通达信只负责显示和人工操作。
 
+日常使用统一入口和 PowerShell 短命令见
+[`quantpilot_manual_system_v1.md`](quantpilot_manual_system_v1.md)。该入口会在运行目录
+生成可直接粘贴安装的 `QP_MANUAL_MARKERS.formula.txt`，并让 Level1 与标记发布复用
+同一个已初始化的 TQ 会话。
+
 ## 前提
 
 - 必须已安装 TQCenter（天勤）插件，且通达信已经打开并登录。
