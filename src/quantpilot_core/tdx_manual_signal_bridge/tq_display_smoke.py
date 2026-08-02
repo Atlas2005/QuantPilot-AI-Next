@@ -12,13 +12,21 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from quantpilot_core.real_data_provider import canonicalize_tdx_level1_symbol
-from quantpilot_core.tdx_manual_signal_bridge.tq_publisher import normalize_tq_response
+from quantpilot_core.tdx_manual_signal_bridge.tq_publisher import (
+    normalize_tq_response,
+    validate_tq_send_payload,
+)
 
 
 MINIMAL_FORMULA = "T1:SIGNALS_TQ(1,0);\nT2:SIGNALS_TQ(2,0);"
-MINIMAL_VALUES: tuple[tuple[float, float], tuple[float, float]] = (
-    (111.11, 112.22),
-    (221.11, 222.22),
+MINIMAL_VALUES: tuple[tuple[str, str], ...] = (
+    ("11.51", "11.61"),
+    ("11.52", "11.62"),
+    ("11.53", "11.63"),
+)
+OFFICIAL_SHAPE_ROWS: tuple[tuple[str, ...], ...] = (
+    ("1", "143.41", "200", "0", "0", "0"),
+    ("0", "0", "0", "1", "143.48", "200"),
 )
 SMOKE_STATE_LABELS_ZH = ("买", "持", "弱", "卖", "失效")
 
@@ -39,49 +47,69 @@ def build_minimal_smoke_payload(
     symbol: str,
     timestamps: Sequence[str],
 ) -> dict[str, Any]:
-    """Build the official two-time/two-column minimum reproduction."""
+    """Build a non-square three-timestamp/two-column orientation probe."""
 
-    if len(timestamps) < 2:
-        raise ValueError("minimal TQ smoke requires two timestamps")
-    selected = [str(value) for value in timestamps[:2]]
+    if len(timestamps) < 3:
+        raise ValueError("minimal TQ smoke requires three timestamps")
+    selected = [str(value) for value in timestamps[:3]]
     _validate_timestamps(selected)
-    return {
+    payload = {
         "stock_code": canonicalize_tdx_level1_symbol(symbol),
         "time_list": selected,
-        "data_list": [list(column) for column in MINIMAL_VALUES],
+        "data_list": [list(row) for row in MINIMAL_VALUES],
+        "count": 3,
+    }
+    validate_tq_send_payload(payload, expected_column_count=2)
+    return payload
+
+
+def build_official_shape_smoke_payload(
+    symbol: str,
+    timestamps: Sequence[str],
+) -> dict[str, Any]:
+    """Build the exact official two-timestamp/six-column example shape."""
+
+    if len(timestamps) < 2:
+        raise ValueError("official-shape TQ smoke requires two timestamps")
+    selected = [str(value) for value in timestamps[:2]]
+    _validate_timestamps(selected)
+    payload = {
+        "stock_code": canonicalize_tdx_level1_symbol(symbol),
+        "time_list": selected,
+        "data_list": [list(row) for row in OFFICIAL_SHAPE_ROWS],
         "count": 2,
     }
+    validate_tq_send_payload(payload, expected_column_count=6)
+    return payload
 
 
 def build_quantpilot_smoke_payload(
     symbol: str,
     timestamps: Sequence[str],
 ) -> dict[str, Any]:
-    """Build a 16-column payload retaining the minimal values plus five states."""
+    """Build two neutral rows followed by five 16-column lifecycle states."""
 
     if len(timestamps) != 7:
         raise ValueError("QuantPilot TQ smoke requires exactly seven timestamps")
     selected = [str(value) for value in timestamps]
     _validate_timestamps(selected)
     rows = [
-        [111.11, 221.11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [112.22, 222.22, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [1, 1, 72, 61, 28, 35, 9.90, 10.10, 9.70, 10.60, 0.72, 1, 1, 0, 0, 0],
-        [1, 2, 68, 70, 24, 28, 9.90, 10.10, 9.70, 10.60, 0.68, 1, 0, 1, 0, 0],
-        [1, 3, 52, 48, 51, 5, 9.90, 10.10, 9.70, 10.60, 0.12, 1, 0, 0, 1, 0],
-        [1, 4, 30, 25, 75, -35, 9.90, 10.10, 9.70, 10.60, -0.55, 1, 0, 0, 0, 1],
-        [1, 5, 20, 15, 86, -60, 9.90, 10.10, 9.70, 10.60, -0.82, 1, 0, 0, 0, 1],
+        ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+        ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+        ["1", "1", "72", "61", "28", "35", "9.90", "10.10", "9.70", "10.60", "0.72", "1", "1", "0", "0", "0"],
+        ["1", "2", "68", "70", "24", "28", "9.90", "10.10", "9.70", "10.60", "0.68", "1", "0", "1", "0", "0"],
+        ["1", "3", "52", "48", "51", "5", "9.90", "10.10", "9.70", "10.60", "0.12", "1", "0", "0", "1", "0"],
+        ["1", "4", "30", "25", "75", "-35", "9.90", "10.10", "9.70", "10.60", "-0.55", "1", "0", "0", "0", "1"],
+        ["1", "5", "20", "15", "86", "-60", "9.90", "10.10", "9.70", "10.60", "-0.82", "1", "0", "0", "0", "1"],
     ]
-    data_list = [
-        [row[column] for row in rows]
-        for column in range(16)
-    ]
-    return {
+    payload = {
         "stock_code": canonicalize_tdx_level1_symbol(symbol),
         "time_list": selected,
-        "data_list": data_list,
-        "count": 16,
+        "data_list": rows,
+        "count": 7,
     }
+    validate_tq_send_payload(payload, expected_column_count=16)
+    return payload
 
 
 def inspect_tqcenter_api(api: Any, module_path: Path) -> dict[str, Any]:
@@ -94,6 +122,7 @@ def inspect_tqcenter_api(api: Any, module_path: Path) -> dict[str, Any]:
         "exec_to_tdx",
         "send_warn",
         "send_user_block",
+        "send_message",
         "close",
     )
     functions: dict[str, Any] = {}
@@ -110,26 +139,38 @@ def inspect_tqcenter_api(api: Any, module_path: Path) -> dict[str, Any]:
         docstring = inspect.getdoc(member)
         if docstring:
             details["docstring"] = docstring[:2_000]
+            details["docstring_length"] = len(docstring)
+            details["docstring_truncated"] = len(docstring) > 2_000
         try:
             source_lines, first_line = inspect.getsourcelines(member)
-        except (OSError, TypeError):
-            pass
+        except (OSError, TypeError) as exc:
+            details["source_available"] = False
+            details["source_unavailable_reason"] = type(exc).__name__
         else:
             source = "".join(source_lines)
             details.update(
                 {
+                    "source_available": True,
                     "source_first_line": first_line,
                     "source_last_line": first_line + len(source_lines) - 1,
                     "source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
                     "source_mentions_formula_set_data_info": "formula_set_data_info" in source,
                     "source_mentions_exec_to_tdx": "exec_to_tdx" in source,
                     "source_mentions_run_id": "run_id" in source,
+                    "source_excerpt": source[:8_000],
+                    "source_length": len(source),
+                    "source_excerpt_truncated": len(source) > 8_000,
                 }
             )
         functions[name] = details
+    module_source = module_path.read_text(encoding="utf-8", errors="replace")
     return {
         "module_path": str(module_path.resolve()),
         "module_sha256": hashlib.sha256(module_path.read_bytes()).hexdigest(),
+        "module_mentions_outside": "Outside" in module_source,
+        "module_mentions_signals_tq": "SIGNALS_TQ" in module_source,
+        "module_outside_occurrence_count": module_source.lower().count("outside"),
+        "module_signals_tq_occurrence_count": module_source.lower().count("signals_tq"),
         "functions": functions,
     }
 
@@ -175,10 +216,11 @@ def run_tq_display_smoke(
     timestamps: Sequence[str],
     initialize_path: str,
     hold_seconds: float = 0.0,
+    probe: str = "all",
     sleeper: Callable[[float], None] = time.sleep,
     ready_callback: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Send the minimum and 16-column payload while keeping one TQ session open."""
+    """Send selected official-shape probes while keeping one TQ session open."""
 
     send_bt_data = getattr(api, "send_bt_data", None)
     if not callable(send_bt_data):
@@ -188,37 +230,52 @@ def run_tq_display_smoke(
     if not callable(initialize) or not callable(close):
         raise RuntimeError("installed tqcenter.tq must expose initialize and close")
 
+    if probe not in {"all", "non-square", "official-shape", "quantpilot"}:
+        raise ValueError("unsupported TQ smoke probe")
     minimal_payload = build_minimal_smoke_payload(symbol, timestamps)
+    official_shape_payload = build_official_shape_smoke_payload(symbol, timestamps)
     quantpilot_payload = build_quantpilot_smoke_payload(symbol, timestamps)
+    probe_payloads = {
+        "non-square": minimal_payload,
+        "official-shape": official_shape_payload,
+        "quantpilot": quantpilot_payload,
+    }
+    selected_probes = tuple(probe_payloads) if probe == "all" else (probe,)
+    selected_payload = probe_payloads[selected_probes[-1]]
     audit = inspect_tqcenter_api(api, module_path)
     initialized = False
     minimal_response: dict[str, Any] = {}
     quantpilot_response: dict[str, Any] = {}
+    official_shape_response: dict[str, Any] = {}
+    probe_responses: dict[str, dict[str, Any]] = {}
     interrupted = False
     try:
         initialize(str(Path(initialize_path).resolve()))
         initialized = True
-        minimal_response = normalize_tq_response(send_bt_data(**minimal_payload))
-        if minimal_response.get("accepted") is False:
-            raise RuntimeError(
-                "minimal send_bt_data call failed: "
-                f"{minimal_response.get('sanitized_error', 'unknown TQ error')}"
-            )
-        quantpilot_response = normalize_tq_response(send_bt_data(**quantpilot_payload))
-        if quantpilot_response.get("accepted") is False:
-            raise RuntimeError(
-                "QuantPilot send_bt_data call failed: "
-                f"{quantpilot_response.get('sanitized_error', 'unknown TQ error')}"
-            )
+        for probe_name in selected_probes:
+            response = normalize_tq_response(send_bt_data(**probe_payloads[probe_name]))
+            probe_responses[probe_name] = response
+            if response.get("accepted") is False:
+                raise RuntimeError(
+                    f"{probe_name} send_bt_data call failed: "
+                    f"{response.get('sanitized_error', 'unknown TQ error')}"
+                )
+        minimal_response = probe_responses.get("non-square", {})
+        official_shape_response = probe_responses.get("official-shape", {})
+        quantpilot_response = probe_responses.get("quantpilot", {})
         ready_evidence = {
             "event": "tq_display_smoke_ready",
-            "symbol": quantpilot_payload["stock_code"],
-            "timestamps": quantpilot_payload["time_list"],
-            "minimal_values": [list(column) for column in MINIMAL_VALUES],
+            "symbol": selected_payload["stock_code"],
+            "timestamps": selected_payload["time_list"],
+            "selected_probes": list(selected_probes),
+            "minimal_values": [list(row) for row in MINIMAL_VALUES],
             "quantpilot_states_zh": list(SMOKE_STATE_LABELS_ZH),
             "minimal_transport_response": minimal_response,
             "quantpilot_transport_response": quantpilot_response,
+            "official_shape_transport_response": official_shape_response,
+            "probe_transport_responses": probe_responses,
             "minimal_payload": _payload_summary(minimal_payload),
+            "official_shape_payload": _payload_summary(official_shape_payload),
             "quantpilot_payload": _payload_summary(quantpilot_payload),
             "api_audit": audit,
             "hold_seconds": float(hold_seconds),
@@ -238,13 +295,17 @@ def run_tq_display_smoke(
     return {
         "schema_version": "tdx_tq_display_smoke_v1",
         "status": "transport_accepted_pending_visual_confirmation",
-        "symbol": quantpilot_payload["stock_code"],
-        "timestamps": quantpilot_payload["time_list"],
+        "symbol": selected_payload["stock_code"],
+        "timestamps": selected_payload["time_list"],
+        "selected_probes": list(selected_probes),
         "minimal_formula": MINIMAL_FORMULA,
         "minimal_payload": _payload_summary(minimal_payload),
+        "official_shape_payload": _payload_summary(official_shape_payload),
         "quantpilot_payload": _payload_summary(quantpilot_payload),
         "minimal_transport_response": minimal_response,
         "quantpilot_transport_response": quantpilot_response,
+        "official_shape_transport_response": official_shape_response,
+        "probe_transport_responses": probe_responses,
         "api_audit": audit,
         "formula_set_data_info_called": False,
         "exec_to_tdx_called": False,
@@ -253,9 +314,14 @@ def run_tq_display_smoke(
         "hold_interrupted": interrupted,
         "ordinary_chart_overlay_proven": False,
         "visual_confirmation_required": True,
+        "protocol_assertions": {
+            "data_orientation": "row_major_by_timestamp",
+            "count_equals_timestamp_count": True,
+            "all_transmitted_scalars_are_numeric_strings": True,
+        },
         "acceptance_note": (
-            "ErrorId=0 proves transport acceptance only. Confirm the two minimal "
-            "values and all five QuantPilot transitions on the ordinary one-minute chart."
+            "ErrorId=0 proves transport acceptance only. Confirm the non-square values "
+            "and QuantPilot transitions on the ordinary one-minute chart."
         ),
     }
 
@@ -266,9 +332,9 @@ def _payload_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
         "stock_code": payload["stock_code"],
         "time_list": list(payload["time_list"]),
         "count": payload["count"],
-        "data_orientation": "column_major_by_signal_id",
-        "column_count": len(data_list),
-        "values_per_column": [len(column) for column in data_list],
+        "data_orientation": "row_major_by_timestamp",
+        "row_count": len(data_list),
+        "columns_per_row": [len(row) for row in data_list],
         "data_list": data_list,
     }
 

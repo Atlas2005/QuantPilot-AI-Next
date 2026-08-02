@@ -9,38 +9,88 @@ QuantPilot 负责分析，通达信只负责显示和人工操作。
 - 外部 Python 脚本是支持的启动方式；脚本必须先调用 `tq.initialize(...)`，并在看图期间保持同一个连接存活。
 - 公式的已验证语法是 `SIGNALS_TQ(ID, TYPE)`。本桥使用 `TYPE=0`，例如
   `T1:SIGNALS_TQ(1,0);`。
-- `send_bt_data` 的 `data_list` 是按信号 ID 组织的列式矩阵：外层每一项对应
-  一个 `SIGNALS_TQ` ID，内层值与 `time_list` 一一对应；`count` 是信号列数，
-  不是时间点数。
+- `send_bt_data` 的 `data_list` 是按时间组织的行式矩阵：
+  `data_list[i]` 对应 `time_list[i]`，行内第 N 个数值字符串由
+  `SIGNALS_TQ(N,0)` 读取。`count` 必须等于时间记录数
+  `len(time_list)`，不是信号列数。
+- 发送前，每一个载荷标量都会被校验为有限的**数值字符串**；QuantPilot
+  正式载荷的每一行固定为 16 列。
 - `ErrorId=0` 只证明 TQ 接受了传输，不证明普通 K 线公式已经能够读到数据。
 
 ### Windows 普通 K 线资格烟雾测试
 
-在仓库根目录运行以下一条命令；把 `--start` 改为普通
-`000001.SZ` 一分钟图中连续存在的 7 根 K 线的第一根时间：
+先单独运行非方形的 3 时间点 × 2 信号列探针。把 `--start` 改为普通
+`000001.SZ` 一分钟图中连续存在的 3 根 K 线的第一根时间：
 
 ```powershell
-python scripts/smoke_tdx_tq_display_v1.py --tdx-user-dir "D:\tongdaxin\PYPlugins\user" --symbol 000001.SZ --start 20260731144000 --hold-seconds 300
+python scripts/smoke_tdx_tq_display_v1.py --tdx-user-dir "D:\tongdaxin\PYPlugins\user" --symbol 000001.SZ --start 20260731140000 --probe non-square --hold-seconds 300
 ```
 
-命令先发送官方最小的 2 时间点 × 2 数值列，再在同一连接中发送保留这两个
-测试值的 QuantPilot 16 列载荷。烟雾测试期间不要关闭 Python 窗口。在普通
-`000001.SZ` 一分钟图上先使用：
+烟雾测试期间不要关闭 Python 窗口。在普通 `000001.SZ` 一分钟图上使用：
 
 ```c
 T1:SIGNALS_TQ(1,0);
 T2:SIGNALS_TQ(2,0);
 ```
 
-应看到 `111.11/112.22` 和 `221.11/222.22`。随后加载本文的
-`QP_PREDICTION`，应看到“买 / 持 / 弱 / 卖 / 失效”以及入场、失效、目标价位。
+三个时间点应依次看到 `(11.51,11.61)`、`(11.52,11.62)`、
+`(11.53,11.63)`。旧的 2×2 探针是方阵，转置前后仍为 2×2，因此不能机械地
+证明行列方向；3×2 探针消除了这个歧义。
+
+精确复现官方 2 时间点 × 6 信号列形状时，单独运行：
+
+```powershell
+python scripts/smoke_tdx_tq_display_v1.py --tdx-user-dir "D:\tongdaxin\PYPlugins\user" --symbol 000001.SZ --start 20260731140000 --probe official-shape --hold-seconds 300
+```
+
+载荷两行严格为
+`["1","143.41","200","0","0","0"]` 和
+`["0","0","0","1","143.48","200"]`，`count=2`。
+
+最后单独发送 QuantPilot 7 时间点 × 16 列测试状态；`--start` 所在图表必须
+连续覆盖 7 根一分钟 K 线：
+
+```powershell
+python scripts/smoke_tdx_tq_display_v1.py --tdx-user-dir "D:\tongdaxin\PYPlugins\user" --symbol 000001.SZ --start 20260731140000 --probe quantpilot --hold-seconds 300
+```
+
+加载本文的 `QP_PREDICTION` 后，目标可见结果是“买 / 持 / 弱 / 卖 / 失效”
+以及入场、失效、目标价位。
 命令输出 JSON Lines，包含实际加载的 `tqcenter.py` 路径和 SHA-256、公开 API
-签名、精确载荷形状、TQ 返回值和 `run_id`。`formula_set_data_info`、
+签名、docstring、源码位置/摘要、精确载荷形状、TQ 返回值和 `run_id`。
+`formula_set_data_info`、
 `exec_to_tdx` 和返回的 `run_id` 都不会被当作本次发送的输入。
 
 当前支持状态：`send_bt_data` 传输已支持；普通 K 线叠加在这条 Windows
 烟雾测试产生可见结果前仍为 **pending / 未证明**。不要把 `ErrorId=0` 写成
 “叠加成功”。
+
+## 立即可用的 TQ 可见性回退
+
+普通 K 线叠加未证明不会阻塞体验流程。回退直接复用现有体验计划和生命周期：
+
+- 盘后把现有有序 top-N 候选写入 `QP体验` 自定义板块；不重新选股；
+- 在 ENTRY、WEAKENING、EXIT、INVALIDATED 状态切换时调用 `send_warn`；
+- 盘后在本机 API 支持时调用 `send_message`，内容包含候选排名和已缓存的
+  DeepSeek 立场；
+- 完整证据仍保留在现有 `latest_prediction.json` / `.csv`；不连接券商、不下单。
+
+盘后命令（将前三个输入路径替换成当日已有生产文件；不需要手工编辑 JSON）：
+
+```powershell
+python scripts/run_continuous_paper_cycle_v1.py --production-manifest "runtime\production_candidate_manifest_v1.json" --decision-session 2026-08-03 --state-path "runtime\continuous_paper_state.json" --report-path "runtime\continuous_paper_2026-08-03.json" --input-json "runtime\continuous_paper_input_2026-08-03.json" --experience-plan-path "runtime\tdx_experience_plan_2026-08-04.json" --experience-top-n 10 --publish-tq-visibility --tdx-user-dir "D:\tongdaxin\PYPlugins\user" --tq-block-name "QP体验"
+```
+
+盘中 live-shadow 命令（只监控体验计划内的标的，并同时启用 TQ warning 回退）：
+
+```powershell
+python scripts/run_tdx_prediction_integration_v1.py --mode live-shadow --experience-plan "runtime\tdx_experience_plan_2026-08-04.json" --tdx-user-dir "D:\tongdaxin\PYPlugins\user" --start-time 20260804093000 --end-time 20260804150000 --history-count 500 --duration 14400 --store-provider memory --report-path "runtime\tdx_live_shadow_2026-08-04.json" --tdx-output-dir "runtime\tdx_signals_2026-08-04" --publish-to-tq --tq-block-name "QP体验"
+```
+
+`send_user_block`、`send_warn`、`send_message` 会按实际安装的 `tqcenter.py`
+公开签名绑定参数；未知的必填参数不会被猜测。`send_message` 不可用时不会撤销
+已经成功写入的候选板块。普通 K 线状态始终保持
+`pending_windows_visual_confirmation`，直到图表上实际看到数值。
 
 ## TQ 列映射（16 列）
 

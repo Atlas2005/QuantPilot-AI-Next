@@ -25,6 +25,7 @@ from quantpilot_core.tdx_manual_signal_bridge.tq_publisher import (
     signal_timestamp,
     signal_to_tq_columns,
     signal_to_tq_row,
+    validate_tq_send_payload,
 )
 
 

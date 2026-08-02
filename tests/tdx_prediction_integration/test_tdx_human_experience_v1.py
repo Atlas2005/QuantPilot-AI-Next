@@ -272,6 +272,46 @@ def test_live_sink_publishes_transition_ledger_not_per_bar(tmp_path: Path) -> No
     assert sink.report()["visible_marker_policy"] == "lifecycle_state_transitions_only"
 
 
+def test_live_sink_marks_historical_prime_as_warning_baseline(tmp_path: Path) -> None:
+    plan = _plan(top_n=1)
+    engine = TDXPredictionEngineV1(
+        ("000002.SZ",),
+        config=PredictionEngineConfig(feature_interval_minutes=5, min_feature_bars=15),
+        context=prediction_context_from_experience_plan(plan),
+    )
+
+    class Store:
+        def persist_market_data(self, events, bars) -> None:
+            return None
+
+    class Publisher:
+        def __init__(self) -> None:
+            self.baselines = []
+            self.live = []
+
+        def publish_baseline(self, records):
+            self.baselines.append(tuple(records))
+            return {"historical_baseline": True}
+
+        def __call__(self, records):
+            self.live.append(tuple(records))
+            return {"historical_baseline": False}
+
+    publisher = Publisher()
+    sink = LiveShadowPredictionSink(
+        Store(),
+        engine,
+        output_dir=str(tmp_path),
+        publisher=publisher,
+    )
+
+    sink.prime(_bars(count=120))
+
+    assert publisher.baselines
+    assert publisher.live == []
+    assert sink.report()["tq_visibility_fallback"]["historical_baseline"] is True
+
+
 def test_outcomes_bind_prior_signal_use_strict_future_bars_and_existing_costs(tmp_path: Path) -> None:
     plan = _plan(top_n=1)
     bars = _bars(count=40)

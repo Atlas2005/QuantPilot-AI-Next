@@ -20,13 +20,18 @@ from quantpilot_core.tdx_manual_signal_bridge.tq_display_smoke import (
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Send the official 2-column TQ minimum followed by the QuantPilot "
-            "16-column chart smoke payload."
+            "Send the non-square 3x2 TQ probe, exact official 2x6 shape, "
+            "and/or QuantPilot 7x16 payload."
         ),
     )
     parser.add_argument("--tdx-user-dir", required=True)
     parser.add_argument("--symbol", default="000001.SZ")
     parser.add_argument("--start", required=True, help="First 1-minute bar as YYYYMMDDHHMMSS.")
+    parser.add_argument(
+        "--probe",
+        choices=("all", "non-square", "official-shape", "quantpilot"),
+        default="all",
+    )
     parser.add_argument(
         "--hold-seconds",
         type=float,
@@ -52,6 +57,7 @@ def main() -> int:
             timestamps=minute_timestamps(args.start),
             initialize_path=str(Path(__file__).resolve()),
             hold_seconds=args.hold_seconds,
+            probe=args.probe,
             ready_callback=_print_ready,
         )
     except Exception as exc:

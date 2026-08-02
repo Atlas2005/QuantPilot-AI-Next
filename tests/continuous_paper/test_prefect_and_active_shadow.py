@@ -249,6 +249,79 @@ def test_one_cycle_cli_forwards_normalized_allowed_roles_and_shared_payload(
     assert "status=completed" in capsys.readouterr().out
 
 
+def test_one_cycle_cli_publishes_existing_experience_plan_to_tq_block(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from scripts import run_continuous_paper_cycle_v1 as run_script
+
+    report_path = tmp_path / "production-report.json"
+    report_path.write_text("{}", encoding="utf-8")
+    plan_path = tmp_path / "experience-plan.json"
+    plan = {
+        "schema_version": "tdx_next_day_experience_plan_v1",
+        "candidate_count": 2,
+        "candidates": [
+            {"symbol": "000002.SZ"},
+            {"symbol": "000001.SZ"},
+        ],
+    }
+    captured = {}
+
+    class FakeCycle:
+        def __init__(self, _store):
+            pass
+
+        def run_once(self, config):
+            return types.SimpleNamespace(
+                session_id="session-1",
+                status="completed",
+                run_id=config.run_id,
+                shadow_report={"mode": "cached"},
+            )
+
+    monkeypatch.setattr(
+        run_script,
+        "load_production_pipeline_config",
+        lambda **_kwargs: RealCandidatePipelineConfig(decision_session="2026-08-03"),
+    )
+    monkeypatch.setattr(run_script, "ContinuousPaperCycle", FakeCycle)
+    monkeypatch.setattr(
+        run_script,
+        "build_next_day_experience_plan_v1",
+        lambda *_args, **_kwargs: plan,
+    )
+
+    def publish(value, **kwargs):
+        captured["plan"] = value
+        captured.update(kwargs)
+        return {"status": "candidate_block_published", "block_name": "QP体验"}
+
+    monkeypatch.setattr(run_script, "publish_plan_to_installed_tq", publish)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_continuous_paper_cycle_v1.py",
+            "--production-manifest", "manifest.json",
+            "--decision-session", "2026-08-03",
+            "--state-path", str(tmp_path / "state.json"),
+            "--report-path", str(report_path),
+            "--test-store",
+            "--experience-plan-path", str(plan_path),
+            "--publish-tq-visibility",
+            "--tdx-user-dir", r"D:\tongdaxin\PYPlugins\user",
+        ],
+    )
+
+    run_script.main()
+
+    assert captured["plan"] is plan
+    assert captured["block_name"] == "QP体验"
+    assert plan_path.exists()
+    output = capsys.readouterr().out
+    assert "tq_visibility_status=candidate_block_published" in output
+
+
 def test_flow_forwards_one_payload_and_serialized_options_to_shared_bridge(
     monkeypatch,
 ) -> None:

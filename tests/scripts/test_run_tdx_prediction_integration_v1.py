@@ -158,6 +158,95 @@ def test_live_shadow_cli_reuses_engine_and_never_requests_broker_calls(
     assert "lifecycle_counts" in payload
 
 
+def test_live_shadow_cli_uses_plan_for_candidate_block_and_warning_publisher(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    class Store:
+        def persist_market_data(self, _events, _bars):
+            return None
+
+    class Collector:
+        def __init__(self, _provider, symbols, **kwargs):
+            assert tuple(symbols) == ("000001.SZ",)
+            assert kwargs["sink"].publisher is warning_publisher
+
+        def run(self, _duration):
+            return SimpleNamespace(
+                as_dict=lambda: {
+                    "connection_status": "polling_fallback",
+                    "event_count": 0,
+                    "bar_count": 0,
+                }
+            )
+
+    plan = {
+        "schema_version": "tdx_next_day_experience_plan_v1",
+        "plan_id": "tdx-plan-test",
+        "generated_at": "2026-08-03T16:30:00+08:00",
+        "data_asof": "2026-08-03T15:00:00+08:00",
+        "decision_session": "2026-08-03",
+        "target_session": "2026-08-04",
+        "candidates": [
+            {
+                "symbol": "000001.SZ",
+                "candidate_rank": 1,
+                "candidate_confidence": 0.7,
+                "deepseek_stance": "bullish",
+                "timestamps": {"data_asof": "2026-08-03T15:00:00+08:00"},
+                "provenance": {"evidence_refs": ["candidate:test"]},
+            }
+        ],
+        "ai_analysis": {"roles": []},
+    }
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    block_calls = []
+    warning_publisher = lambda _records: {"warning_fallback_active": True}
+
+    monkeypatch.setattr(runner, "TDXLevel1Provider", _Provider)
+    monkeypatch.setattr(runner, "LiveLevel1Collector", Collector)
+    monkeypatch.setattr(
+        runner,
+        "initialize_reporting_store",
+        lambda _name: (Store(), "memory"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "publish_experience_plan_visibility",
+        lambda value, **kwargs: block_calls.append((value, kwargs))
+        or {"status": "candidate_block_published", "block_name": kwargs["block_name"]},
+    )
+    monkeypatch.setattr(
+        runner,
+        "LiveTQVisibilityPublisher",
+        lambda **_kwargs: warning_publisher,
+    )
+
+    result = runner.main(
+        [
+            "--mode", "live-shadow",
+            "--experience-plan", str(plan_path),
+            "--tdx-user-dir", r"D:\tongdaxin\PYPlugins\user",
+            "--duration", "0",
+            "--history-count", "60",
+            "--report-path", str(tmp_path / "live.json"),
+            "--tdx-output-dir", str(tmp_path / "tdx"),
+            "--store-provider", "memory",
+            "--publish-to-tq",
+            "--tq-block-name", "QP体验",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert block_calls[0][0] == plan
+    assert block_calls[0][1]["block_name"] == "QP体验"
+    assert payload["tq_plan_visibility"]["status"] == "candidate_block_published"
+    assert payload["tq_warning_fallback_active"] is True
+
+
 def test_direct_cli_imports_with_only_src_on_pythonpath() -> None:
     root = Path(__file__).resolve().parents[2]
     environment = dict(os.environ)

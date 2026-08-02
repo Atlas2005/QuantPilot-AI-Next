@@ -36,12 +36,13 @@ class LiveShadowPredictionSink(Level1MarketDataSink):
         self.publisher_call_count = 0
         self.publisher_error_type: str | None = None
         self.sanitized_publisher_error: str | None = None
+        self.last_publisher_result: Mapping[str, Any] | None = None
         self.last_json_path: str | None = None
         self.last_csv_path: str | None = None
 
     def prime(self, historical_bars: Sequence[NormalizedIntradayBar]) -> None:
         self.engine.process_completed_bars(historical_bars)
-        self._publish_if_available()
+        self._publish_if_available(historical_baseline=True)
 
     def persist_market_data(
         self,
@@ -67,13 +68,14 @@ class LiveShadowPredictionSink(Level1MarketDataSink):
             "tq_publisher_call_count": self.publisher_call_count,
             "tq_publisher_error_type": self.publisher_error_type,
             "sanitized_tq_publisher_error": self.sanitized_publisher_error,
+            "tq_visibility_fallback": self.last_publisher_result,
             "visible_marker_policy": "lifecycle_state_transitions_only",
             "timing_status": "EXPERIMENTAL SHADOW",
             "broker_or_order_api_calls": False,
             "deepseek_live_calls": False,
         }
 
-    def _publish_if_available(self) -> None:
+    def _publish_if_available(self, *, historical_baseline: bool = False) -> None:
         records = tuple(
             prediction_signal_record(signal)
             for signal in self.engine.visible_transition_signals
@@ -87,7 +89,14 @@ class LiveShadowPredictionSink(Level1MarketDataSink):
         self.publish_count += 1
         if self.publisher is not None:
             try:
-                self.publisher(records)
+                baseline_publisher = getattr(self.publisher, "publish_baseline", None)
+                result = (
+                    baseline_publisher(records)
+                    if historical_baseline and callable(baseline_publisher)
+                    else self.publisher(records)
+                )
+                if isinstance(result, Mapping):
+                    self.last_publisher_result = dict(result)
                 self.publisher_call_count += 1
             except Exception as exc:  # File output remains usable if TQ display fails.
                 self.publisher_error_type = type(exc).__name__

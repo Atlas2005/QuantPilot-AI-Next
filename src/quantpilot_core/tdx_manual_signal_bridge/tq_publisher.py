@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-import math
 import platform
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
@@ -151,24 +151,18 @@ def build_tq_time_list(signals: Sequence[Mapping[str, Any]]) -> list[str]:
     return [signal_timestamp(signal) for signal in signals]
 
 
-def build_tq_data_lists(signals: Sequence[Mapping[str, Any]]) -> list[list[Any]]:
-    """Build TQ's column-major data matrix.
+def build_tq_data_lists(signals: Sequence[Mapping[str, Any]]) -> list[list[str]]:
+    """Build official TQ row-major records, one string row per timestamp."""
 
-    ``send_bt_data`` addresses each outer list by ``SIGNALS_TQ(ID, TYPE)``.
-    Each inner list therefore contains one signal ID's values across every
-    timestamp.  ``count`` is the number of these signal columns, not the
-    number of timestamps.
-    """
-
-    rows = [signal_to_tq_row(signal) for signal in signals]
-    if not rows:
-        return []
-    width = len(rows[0])
-    if width > 16:
-        raise ValueError("TQ send_bt_data supports at most 16 signal columns")
-    if any(len(row) != width for row in rows):
-        raise ValueError("TQ rows must all have the same number of columns")
-    return [[_protocol_number(row[column]) for row in rows] for column in range(width)]
+    rows = [
+        [_protocol_numeric_string(value) for value in signal_to_tq_row(signal)]
+        for signal in signals
+    ]
+    if any(len(row) != len(TQ_COLUMN_SPEC) for row in rows):
+        raise ValueError(
+            f"every QuantPilot TQ row must contain exactly {len(TQ_COLUMN_SPEC)} columns"
+        )
+    return rows
 
 
 def build_tq_send_payload(
@@ -184,15 +178,44 @@ def build_tq_send_payload(
     time_list = build_tq_time_list(ordered)
     data_list = build_tq_data_lists(ordered)
     if not data_list:
-        raise ValueError("TQ payload must contain at least one data column")
-    if any(len(column) != len(time_list) for column in data_list):
-        raise ValueError("every TQ data column must align one-to-one with time_list")
-    return {
+        raise ValueError("TQ payload must contain at least one timestamp record")
+    payload = {
         "stock_code": canonical_symbol,
         "time_list": time_list,
         "data_list": data_list,
-        "count": len(data_list),
+        "count": len(time_list),
     }
+    validate_tq_send_payload(payload, expected_column_count=len(TQ_COLUMN_SPEC))
+    return payload
+
+
+def validate_tq_send_payload(
+    payload: Mapping[str, Any],
+    *,
+    expected_column_count: int,
+) -> None:
+    """Reject any non-official shape or non-string scalar before TQ is called."""
+
+    time_list = payload.get("time_list")
+    data_list = payload.get("data_list")
+    count = payload.get("count")
+    if not isinstance(time_list, list) or not all(
+        isinstance(value, str) for value in time_list
+    ):
+        raise ValueError("TQ time_list must be a list of timestamp strings")
+    if not isinstance(data_list, list) or len(data_list) != len(time_list):
+        raise ValueError("TQ data_list must contain exactly one row per timestamp")
+    if isinstance(count, bool) or not isinstance(count, int) or count != len(time_list):
+        raise ValueError("TQ count must equal the number of timestamp records")
+    for row in data_list:
+        if not isinstance(row, list) or len(row) != expected_column_count:
+            raise ValueError(
+                f"every TQ row must contain exactly {expected_column_count} signal columns"
+            )
+        for value in row:
+            if not isinstance(value, str):
+                raise TypeError("every TQ scalar must be a numeric string")
+            _validate_numeric_string(value)
 
 
 def normalize_tq_response(raw: Any) -> dict[str, Any]:
@@ -293,8 +316,8 @@ def publish_to_tq(
             "column_spec": {column: name for column, name, _ in column_spec},
             "prediction_state_labels_zh": dict(PREDICTION_STATE_LABEL_ZH),
             "visible_marker_policy": "lifecycle_state_transitions_only",
-            "data_orientation": "column_major_by_signal_id",
-            "count_semantics": "signal_column_count",
+            "data_orientation": "row_major_by_timestamp",
+            "count_semantics": "timestamp_record_count",
             "ordinary_chart_overlay_status": "not_exercised_dry_run",
         }
     try:
@@ -333,8 +356,8 @@ def publish_to_tq(
         "row_count": row_count,
         "manage_tq_lifecycle": manage_tq_lifecycle,
         "visible_marker_policy": "lifecycle_state_transitions_only",
-        "data_orientation": "column_major_by_signal_id",
-        "count_semantics": "signal_column_count",
+        "data_orientation": "row_major_by_timestamp",
+        "count_semantics": "timestamp_record_count",
         "transport_responses": responses,
         "transport_accepted": bool(responses) and all(
             response.get("accepted") is True for response in responses
@@ -343,18 +366,31 @@ def publish_to_tq(
     }
 
 
-def _protocol_number(value: Any) -> int | float:
+def _protocol_numeric_string(value: Any) -> str:
     if isinstance(value, bool):
-        return int(value)
+        return "1" if value else "0"
     if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        converted = Decimal(str(value))
+        if not converted.is_finite():
+            raise ValueError("TQ signal values must be finite")
+        return format(converted, "f")
+    if isinstance(value, str):
+        _validate_numeric_string(value)
         return value
+    raise TypeError("TQ signal values must be numeric strings or numeric primitives")
+
+
+def _validate_numeric_string(value: str) -> None:
+    if not value or value.strip() != value:
+        raise ValueError("TQ numeric strings must be non-empty and unpadded")
     try:
-        converted = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("TQ signal values must be numeric") from exc
-    if not math.isfinite(converted):
-        raise ValueError("TQ signal values must be finite")
-    return converted
+        converted = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError("TQ scalar is not a numeric string") from exc
+    if not converted.is_finite():
+        raise ValueError("TQ numeric strings must be finite")
 
 
 def _sanitize_text(value: Any) -> str:

@@ -15,7 +15,10 @@ from quantpilot_core.tdx_manual_signal_bridge import (
     write_prediction_outcomes_atomic,
     write_prediction_signals_atomic,
 )
-from quantpilot_core.tdx_manual_signal_bridge.tq_publisher import publish_to_tq
+from quantpilot_core.tdx_manual_signal_bridge.tq_visibility import (
+    LiveTQVisibilityPublisher,
+    publish_experience_plan_visibility,
+)
 from quantpilot_core.tdx_prediction_integration import (
     LiveShadowPredictionSink,
     PredictionContext,
@@ -117,6 +120,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--publish-to-tq", action="store_true")
     parser.add_argument("--tdx-plugin-dir", default=None)
+    parser.add_argument("--tq-block-name", default="QP体验")
     return parser
 
 
@@ -177,7 +181,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.mode == "replay":
             summary = _run_replay(args, provider, engine)
         else:
-            summary = _run_live_shadow(args, provider, engine)
+            summary = _run_live_shadow(args, provider, engine, plan=plan)
         print(json.dumps({"status": "ok", **summary}, sort_keys=True))
         return 0
     except Exception as exc:
@@ -322,6 +326,8 @@ def _run_live_shadow(
     args: argparse.Namespace,
     provider: TDXLevel1Provider,
     engine: TDXPredictionEngineV1,
+    *,
+    plan: Mapping[str, Any] | None,
 ) -> Mapping[str, Any]:
     store, storage_backend = initialize_reporting_store(args.store_provider)
     provider.initialize()
@@ -336,13 +342,14 @@ def _run_live_shadow(
             dividend_type="none",
             fill_data=False,
         )
-        tq_publisher = (
-            lambda records: publish_to_tq(
-                records,
-                tdx_plugin_dir=args.tdx_plugin_dir,
-                dry_run=False,
-                manage_tq_lifecycle=False,
+        plan_visibility = None
+        if args.publish_to_tq and plan is not None:
+            plan_visibility = publish_experience_plan_visibility(
+                plan,
+                block_name=args.tq_block_name,
             )
+        tq_publisher = (
+            LiveTQVisibilityPublisher(tdx_plugin_dir=args.tdx_plugin_dir)
             if args.publish_to_tq
             else None
         )
@@ -383,6 +390,9 @@ def _run_live_shadow(
         ),
         "timing_status": "EXPERIMENTAL SHADOW",
         "trained_model_role": "challenger_only_unless_prequalified",
+        "tq_plan_visibility": plan_visibility,
+        "ordinary_chart_overlay_status": "pending_windows_visual_confirmation",
+        "tq_warning_fallback_active": bool(args.publish_to_tq),
     }
     report_path = write_report_atomic(report, args.report_path)
     return {
@@ -391,6 +401,9 @@ def _run_live_shadow(
         "storage_backend": storage_backend,
         "report_path": report_path,
         "collector": collector_report.as_dict(),
+        "tq_plan_visibility": plan_visibility,
+        "ordinary_chart_overlay_status": "pending_windows_visual_confirmation",
+        "tq_warning_fallback_active": bool(args.publish_to_tq),
         **sink.report(),
     }
 

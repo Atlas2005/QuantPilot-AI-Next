@@ -19,6 +19,9 @@ from quantpilot_core.continuous_paper import (
     normalize_active_shadow_roles,
 )
 from quantpilot_core.daily_paper_loop.report import write_report_atomic
+from quantpilot_core.tdx_manual_signal_bridge.tq_visibility import (
+    publish_plan_to_installed_tq,
+)
 from quantpilot_core.tdx_prediction_integration import build_next_day_experience_plan_v1
 
 
@@ -46,7 +49,15 @@ def main() -> None:
         help="Optional compact next-day TDX experience plan output path.",
     )
     parser.add_argument("--experience-top-n", type=int, default=10)
+    parser.add_argument("--publish-tq-visibility", action="store_true")
+    parser.add_argument("--tdx-user-dir", default="")
+    parser.add_argument("--tq-block-name", default="QP体验")
     args = parser.parse_args()
+
+    if args.publish_tq_visibility and not args.experience_plan_path:
+        parser.error("--publish-tq-visibility requires --experience-plan-path")
+    if args.publish_tq_visibility and not str(args.tdx_user_dir).strip():
+        parser.error("--publish-tq-visibility requires --tdx-user-dir")
 
     try:
         shadow = ActiveShadowConfig(
@@ -89,6 +100,8 @@ def main() -> None:
     )
     experience_plan_path = None
     experience_candidate_count = 0
+    tq_visibility_status = "not_requested"
+    tq_block_name = None
     if args.experience_plan_path:
         production_report = json.loads(Path(args.report_path).read_text(encoding="utf-8"))
         plan = build_next_day_experience_plan_v1(
@@ -98,10 +111,21 @@ def main() -> None:
         )
         experience_plan_path = write_report_atomic(plan, args.experience_plan_path)
         experience_candidate_count = int(plan["candidate_count"])
+        if args.publish_tq_visibility:
+            visibility = publish_plan_to_installed_tq(
+                plan,
+                tdx_user_dir=args.tdx_user_dir,
+                initialize_path=__file__,
+                block_name=args.tq_block_name,
+            )
+            tq_visibility_status = str(visibility["status"])
+            tq_block_name = str(visibility["block_name"])
     print(
         f"session_id={result.session_id} status={result.status} run_id={result.run_id} "
         f"experience_candidate_count={experience_candidate_count} "
-        f"experience_plan_path={experience_plan_path}"
+        f"experience_plan_path={experience_plan_path} "
+        f"tq_visibility_status={tq_visibility_status} "
+        f"tq_block_name={tq_block_name}"
     )
 
 

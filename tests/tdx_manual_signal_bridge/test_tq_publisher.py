@@ -1,7 +1,7 @@
 """Tests for the publish_tdx_signals_tq_v1.py module.
 
 Covers:
-- Column-major data_list (each outer list = one SIGNALS_TQ ID)
+- Row-major data_list (one numeric-string row per timestamp)
 - Per-symbol send_bt_data
 - tqcenter mock (not fictional tq module)
 - buy_signal requires signal_valid + NOT signal_stale
@@ -32,6 +32,7 @@ from scripts.publish_tdx_signals_tq_v1 import (
     publish_to_tq,
     signal_to_tq_row,
     signal_to_tq_columns,
+    validate_tq_send_payload,
 )
 
 
@@ -138,20 +139,21 @@ class TestSignalToTQRow:
 
 
 # ---------------------------------------------------------------------------
-# Column-major protocol payload tests
+# Official row-major protocol payload tests
 # ---------------------------------------------------------------------------
 
 
 class TestTQDataLists:
-    def test_build_data_lists_column_major(self):
-        """Each outer list is one SIGNALS_TQ ID across all timestamps."""
+    def test_build_data_lists_row_major_numeric_strings(self):
         signals = [_signal(action="BUY"), _signal(action="SELL", symbol="000001.SZ")]
         data_list = build_tq_data_lists(signals)
-        assert len(data_list) == 16
-        assert {len(column) for column in data_list} == {2}
-        assert data_list[2] == [1, 3]  # action_code for BUY then SELL
+        assert len(data_list) == 2
+        assert {len(row) for row in data_list} == {16}
+        assert data_list[0][2] == "1"
+        assert data_list[1][2] == "3"
+        assert all(isinstance(value, str) for row in data_list for value in row)
 
-    def test_send_payload_count_is_signal_column_count(self):
+    def test_send_payload_count_is_timestamp_record_count(self):
         signals = [
             _signal(action="BUY", generated_at="2026-01-02T14:55:00+08:00"),
             _signal(action="HOLD", generated_at="2026-01-02T14:56:00+08:00"),
@@ -159,10 +161,20 @@ class TestTQDataLists:
         payload = build_tq_send_payload("SH600000", signals)
 
         assert payload["stock_code"] == "600000.SH"
-        assert payload["count"] == 16
+        assert payload["count"] == 2
         assert len(payload["time_list"]) == 2
-        assert len(payload["data_list"]) == 16
-        assert {len(column) for column in payload["data_list"]} == {2}
+        assert len(payload["data_list"]) == 2
+        assert {len(row) for row in payload["data_list"]} == {16}
+
+    def test_validator_rejects_float_scalars_before_tq_call(self):
+        payload = {
+            "stock_code": "000001.SZ",
+            "time_list": ["20260731140000"],
+            "data_list": [[1.0, "2"]],
+            "count": 1,
+        }
+        with pytest.raises(TypeError, match="numeric string"):
+            validate_tq_send_payload(payload, expected_column_count=2)
 
     def test_build_time_list(self):
         signals = [
@@ -225,7 +237,7 @@ class TestDryRun:
 
 class TestTQCenterMock:
     def test_per_symbol_send_bt_data(self):
-        """Each stock_code gets one column-major send_bt_data call."""
+        """Each stock_code gets one row-major string send_bt_data call."""
         mock_tqcenter = MagicMock()
         mock_tq = MagicMock()
         mock_tq.send_bt_data.return_value = (
@@ -266,13 +278,14 @@ class TestTQCenterMock:
 
         # 000001.SZ (sorted first)
         call_sz = calls_by_symbol["000001.SZ"]
-        assert call_sz["count"] == 16
-        assert call_sz["data_list"][2][0] == 3  # SELL action column
+        assert call_sz["count"] == 1
+        assert call_sz["data_list"][0][2] == "3"
+        assert all(isinstance(value, str) for value in call_sz["data_list"][0])
 
         # 600000.SH (sorted second)
         call_sh = calls_by_symbol["600000.SH"]
-        assert call_sh["count"] == 16
-        assert call_sh["data_list"][2][0] == 1  # BUY action column
+        assert call_sh["count"] == 1
+        assert call_sh["data_list"][0][2] == "1"
 
     def test_no_order_api_called(self):
         """Verify that order_stock, cancel_order are NEVER called."""
@@ -314,10 +327,10 @@ class TestTQCenterMock:
         assert result["row_count"] == 2
         mock_tq.send_bt_data.assert_called_once()
         call = mock_tq.send_bt_data.call_args.kwargs
-        assert call["count"] == 16
-        assert len(call["data_list"]) == 16
-        assert {len(column) for column in call["data_list"]} == {2}
-        assert call["data_list"][2] == [1, 2]
+        assert call["count"] == 2
+        assert len(call["data_list"]) == 2
+        assert {len(row) for row in call["data_list"]} == {16}
+        assert [row[2] for row in call["data_list"]] == ["1", "2"]
 
     def test_rejected_transport_is_not_reported_as_chart_success(self):
         mock_tqcenter = MagicMock()
