@@ -20,6 +20,7 @@ from quantpilot_core.tdx_manual_signal_bridge import (
     write_prediction_signals_atomic,
 )
 from quantpilot_core.tdx_prediction_integration import (
+    IntradayFeatureSnapshot,
     LiveShadowPredictionSink,
     PredictionContext,
     PredictionEngineConfig,
@@ -28,8 +29,13 @@ from quantpilot_core.tdx_prediction_integration import (
     cached_deepseek_evidence_from_payload,
     candidate_context_from_report,
     compute_intraday_features_v1,
+    normalize_intraday_score_v1,
     prediction_signal_record,
     run_historical_replay,
+)
+from quantpilot_core.tdx_prediction_integration.engine import (
+    _SignalLifecycle,
+    _advance_signal_lifecycle_v1,
 )
 from quantpilot_core.tdx_prediction_integration.replay import _no_lookahead_audit
 from scripts.publish_tdx_signals_tq_v1 import (
@@ -91,6 +97,56 @@ def _engine(*, context: PredictionContext | None = None) -> TDXPredictionEngineV
     )
 
 
+def _feature_snapshot(**overrides: Any) -> IntradayFeatureSnapshot:
+    values = {
+        "symbol": "000001.SZ",
+        "cutoff_timestamp": "2026-08-03T10:45:00+08:00",
+        "primary_interval_minutes": 5,
+        "completed_primary_bar_count": 15,
+        "close": 10.0,
+        "session_vwap": 10.0,
+        "close_to_session_vwap_return": 0.0,
+        "atr_14_feature_bars": 0.02,
+        "atr_14_fraction_of_close": 0.002,
+        "momentum_3_feature_bars": 0.0,
+        "momentum_12_feature_bars": 0.0,
+        "relative_volume_20_feature_bars": 1.0,
+        "trend_sma_3_over_sma_12_return": 0.0,
+        "session_drawdown_from_high": 0.0,
+        "momentum_2x15m_bars": 0.0,
+        "momentum_2x30m_bars": 0.0,
+    }
+    values.update(overrides)
+    return IntradayFeatureSnapshot(**values)
+
+
+def _rising_minute_bars(count: int = 100) -> tuple[NormalizedIntradayBar, ...]:
+    start = datetime(2026, 8, 3, 9, 30, tzinfo=SHANGHAI)
+    rows = []
+    price = 10.0
+    for minute in range(count):
+        opened = price
+        price *= 1.0015
+        closed = round(price, 6)
+        rows.append(
+            NormalizedIntradayBar(
+                symbol="000001.SZ",
+                start=start + timedelta(minutes=minute),
+                end=start + timedelta(minutes=minute + 1),
+                interval_minutes=1,
+                open=round(opened, 6),
+                high=round(closed * 1.0005, 6),
+                low=round(opened * 0.9995, 6),
+                close=closed,
+                volume=10_000.0,
+                amount=10_000.0 * closed,
+                average_price=closed,
+                event_count=1,
+            )
+        )
+    return tuple(rows)
+
+
 def test_engine_reuses_tdx_symbol_normalization() -> None:
     engine = TDXPredictionEngineV1(("000001", "SZ000001", "000001.SZ"))
 
@@ -150,6 +206,185 @@ def test_completed_higher_timeframes_only_and_probability_bounds() -> None:
     assert 0 <= signal.exit_probability <= 1
     assert signal.calibration_label.startswith("deterministic_untrained")
     assert "factor" not in signal.calibration_label
+
+
+def test_neutral_intraday_features_map_to_neutral_probabilities() -> None:
+    mapped = normalize_intraday_score_v1(_feature_snapshot())
+
+    assert mapped["entry_probability"] == pytest.approx(0.5)
+    assert mapped["continuation_probability"] == pytest.approx(0.5)
+    assert mapped["exit_probability"] == pytest.approx(0.5)
+    assert mapped["expected_move"] == pytest.approx(0.0)
+
+    volume_only = normalize_intraday_score_v1(
+        _feature_snapshot(relative_volume_20_feature_bars=3.0)
+    )
+    assert volume_only["entry_probability"] == pytest.approx(0.5)
+    assert volume_only["exit_probability"] == pytest.approx(0.5)
+
+
+def test_intraday_feature_signs_are_directionally_coherent() -> None:
+    positive = normalize_intraday_score_v1(
+        _feature_snapshot(
+            close_to_session_vwap_return=0.004,
+            momentum_3_feature_bars=0.004,
+            momentum_12_feature_bars=0.008,
+            trend_sma_3_over_sma_12_return=0.003,
+            momentum_2x15m_bars=0.006,
+            momentum_2x30m_bars=0.009,
+            relative_volume_20_feature_bars=1.5,
+        )
+    )
+    negative = normalize_intraday_score_v1(
+        _feature_snapshot(
+            close_to_session_vwap_return=-0.004,
+            momentum_3_feature_bars=-0.004,
+            momentum_12_feature_bars=-0.008,
+            trend_sma_3_over_sma_12_return=-0.003,
+            session_drawdown_from_high=-0.009,
+            momentum_2x15m_bars=-0.006,
+            momentum_2x30m_bars=-0.009,
+            relative_volume_20_feature_bars=1.5,
+        )
+    )
+
+    assert positive["entry_probability"] > 0.5
+    assert positive["continuation_probability"] > 0.5
+    assert positive["exit_probability"] < 0.5
+    assert positive["expected_move"] > 0
+    assert negative["entry_probability"] < 0.5
+    assert negative["continuation_probability"] < 0.5
+    assert negative["exit_probability"] > 0.5
+    assert negative["expected_move"] < 0
+
+
+def test_signal_lifecycle_entry_hold_weakening_exit_and_reentry() -> None:
+    lifecycle = _SignalLifecycle()
+    common = {
+        "lifecycle": lifecycle,
+        "symbol": "000001.SZ",
+        "completed_bar_low": 10.0,
+        "proposed_invalidation_price": 9.5,
+    }
+
+    entry = _advance_signal_lifecycle_v1(
+        **common,
+        decision_timestamp="2026-08-03T10:00:00+08:00",
+        entry_probability=0.70,
+        continuation_probability=0.65,
+        exit_probability=0.30,
+        expected_move=0.004,
+    )
+    hold = _advance_signal_lifecycle_v1(
+        **common,
+        decision_timestamp="2026-08-03T10:05:00+08:00",
+        entry_probability=0.72,
+        continuation_probability=0.68,
+        exit_probability=0.28,
+        expected_move=0.005,
+    )
+    weakening = _advance_signal_lifecycle_v1(
+        **common,
+        decision_timestamp="2026-08-03T10:10:00+08:00",
+        entry_probability=0.45,
+        continuation_probability=0.45,
+        exit_probability=0.55,
+        expected_move=-0.001,
+    )
+    exit_signal = _advance_signal_lifecycle_v1(
+        **common,
+        decision_timestamp="2026-08-03T10:15:00+08:00",
+        entry_probability=0.30,
+        continuation_probability=0.35,
+        exit_probability=0.70,
+        expected_move=-0.004,
+    )
+    later_entry = _advance_signal_lifecycle_v1(
+        **common,
+        decision_timestamp="2026-08-03T10:20:00+08:00",
+        entry_probability=0.70,
+        continuation_probability=0.65,
+        exit_probability=0.30,
+        expected_move=0.004,
+    )
+
+    assert [
+        entry.state.value,
+        hold.state.value,
+        weakening.state.value,
+        exit_signal.state.value,
+        later_entry.state.value,
+    ] == ["ENTRY", "HOLD", "WEAKENING", "EXIT", "ENTRY"]
+    assert entry.started is True
+    assert hold.lifecycle_id == entry.lifecycle_id
+    assert exit_signal.completed is True
+    assert later_entry.started is True
+    assert later_entry.lifecycle_id != entry.lifecycle_id
+
+
+def test_invalidation_resets_lifecycle_and_requires_a_new_setup_cross() -> None:
+    lifecycle = _SignalLifecycle()
+    entry = _advance_signal_lifecycle_v1(
+        lifecycle,
+        symbol="000001.SZ",
+        decision_timestamp="2026-08-03T10:00:00+08:00",
+        completed_bar_low=10.0,
+        entry_probability=0.70,
+        continuation_probability=0.65,
+        exit_probability=0.30,
+        expected_move=0.004,
+        proposed_invalidation_price=9.5,
+    )
+    invalidated = _advance_signal_lifecycle_v1(
+        lifecycle,
+        symbol="000001.SZ",
+        decision_timestamp="2026-08-03T10:05:00+08:00",
+        completed_bar_low=9.4,
+        entry_probability=0.70,
+        continuation_probability=0.65,
+        exit_probability=0.30,
+        expected_move=0.004,
+        proposed_invalidation_price=9.0,
+    )
+    no_immediate_reentry = _advance_signal_lifecycle_v1(
+        lifecycle,
+        symbol="000001.SZ",
+        decision_timestamp="2026-08-03T10:10:00+08:00",
+        completed_bar_low=9.8,
+        entry_probability=0.70,
+        continuation_probability=0.65,
+        exit_probability=0.30,
+        expected_move=0.004,
+        proposed_invalidation_price=9.2,
+    )
+    _advance_signal_lifecycle_v1(
+        lifecycle,
+        symbol="000001.SZ",
+        decision_timestamp="2026-08-03T10:15:00+08:00",
+        completed_bar_low=9.8,
+        entry_probability=0.50,
+        continuation_probability=0.50,
+        exit_probability=0.50,
+        expected_move=0.0,
+        proposed_invalidation_price=9.2,
+    )
+    new_entry = _advance_signal_lifecycle_v1(
+        lifecycle,
+        symbol="000001.SZ",
+        decision_timestamp="2026-08-03T10:20:00+08:00",
+        completed_bar_low=9.8,
+        entry_probability=0.70,
+        continuation_probability=0.65,
+        exit_probability=0.30,
+        expected_move=0.004,
+        proposed_invalidation_price=9.2,
+    )
+
+    assert entry.state.value == "ENTRY"
+    assert invalidated.state.value == "INVALIDATED"
+    assert invalidated.completed is True
+    assert no_immediate_reentry.state.value == "WATCH"
+    assert new_entry.state.value == "ENTRY"
 
 
 def test_intraday_features_have_explicit_windows_and_units() -> None:
@@ -372,12 +607,32 @@ def test_replay_separates_prediction_execution_profitability_and_t_plus_one() ->
     assert "brier_skill_score_vs_empirical_frequency" in evaluation
     assert evaluation["model_directional_hit_rate"] is not None
     assert evaluation["naive_directional_hit_rate"] is not None
+    diagnostics = evaluation["probability_distribution_diagnostics"]
+    assert diagnostics.keys() == {
+        "entry_upside_probability",
+        "continuation_probability",
+        "exit_downside_probability",
+    }
+    for summary in diagnostics.values():
+        assert summary.keys() == {
+            "minimum", "p05", "p25", "median", "p75", "p95", "maximum",
+            "mean", "standard_deviation", "predicted_positive_rate",
+            "count_below_0_5", "count_equal_to_0_5", "count_above_0_5", "count",
+        }
+        assert summary["count"] == len(result.all_predictions)
+        assert summary["count_below_0_5"] > 0
+        assert summary["count_above_0_5"] > 0
     assert "simple_buy_and_hold_return" in report["net_profitability"]
     assert "excess_net_return_versus_buy_and_hold" in report["net_profitability"]
 
     assert report["signal_count_by_state"].keys() == {
         "WATCH", "ENTRY", "HOLD", "WEAKENING", "EXIT", "INVALIDATED"
     }
+    assert report["lifecycle_started_count"] >= 1
+    assert report["lifecycle_completed_count"] == (
+        report["exit_count"] + report["invalidation_count"]
+    )
+    assert report["open_lifecycle_count"] in {0, 1}
     reconciliation = report["trade_executability"]["state_to_order_reconciliation"]
     assert reconciliation["reconciled"] is True
     assert reconciliation["attempted_order_count"] == len(result.execution_outcomes)
@@ -392,6 +647,57 @@ def test_replay_separates_prediction_execution_profitability_and_t_plus_one() ->
             and not transition["attempted_order_count"]
         ):
             assert transition["no_attempt_reason"]
+
+
+def test_signal_lifecycle_is_independent_of_account_holdings() -> None:
+    bars = _minute_bars()
+    funded = run_historical_replay(
+        bars,
+        _engine(),
+        config=ReplayConfig(initial_cash=100_000.0),
+    )
+    unfunded = run_historical_replay(
+        bars,
+        _engine(),
+        config=ReplayConfig(initial_cash=100.0),
+    )
+
+    assert [signal.as_dict() for signal in funded.all_predictions] == [
+        signal.as_dict() for signal in unfunded.all_predictions
+    ]
+    assert funded.report["lifecycle_counts"] == unfunded.report["lifecycle_counts"]
+    assert funded.execution_outcomes != unfunded.execution_outcomes
+
+
+def test_open_position_profit_is_not_reported_as_closed_trade_performance() -> None:
+    result = run_historical_replay(_rising_minute_bars(), _engine())
+    profitability = result.report["net_profitability"]
+
+    assert profitability["realized_profit"] == pytest.approx(0.0)
+    assert profitability["unrealized_profit"] != 0
+    assert profitability["closed_trade_count"] == 0
+    assert profitability["closed_trade_return"] is None
+    assert profitability["win_rate"] is None
+    assert profitability["average_trade_return"] is None
+    assert profitability["open_position_mark_to_market"]["position_count"] == 1
+    assert profitability["profit_attribution_reconciled"] is True
+
+
+def test_exposure_matched_benchmark_uses_strategy_peak_capital() -> None:
+    result = run_historical_replay(_rising_minute_bars(), _engine())
+    profitability = result.report["net_profitability"]
+    benchmark = profitability["exposure_matched_buy_and_hold"]
+
+    assert benchmark["matching_basis"] == "strategy_peak_invested_cost_basis"
+    assert benchmark["matched_capital"] == profitability["peak_invested_capital"]
+    assert 0 < benchmark["matched_capital"] < profitability["starting_equity"]
+    assert benchmark["account_level_return"] == pytest.approx(
+        benchmark["profit"] / profitability["starting_equity"],
+        abs=1e-8,
+    )
+    assert profitability["simple_buy_and_hold_label"] == (
+        "non_capital_matched_full_price_reference"
+    )
 
 
 def test_same_bar_index_execution_fails_no_lookahead_audit() -> None:

@@ -87,6 +87,16 @@ def test_replay_cli_uses_real_pr130_history_method_and_writes_artifacts(
     assert result == 0
     assert payload["status"] == "ok"
     assert payload["mode"] == "replay"
+    assert payload["signal_count_by_state"].keys() == {
+        "WATCH", "ENTRY", "HOLD", "WEAKENING", "EXIT", "INVALIDATED"
+    }
+    assert payload["lifecycle_counts"].keys() == {
+        "lifecycle_started_count",
+        "lifecycle_completed_count",
+        "open_lifecycle_count",
+        "exit_count",
+        "invalidation_count",
+    }
     assert providers[0].history_call["period"] == "1m"
     assert providers[0].history_call["fields"] == (
         "Open", "High", "Low", "Close", "Volume", "Amount"
@@ -145,6 +155,7 @@ def test_live_shadow_cli_reuses_engine_and_never_requests_broker_calls(
     assert payload["broker_or_order_api_calls"] is False
     assert payload["deepseek_live_calls"] is False
     assert payload["prediction_engine"] == "tdx_prediction_engine_v1"
+    assert "lifecycle_counts" in payload
 
 
 def test_direct_cli_imports_with_only_src_on_pythonpath() -> None:

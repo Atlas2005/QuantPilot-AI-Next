@@ -6,6 +6,8 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime
+from math import ceil, floor
+from statistics import fmean, pstdev
 from typing import Any
 
 from quantpilot_core.a_share_market_reality_execution import (
@@ -32,6 +34,7 @@ from quantpilot_core.tdx_prediction_integration.contracts import (
 from quantpilot_core.tdx_prediction_integration.engine import (
     TDXPredictionEngineV1,
     engine_source_components,
+    intraday_probability_mapping_semantics,
 )
 from quantpilot_core.tdx_prediction_integration.intraday_features import (
     intraday_feature_semantics,
@@ -344,11 +347,10 @@ def _replay_report(
     total_cost = sum(float(row.get("total_cost", 0.0)) for row in execution_outcomes)
     gross_return = (ending_equity + total_cost - config.initial_cash) / config.initial_cash
     net_return = (ending_equity - config.initial_cash) / config.initial_cash
-    sell_trades = tuple(trade for trade in state.account.trade_log if trade.side == "sell")
-    trade_returns = tuple(
-        trade.realized_pnl / trade.gross_notional
-        for trade in sell_trades
-        if trade.gross_notional > 0
+    profitability = _profitability_attribution(
+        state.account,
+        latest_prices,
+        initial_cash=float(config.initial_cash),
     )
     no_lookahead = _no_lookahead_audit(engine.all_predictions, execution_outcomes)
     state_counter = Counter(signal.state for signal in engine.material_signals)
@@ -362,6 +364,12 @@ def _replay_report(
         pending,
     )
     buy_and_hold = _simple_buy_and_hold_return(bars)
+    exposure_matched_buy_and_hold = _exposure_matched_buy_and_hold(
+        full_price_return=float(buy_and_hold["equal_weight_return"]),
+        matched_capital=float(profitability["peak_invested_capital"]),
+        initial_cash=float(config.initial_cash),
+    )
+    lifecycle_counts = dict(engine.lifecycle_counts)
     report: dict[str, Any] = {
         "schema_version": "tdx_prediction_replay_v1",
         "mode": "replay",
@@ -377,6 +385,8 @@ def _replay_report(
             "zero-based chronological completed one-minute bars per symbol"
         ),
         "signal_count_by_state": state_counts,
+        **lifecycle_counts,
+        "lifecycle_counts": lifecycle_counts,
         "material_signal_count": len(engine.material_signals),
         "prediction_evaluation": prediction_metrics,
         "trade_executability": {
@@ -408,22 +418,52 @@ def _replay_report(
             "ending_equity": round(ending_equity, 6),
             "gross_return": round(gross_return, 8),
             "net_return_after_existing_fees_and_slippage": round(net_return, 8),
+            "realized_profit": profitability["realized_profit"],
+            "unrealized_profit": profitability["unrealized_profit"],
+            "closed_trade_return": profitability["closed_trade_return"],
+            "closed_trade_count": profitability["closed_trade_count"],
+            "open_position_mark_to_market": profitability[
+                "open_position_mark_to_market"
+            ],
+            "account_level_return": profitability["account_level_return"],
+            "capital_deployed_total": profitability["capital_deployed_total"],
+            "peak_invested_capital": profitability["peak_invested_capital"],
+            "return_on_invested_capital": profitability[
+                "return_on_invested_capital"
+            ],
+            "return_on_invested_capital_basis": (
+                "account net profit divided by cumulative buy cost basis deployed"
+            ),
+            "closed_trade_return_basis": (
+                "realized profit divided by reconstructed sold cost basis"
+            ),
+            "profit_attribution_reconciled": profitability[
+                "profit_attribution_reconciled"
+            ],
             "simple_buy_and_hold_return": buy_and_hold["equal_weight_return"],
+            "simple_buy_and_hold_label": "non_capital_matched_full_price_reference",
             "excess_net_return_versus_buy_and_hold": round(
                 net_return - float(buy_and_hold["equal_weight_return"]),
                 8,
             ),
             "buy_and_hold_comparison": buy_and_hold,
+            "exposure_matched_buy_and_hold": exposure_matched_buy_and_hold,
+            "excess_account_return_versus_exposure_matched_buy_and_hold": round(
+                net_return
+                - float(exposure_matched_buy_and_hold["account_level_return"]),
+                8,
+            ),
+            "excess_profit_versus_exposure_matched_buy_and_hold": round(
+                float(profitability["account_net_profit"])
+                - float(exposure_matched_buy_and_hold["profit"]),
+                6,
+            ),
             "transaction_cost_total": round(total_cost, 6),
             "maximum_drawdown": _maximum_drawdown(equity_curve),
-            "win_rate": (
-                round(sum(value > 0 for value in trade_returns) / len(trade_returns), 6)
-                if trade_returns else None
-            ),
-            "average_trade_return": (
-                round(sum(trade_returns) / len(trade_returns), 8)
-                if trade_returns else None
-            ),
+            "win_rate": profitability["closed_trade_win_rate"],
+            "average_trade_return": profitability[
+                "average_closed_trade_return"
+            ],
             "turnover": round(
                 sum(float(row.get("gross_value", 0.0)) for row in filled)
                 / config.initial_cash,
@@ -436,9 +476,11 @@ def _replay_report(
             "paper_trading.PaperAccount",
         ],
         "probability_semantics": (
-            "deterministic bounded normalization of fixed intraday features; "
+            "deterministic neutral-centered ATR-scaled mapping of signed intraday "
+            "features; "
             "not a trained or validated probability model"
         ),
+        "probability_mapping": dict(intraday_probability_mapping_semantics()),
         "intraday_feature_semantics": dict(intraday_feature_semantics()),
         "threshold_selection": "fixed before replay; not optimized on this replay sample",
         "deepseek_live_calls": False,
@@ -515,6 +557,9 @@ def _prediction_metrics(
     selected = results.get(f"{brier_horizon}_completed_1m_bars", {})
     return {
         "directional_horizons": results,
+        "probability_distribution_diagnostics": (
+            _probability_distribution_diagnostics(predictions)
+        ),
         "brier_horizon": f"{brier_horizon}_completed_1m_bars",
         "model_brier_score": selected.get("model_brier_score"),
         "entry_probability_brier_score": selected.get("model_brier_score"),
@@ -537,6 +582,76 @@ def _prediction_metrics(
         ),
         "prediction_correctness_is_separate_from_execution": True,
     }
+
+
+def _probability_distribution_diagnostics(
+    predictions: Sequence[PredictionSignal],
+) -> Mapping[str, Mapping[str, Any]]:
+    return {
+        "entry_upside_probability": _distribution_summary(
+            [float(item.entry_probability) for item in predictions]
+        ),
+        "continuation_probability": _distribution_summary(
+            [float(item.continuation_probability) for item in predictions]
+        ),
+        "exit_downside_probability": _distribution_summary(
+            [float(item.exit_probability) for item in predictions]
+        ),
+    }
+
+
+def _distribution_summary(values: Sequence[float]) -> Mapping[str, Any]:
+    ordered = tuple(sorted(float(value) for value in values))
+    below = sum(value < 0.5 for value in ordered)
+    equal = sum(value == 0.5 for value in ordered)
+    above = sum(value > 0.5 for value in ordered)
+    if not ordered:
+        return {
+            "minimum": None,
+            "p05": None,
+            "p25": None,
+            "median": None,
+            "p75": None,
+            "p95": None,
+            "maximum": None,
+            "mean": None,
+            "standard_deviation": None,
+            "predicted_positive_rate": None,
+            "count_below_0_5": 0,
+            "count_equal_to_0_5": 0,
+            "count_above_0_5": 0,
+            "count": 0,
+        }
+    return {
+        "minimum": round(ordered[0], 8),
+        "p05": _quantile(ordered, 0.05),
+        "p25": _quantile(ordered, 0.25),
+        "median": _quantile(ordered, 0.50),
+        "p75": _quantile(ordered, 0.75),
+        "p95": _quantile(ordered, 0.95),
+        "maximum": round(ordered[-1], 8),
+        "mean": round(fmean(ordered), 8),
+        "standard_deviation": round(pstdev(ordered), 8),
+        "predicted_positive_rate": round(above / len(ordered), 8),
+        "count_below_0_5": below,
+        "count_equal_to_0_5": equal,
+        "count_above_0_5": above,
+        "count": len(ordered),
+    }
+
+
+def _quantile(ordered: Sequence[float], probability: float) -> float:
+    position = (len(ordered) - 1) * float(probability)
+    lower = floor(position)
+    upper = ceil(position)
+    if lower == upper:
+        return round(float(ordered[lower]), 8)
+    weight = position - lower
+    return round(
+        float(ordered[lower]) * (1.0 - weight)
+        + float(ordered[upper]) * weight,
+        8,
+    )
 
 
 def _brier_score(probabilities: Sequence[float], labels: Sequence[float]) -> float | None:
@@ -773,6 +888,150 @@ def _state_to_order_reconciliation(
     }
 
 
+def _profitability_attribution(
+    account: PaperAccount,
+    latest_prices: Mapping[str, float],
+    *,
+    initial_cash: float,
+) -> Mapping[str, Any]:
+    quantities: dict[str, int] = {}
+    cost_bases: dict[str, float] = {}
+    capital_deployed_total = 0.0
+    peak_invested_capital = 0.0
+    closed_trade_returns: list[float] = []
+    closed_cost_basis_total = 0.0
+    for trade in account.trade_log:
+        symbol = str(trade.symbol)
+        if trade.side == "buy":
+            added_basis = float(trade.gross_notional) + float(trade.fee)
+            quantities[symbol] = quantities.get(symbol, 0) + int(trade.quantity)
+            cost_bases[symbol] = cost_bases.get(symbol, 0.0) + added_basis
+            capital_deployed_total += added_basis
+        elif trade.side == "sell":
+            held_quantity = quantities.get(symbol, 0)
+            if held_quantity > 0:
+                sold_quantity = min(int(trade.quantity), held_quantity)
+                removed_basis = cost_bases.get(symbol, 0.0) * (
+                    sold_quantity / held_quantity
+                )
+                closed_cost_basis_total += removed_basis
+                if removed_basis > 0:
+                    closed_trade_returns.append(
+                        float(trade.realized_pnl) / removed_basis
+                    )
+                quantities[symbol] = held_quantity - sold_quantity
+                cost_bases[symbol] = max(
+                    0.0,
+                    cost_bases.get(symbol, 0.0) - removed_basis,
+                )
+                if quantities[symbol] <= 0:
+                    quantities.pop(symbol, None)
+                    cost_bases.pop(symbol, None)
+        peak_invested_capital = max(
+            peak_invested_capital,
+            sum(cost_bases.values()),
+        )
+
+    open_rows = {}
+    open_market_value = 0.0
+    open_cost_basis = 0.0
+    for symbol, quantity in sorted(account.positions.items()):
+        price = float(latest_prices.get(symbol, account.average_costs.get(symbol, 0.0)))
+        cost_basis = int(quantity) * float(account.average_costs.get(symbol, 0.0))
+        market_value = int(quantity) * price
+        unrealized = market_value - cost_basis
+        open_rows[symbol] = {
+            "quantity": int(quantity),
+            "latest_price": round(price, 6),
+            "cost_basis": round(cost_basis, 6),
+            "market_value": round(market_value, 6),
+            "unrealized_profit": round(unrealized, 6),
+            "return_on_open_capital": (
+                round(unrealized / cost_basis, 8) if cost_basis > 0 else None
+            ),
+        }
+        open_market_value += market_value
+        open_cost_basis += cost_basis
+    unrealized_profit = open_market_value - open_cost_basis
+    realized_profit = float(account.realized_pnl)
+    ending_equity = _equity(account, latest_prices)
+    account_net_profit = ending_equity - initial_cash
+    closed_trade_return = (
+        realized_profit / closed_cost_basis_total
+        if closed_cost_basis_total > 0
+        else None
+    )
+    return {
+        "realized_profit": round(realized_profit, 6),
+        "unrealized_profit": round(unrealized_profit, 6),
+        "account_net_profit": round(account_net_profit, 6),
+        "account_level_return": round(account_net_profit / initial_cash, 8),
+        "closed_trade_count": len(closed_trade_returns),
+        "closed_trade_return": (
+            round(closed_trade_return, 8)
+            if closed_trade_return is not None
+            else None
+        ),
+        "closed_trade_win_rate": (
+            round(
+                sum(value > 0 for value in closed_trade_returns)
+                / len(closed_trade_returns),
+                6,
+            )
+            if closed_trade_returns
+            else None
+        ),
+        "average_closed_trade_return": (
+            round(fmean(closed_trade_returns), 8)
+            if closed_trade_returns
+            else None
+        ),
+        "open_position_mark_to_market": {
+            "position_count": len(open_rows),
+            "cost_basis": round(open_cost_basis, 6),
+            "market_value": round(open_market_value, 6),
+            "unrealized_profit": round(unrealized_profit, 6),
+            "return_on_open_capital": (
+                round(unrealized_profit / open_cost_basis, 8)
+                if open_cost_basis > 0
+                else None
+            ),
+            "per_symbol": open_rows,
+        },
+        "capital_deployed_total": round(capital_deployed_total, 6),
+        "peak_invested_capital": round(peak_invested_capital, 6),
+        "return_on_invested_capital": (
+            round(account_net_profit / capital_deployed_total, 8)
+            if capital_deployed_total > 0
+            else None
+        ),
+        "profit_attribution_reconciled": (
+            abs(realized_profit + unrealized_profit - account_net_profit) <= 1e-4
+        ),
+    }
+
+
+def _exposure_matched_buy_and_hold(
+    *,
+    full_price_return: float,
+    matched_capital: float,
+    initial_cash: float,
+) -> Mapping[str, Any]:
+    profit = matched_capital * full_price_return
+    return {
+        "matched_capital": round(matched_capital, 6),
+        "matching_basis": "strategy_peak_invested_cost_basis",
+        "price_return": round(full_price_return, 8),
+        "profit": round(profit, 6),
+        "account_level_return": round(profit / initial_cash, 8),
+        "transaction_costs_included": False,
+        "semantics": (
+            "full-period equal-weight buy-and-hold price return applied only to "
+            "the strategy's peak invested capital; uninvested account cash is flat"
+        ),
+    }
+
+
 def _simple_buy_and_hold_return(
     bars: Sequence[NormalizedIntradayBar],
 ) -> Mapping[str, Any]:
@@ -792,9 +1051,11 @@ def _simple_buy_and_hold_return(
     return {
         "equal_weight_return": round(equal_weight_return, 8),
         "per_symbol_return": per_symbol,
+        "capital_matching": "none",
+        "label": "non_capital_matched_full_price_reference",
         "semantics": (
-            "equal-weight average of first one-minute open to last one-minute close; "
-            "price return without simulated fees"
+            "non-capital-matched equal-weight average of first one-minute open to "
+            "last one-minute close; full-price return without simulated fees"
         ),
     }
 

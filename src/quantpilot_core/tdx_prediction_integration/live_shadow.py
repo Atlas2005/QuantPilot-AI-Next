@@ -53,6 +53,7 @@ class LiveShadowPredictionSink(Level1MarketDataSink):
             "prediction_engine": "tdx_prediction_engine_v1",
             "prediction_count": len(self.engine.all_predictions),
             "material_signal_count": len(self.engine.material_signals),
+            "lifecycle_counts": dict(self.engine.lifecycle_counts),
             "tdx_publish_count": self.publish_count,
             "tdx_json_path": self.last_json_path,
             "tdx_csv_path": self.last_csv_path,

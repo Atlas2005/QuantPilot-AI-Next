@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -35,7 +35,30 @@ from quantpilot_core.tdx_prediction_integration.intraday_features import (
 )
 
 
-CALIBRATION_LABEL = "deterministic_untrained_intraday_score_normalization_v1"
+CALIBRATION_LABEL = "deterministic_untrained_atr_scaled_probability_mapping_v1"
+
+ENTRY_PROBABILITY_THRESHOLD = 0.62
+EXIT_PROBABILITY_THRESHOLD = 0.66
+INVALIDATION_EXIT_PROBABILITY_THRESHOLD = 0.80
+
+
+@dataclass
+class _SignalLifecycle:
+    active: bool = False
+    previous_entry_setup: bool = False
+    sequence: int = 0
+    lifecycle_id: str | None = None
+    invalidation_price: float | None = None
+
+
+@dataclass(frozen=True)
+class _LifecycleTransition:
+    state: PredictionState
+    lifecycle_id: str | None
+    invalidation_price: float
+    reason_code: str
+    started: bool = False
+    completed: bool = False
 
 
 class TDXPredictionEngineV1:
@@ -77,6 +100,13 @@ class TDXPredictionEngineV1:
         self._last_material: dict[str, PredictionSignal] = {}
         self._all_predictions: list[PredictionSignal] = []
         self._material_signals: list[PredictionSignal] = []
+        self._lifecycles = {
+            symbol: _SignalLifecycle() for symbol in self.symbols
+        }
+        self._lifecycle_started_count = 0
+        self._lifecycle_completed_count = 0
+        self._lifecycle_exit_count = 0
+        self._lifecycle_invalidation_count = 0
 
     @property
     def all_predictions(self) -> tuple[PredictionSignal, ...]:
@@ -85,6 +115,18 @@ class TDXPredictionEngineV1:
     @property
     def material_signals(self) -> tuple[PredictionSignal, ...]:
         return tuple(self._material_signals)
+
+    @property
+    def lifecycle_counts(self) -> Mapping[str, int]:
+        return {
+            "lifecycle_started_count": self._lifecycle_started_count,
+            "lifecycle_completed_count": self._lifecycle_completed_count,
+            "open_lifecycle_count": sum(
+                lifecycle.active for lifecycle in self._lifecycles.values()
+            ),
+            "exit_count": self._lifecycle_exit_count,
+            "invalidation_count": self._lifecycle_invalidation_count,
+        }
 
     def process_completed_bars(
         self,
@@ -184,18 +226,35 @@ class TDXPredictionEngineV1:
         exit_probability = calibrated["exit_probability"]
         expected_move = calibrated["expected_move"]
         volatility = max(features.atr_14_fraction_of_close, 0.0)
-        drawdown = features.session_drawdown_from_high
         width = _clip(max(0.003, volatility * 1.5), 0.003, 0.02)
         invalidation_fraction = _clip(max(0.01, volatility * 2.5), 0.01, 0.06)
         target_fraction = _clip(max(0.015, abs(expected_move) * 1.75), 0.015, 0.10)
-        state = _prediction_state(
+        provisional_invalidation_price = feature_bar.close * (
+            1.0 - invalidation_fraction
+        )
+        transition = _advance_signal_lifecycle_v1(
+            self._lifecycles[features.symbol],
+            symbol=features.symbol,
+            decision_timestamp=feature_bar.end.isoformat(),
+            completed_bar_low=float(feature_bar.low),
             entry_probability=entry_probability,
             continuation_probability=continuation_probability,
             exit_probability=exit_probability,
             expected_move=expected_move,
-            drawdown=drawdown,
+            proposed_invalidation_price=provisional_invalidation_price,
         )
+        if transition.started:
+            self._lifecycle_started_count += 1
+        if transition.completed:
+            self._lifecycle_completed_count += 1
+            if transition.state is PredictionState.EXIT:
+                self._lifecycle_exit_count += 1
+            else:
+                self._lifecycle_invalidation_count += 1
         reasons = list(calibrated["reason_codes"])
+        reasons.append(transition.reason_code)
+        if transition.lifecycle_id is not None:
+            reasons.append(f"signal_lifecycle_id:{transition.lifecycle_id}")
         reasons.append(
             f"intraday_primary_interval:{self.config.feature_interval_minutes}m"
         )
@@ -241,7 +300,7 @@ class TDXPredictionEngineV1:
             symbol=features.symbol,
             decision_timestamp=feature_bar.end.isoformat(),
             data_cutoff_timestamp=feature_bar.end.isoformat(),
-            state=state.value,
+            state=transition.state.value,
             entry_probability=round(entry_probability, 6),
             continuation_probability=round(continuation_probability, 6),
             exit_probability=round(exit_probability, 6),
@@ -249,7 +308,7 @@ class TDXPredictionEngineV1:
             expected_return=round(expected_move, 6),
             entry_zone_low=round(feature_bar.close * (1.0 - width), 4),
             entry_zone_high=round(feature_bar.close * (1.0 + width * 0.35), 4),
-            invalidation_price=round(feature_bar.close * (1.0 - invalidation_fraction), 4),
+            invalidation_price=round(transition.invalidation_price, 4),
             first_target_price=round(feature_bar.close * (1.0 + target_fraction), 4),
             reason_codes=tuple(dict.fromkeys(reasons)),
             evidence_refs=tuple(dict.fromkeys(evidence_refs)),
@@ -280,97 +339,124 @@ def normalize_intraday_score_v1(
     *,
     candidate: CandidateEvidence | None = None,
 ) -> Mapping[str, Any]:
-    """Bound explicitly intraday features without claiming trained calibration."""
+    """Map causal, signed ATR-scaled features around a neutral 0.5 state.
 
-    momentum_fast = _clip(features.momentum_3_feature_bars, -0.06, 0.06)
-    momentum_slow = _clip(features.momentum_12_feature_bars, -0.12, 0.12)
-    trend = _clip(features.trend_sma_3_over_sma_12_return, -0.06, 0.06)
-    vwap_deviation = _clip(features.close_to_session_vwap_return, -0.08, 0.08)
-    momentum_15m = _clip(
+    ATR is used only as a price-return scale. Relative volume is directionless,
+    so it can amplify or attenuate price evidence but cannot create a bullish or
+    bearish sign on its own. No statistic is fitted to the replay sample.
+    """
+
+    risk_unit = _clip(features.atr_14_fraction_of_close, 0.0005, 0.05)
+    primary_minutes = max(1, int(features.primary_interval_minutes))
+    fast = _risk_scaled_return(
+        features.momentum_3_feature_bars,
+        risk_unit=risk_unit,
+        horizon_primary_bars=3.0,
+    )
+    slow = _risk_scaled_return(
+        features.momentum_12_feature_bars,
+        risk_unit=risk_unit,
+        horizon_primary_bars=12.0,
+    )
+    trend = _risk_scaled_return(
+        features.trend_sma_3_over_sma_12_return,
+        risk_unit=risk_unit,
+        horizon_primary_bars=6.0,
+    )
+    vwap = _risk_scaled_return(
+        features.close_to_session_vwap_return,
+        risk_unit=risk_unit,
+        horizon_primary_bars=4.0,
+    )
+    momentum_15m = _risk_scaled_return(
         float(features.momentum_2x15m_bars or 0.0),
-        -0.08,
-        0.08,
+        risk_unit=risk_unit,
+        horizon_primary_bars=30.0 / primary_minutes,
     )
-    momentum_30m = _clip(
+    momentum_30m = _risk_scaled_return(
         float(features.momentum_2x30m_bars or 0.0),
-        -0.12,
-        0.12,
+        risk_unit=risk_unit,
+        horizon_primary_bars=60.0 / primary_minutes,
     )
-    relative_volume = _clip(
-        features.relative_volume_20_feature_bars - 1.0,
-        -1.0,
-        2.0,
+    drawdown = _risk_scaled_return(
+        min(features.session_drawdown_from_high, 0.0),
+        risk_unit=risk_unit,
+        horizon_primary_bars=16.0,
     )
-    volatility = max(features.atr_14_fraction_of_close, 0.0)
-    drawdown = min(features.session_drawdown_from_high, 0.0)
+    relative_volume = max(float(features.relative_volume_20_feature_bars), 0.01)
+    volume_activity = math.tanh(math.log(relative_volume))
+    volume_confidence_multiplier = 1.0 + 0.15 * volume_activity
+    price_direction = (
+        0.22 * fast
+        + 0.16 * slow
+        + 0.18 * trend
+        + 0.14 * vwap
+        + 0.12 * momentum_15m
+        + 0.10 * momentum_30m
+        + 0.08 * drawdown
+    )
     daily_prior = 0.0
     if candidate is not None:
-        daily_prior = 0.10 * (candidate.confidence - 0.5) + 0.08 * (
-            candidate.factor_composite_score - 0.5
+        daily_prior = 0.10 * (
+            (candidate.confidence - 0.5)
+            + (candidate.factor_composite_score - 0.5)
         )
-    strength = (
-        3.0 * momentum_fast
-        + 1.5 * momentum_slow
-        + 2.0 * trend
-        + 1.5 * vwap_deviation
-        + 1.0 * momentum_15m
-        + 0.75 * momentum_30m
-        + 0.02 * relative_volume * (1.0 if momentum_fast >= 0 else -1.0)
-        + daily_prior
-        + 1.2 * drawdown
-        - min(0.12, volatility * 0.75)
+    direction_score = _clip(
+        price_direction * volume_confidence_multiplier + daily_prior,
+        -1.25,
+        1.25,
     )
-    expected_move = _clip(
-        0.35 * momentum_fast
-        + 0.25 * momentum_slow
-        + 0.20 * trend
-        + 0.10 * momentum_15m
-        + 0.10 * momentum_30m
-        - 0.15 * volatility,
-        -0.10,
-        0.10,
+    continuation_score = _clip(
+        (
+            0.30 * fast
+            + 0.20 * slow
+            + 0.25 * trend
+            + 0.15 * momentum_15m
+            + 0.10 * momentum_30m
+        )
+        * volume_confidence_multiplier,
+        -1.25,
+        1.25,
     )
-    entry = _clip(0.5 + strength, 0.02, 0.98)
-    exit_probability = _clip(0.5 - strength - 1.5 * drawdown, 0.02, 0.98)
-    continuation = _clip(
-        0.5
-        + 2.0 * momentum_fast
-        + 1.2 * trend
-        + 0.6 * momentum_15m
-        - volatility,
-        0.02,
-        0.98,
-    )
+    entry = _neutral_probability(direction_score)
+    exit_probability = 1.0 - entry
+    continuation = _neutral_probability(continuation_score)
+    expected_move = _clip(direction_score * risk_unit, -0.10, 0.10)
     reasons = [
         "intraday_trend_positive" if trend > 0 else "intraday_trend_nonpositive",
         (
             "intraday_momentum_positive"
-            if momentum_fast > 0
+            if fast > 0
             else "intraday_momentum_nonpositive"
         ),
         (
             "price_above_session_vwap"
-            if vwap_deviation >= 0
+            if vwap >= 0
             else "price_below_session_vwap"
         ),
         (
             "relative_volume_above_one"
-            if relative_volume > 0
+            if relative_volume > 1.0
             else "relative_volume_at_or_below_one"
         ),
         (
             "session_drawdown_guard"
-            if drawdown <= -0.05
+            if features.session_drawdown_from_high <= -0.05
             else "session_drawdown_within_guard"
         ),
+        "atr_scaled_signed_feature_mapping",
+        "relative_volume_modulates_but_does_not_set_direction",
         "probabilities_are_untrained_deterministic_normalization",
     ]
     return {
-        "intraday_score": _clip(0.5 + strength, 0.0, 1.0),
+        "intraday_score": entry,
         "entry_probability": entry,
         "continuation_probability": continuation,
         "exit_probability": exit_probability,
         "expected_move": expected_move,
+        "direction_score": direction_score,
+        "continuation_score": continuation_score,
+        "risk_unit": risk_unit,
         "reason_codes": tuple(reasons),
     }
 
@@ -509,25 +595,160 @@ def _parse_context_asof(value: str, cutoff: datetime) -> datetime:
     return parsed.astimezone(cutoff.tzinfo)
 
 
-def _prediction_state(
+def _advance_signal_lifecycle_v1(
+    lifecycle: _SignalLifecycle,
     *,
+    symbol: str,
+    decision_timestamp: str,
+    completed_bar_low: float,
     entry_probability: float,
     continuation_probability: float,
     exit_probability: float,
     expected_move: float,
-    drawdown: float,
-) -> PredictionState:
-    if drawdown <= -0.05:
-        return PredictionState.INVALIDATED
-    if exit_probability >= 0.66:
-        return PredictionState.EXIT
-    if entry_probability >= 0.62 and expected_move > 0:
-        return PredictionState.ENTRY
-    if continuation_probability >= 0.56 and entry_probability >= exit_probability:
-        return PredictionState.HOLD
-    if exit_probability >= 0.50 or expected_move < 0:
-        return PredictionState.WEAKENING
-    return PredictionState.WATCH
+    proposed_invalidation_price: float,
+) -> _LifecycleTransition:
+    """Advance a signal-only lifecycle without consulting account holdings."""
+
+    bullish_setup = (
+        entry_probability >= ENTRY_PROBABILITY_THRESHOLD
+        and continuation_probability >= 0.50
+        and expected_move > 0
+    )
+    if not lifecycle.active:
+        if bullish_setup and not lifecycle.previous_entry_setup:
+            lifecycle.sequence += 1
+            lifecycle.active = True
+            lifecycle.lifecycle_id = f"{symbol}:{lifecycle.sequence}:{decision_timestamp}"
+            lifecycle.invalidation_price = float(proposed_invalidation_price)
+            lifecycle.previous_entry_setup = True
+            return _LifecycleTransition(
+                state=PredictionState.ENTRY,
+                lifecycle_id=lifecycle.lifecycle_id,
+                invalidation_price=lifecycle.invalidation_price,
+                reason_code="signal_lifecycle_started_on_bullish_setup_cross",
+                started=True,
+            )
+        lifecycle.previous_entry_setup = bullish_setup
+        return _LifecycleTransition(
+            state=PredictionState.WATCH,
+            lifecycle_id=None,
+            invalidation_price=float(proposed_invalidation_price),
+            reason_code=(
+                "signal_lifecycle_waiting_for_new_setup_cross"
+                if bullish_setup
+                else "signal_lifecycle_inactive_neutral"
+            ),
+        )
+
+    lifecycle_id = lifecycle.lifecycle_id
+    invalidation_price = float(
+        lifecycle.invalidation_price or proposed_invalidation_price
+    )
+    price_breached = completed_bar_low <= invalidation_price
+    evidence_breached = (
+        exit_probability >= INVALIDATION_EXIT_PROBABILITY_THRESHOLD
+    )
+    if price_breached or evidence_breached:
+        _close_lifecycle(lifecycle, bullish_setup=bool(bullish_setup))
+        return _LifecycleTransition(
+            state=PredictionState.INVALIDATED,
+            lifecycle_id=lifecycle_id,
+            invalidation_price=invalidation_price,
+            reason_code=(
+                "signal_lifecycle_invalidated_by_setup_price"
+                if price_breached
+                else "signal_lifecycle_invalidated_by_strong_downside_evidence"
+            ),
+            completed=True,
+        )
+    if exit_probability >= EXIT_PROBABILITY_THRESHOLD:
+        _close_lifecycle(lifecycle, bullish_setup=bool(bullish_setup))
+        return _LifecycleTransition(
+            state=PredictionState.EXIT,
+            lifecycle_id=lifecycle_id,
+            invalidation_price=invalidation_price,
+            reason_code="signal_lifecycle_completed_by_exit_evidence",
+            completed=True,
+        )
+    lifecycle.previous_entry_setup = bullish_setup
+    if (
+        exit_probability > entry_probability
+        or continuation_probability < 0.50
+        or expected_move <= 0
+    ):
+        return _LifecycleTransition(
+            state=PredictionState.WEAKENING,
+            lifecycle_id=lifecycle_id,
+            invalidation_price=invalidation_price,
+            reason_code="signal_lifecycle_active_but_weakening",
+        )
+    return _LifecycleTransition(
+        state=PredictionState.HOLD,
+        lifecycle_id=lifecycle_id,
+        invalidation_price=invalidation_price,
+        reason_code="signal_lifecycle_active_and_valid",
+    )
+
+
+def _close_lifecycle(
+    lifecycle: _SignalLifecycle,
+    *,
+    bullish_setup: bool,
+) -> None:
+    lifecycle.active = False
+    lifecycle.previous_entry_setup = bullish_setup
+    lifecycle.lifecycle_id = None
+    lifecycle.invalidation_price = None
+
+
+def intraday_probability_mapping_semantics() -> Mapping[str, Any]:
+    return {
+        "mapping": CALIBRATION_LABEL,
+        "neutral_probability": 0.5,
+        "signed_scaling": (
+            "price-return features divided by causal ATR fraction times the square "
+            "root of their fixed bar horizon, then bounded with tanh"
+        ),
+        "direction_weights": {
+            "momentum_3_feature_bars": 0.22,
+            "momentum_12_feature_bars": 0.16,
+            "trend_sma_3_over_sma_12_return": 0.18,
+            "close_to_session_vwap_return": 0.14,
+            "momentum_2x15m_bars": 0.12,
+            "momentum_2x30m_bars": 0.10,
+            "session_drawdown_from_high": 0.08,
+        },
+        "relative_volume": (
+            "dimensionless confidence multiplier in [0.85, 1.15]; never assigns "
+            "direction by itself"
+        ),
+        "atr": (
+            "causal volatility scale with fixed [0.0005, 0.05] fraction bounds; "
+            "never a directional contribution"
+        ),
+        "probability_transform": "0.5 + 0.45 * tanh(1.5 * signed_score)",
+        "exit_probability": "one minus entry/upside probability",
+        "sample_fitted_parameters": False,
+        "entry_threshold": ENTRY_PROBABILITY_THRESHOLD,
+        "exit_threshold": EXIT_PROBABILITY_THRESHOLD,
+        "invalidation_exit_probability_threshold": (
+            INVALIDATION_EXIT_PROBABILITY_THRESHOLD
+        ),
+    }
+
+
+def _risk_scaled_return(
+    value: float,
+    *,
+    risk_unit: float,
+    horizon_primary_bars: float,
+) -> float:
+    denominator = risk_unit * math.sqrt(max(1.0, float(horizon_primary_bars)))
+    return math.tanh(float(value) / denominator)
+
+
+def _neutral_probability(signed_score: float) -> float:
+    return 0.5 + 0.45 * math.tanh(1.5 * float(signed_score))
 
 
 def _clip(value: float, minimum: float, maximum: float) -> float:

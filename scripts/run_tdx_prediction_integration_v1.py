@@ -146,6 +146,8 @@ def _run_replay(
         "symbols": list(engine.symbols),
         "bar_count": len(bars),
         "material_signal_count": len(result.material_signals),
+        "signal_count_by_state": result.report["signal_count_by_state"],
+        "lifecycle_counts": result.report["lifecycle_counts"],
         "report_path": report_path,
         "tdx_json_path": json_path,
         "tdx_csv_path": csv_path,

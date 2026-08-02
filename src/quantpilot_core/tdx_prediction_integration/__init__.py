@@ -18,6 +18,7 @@ from quantpilot_core.tdx_prediction_integration.engine import (
     cached_deepseek_evidence_from_payload,
     candidate_context_from_report,
     engine_source_components,
+    intraday_probability_mapping_semantics,
     normalize_intraday_score_v1,
     prediction_signal_record,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "compute_intraday_features_v1",
     "engine_source_components",
     "intraday_feature_semantics",
+    "intraday_probability_mapping_semantics",
     "normalize_intraday_score_v1",
     "prediction_signal_record",
     "run_historical_replay",
