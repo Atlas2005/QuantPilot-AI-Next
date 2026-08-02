@@ -18,9 +18,9 @@ class SnapshotDailyBarProvider:
 
     provider_name = ProviderName.SNAPSHOT
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(self, root: str | Path, *, validation_result: Any | None = None) -> None:
         self.root = Path(root)
-        result = validate_snapshot(self.root)
+        result = validation_result or validate_snapshot(self.root)
         if not result.ok or result.manifest.get("status") != "completed":
             details = "; ".join(result.errors) or str(result.manifest.get("status", "missing"))
             raise ProviderError(f"invalid all-A-share snapshot: {details}")
@@ -68,7 +68,9 @@ class SnapshotDailyBarProvider:
                                   "upper_limit": limit.get("up_limit"), "lower_limit": limit.get("down_limit"),
                                   "source": self.provider_name.value, "data_quality": "snapshot"})
         return {"a_share_tradability_metadata": {"enabled": bool(overrides),
-                "primary_price_provider": self.provider_name.value, "tradability_overrides": overrides}}
+                "primary_price_provider": self.provider_name.value,
+                "fetched_at": self._manifest.get("completed_at"),
+                "tradability_overrides": overrides}}
 
     def fetch_daily_bars(self, request: DailyBarRequest) -> list[NormalizedDailyBar]:
         return self.fetch_many_daily_bars((request,))

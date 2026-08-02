@@ -19,6 +19,12 @@ def extract_daily_report_facts(report: Mapping[str, Any]) -> dict[str, tuple[Map
         for index, (symbol, quantity) in enumerate(sorted(_mapping(ledger.get("positions")).items()))
     )
     equity_source = report.get("equity_curve", report.get("equity"))
+    if isinstance(equity_source, (int, float)) and not isinstance(equity_source, bool):
+        equity_source = {
+            "equity": equity_source,
+            "decision_session": report.get("decision_session"),
+            "execution_session": report.get("execution_session"),
+        }
     equity = tuple(_row(session_id, item, "timestamp", index) for index, item in enumerate(_items(equity_source)))
     if not equity and isinstance(equity_source, Mapping):
         equity = (_row(session_id, equity_source, "session_id", 0),)
@@ -32,7 +38,9 @@ def extract_daily_report_facts(report: Mapping[str, Any]) -> dict[str, tuple[Map
 def _items(value: Any) -> tuple[Mapping[str, Any], ...]:
     if isinstance(value, Mapping):
         return (dict(value),)
-    return tuple(dict(item) for item in (value or ()) if isinstance(item, Mapping))
+    if not isinstance(value, (tuple, list)):
+        return ()
+    return tuple(dict(item) for item in value if isinstance(item, Mapping))
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:

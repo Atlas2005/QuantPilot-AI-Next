@@ -153,6 +153,7 @@ def load_production_pipeline_config(
         raise ValueError("--live-market-data supports at most 6 explicit symbols")
 
     options = _normalize_pipeline_options(pipeline_options)
+    options = _with_serialized_daily_input_calendar(normalized_input, options)
     return RealCandidatePipelineConfig(
         decision_session=decision_session,
         initial_capital=initial_capital,
@@ -172,6 +173,46 @@ def load_production_pipeline_config(
         **normalized_input,
         **options,
     )
+
+
+def _with_serialized_daily_input_calendar(
+    normalized_input: Mapping[str, Any], options: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Recover the bridge calendar without adding top-level input fields."""
+    context = normalized_input.get("quant_firm_context", {})
+    bridge = (
+        context.get("daily_production_input_v1", {})
+        if isinstance(context, Mapping)
+        else {}
+    )
+    if not isinstance(bridge, Mapping):
+        raise TypeError(
+            "quant_firm_context.daily_production_input_v1 must be an object"
+        )
+    sessions = bridge.get("calendar_sessions")
+    provider = bridge.get("calendar_provider")
+    if sessions is None and provider is None:
+        return dict(options)
+    if not isinstance(sessions, (list, tuple)) or not sessions:
+        raise TypeError(
+            "daily_production_input_v1.calendar_sessions must be a non-empty array"
+        )
+    if not str(provider or "").strip():
+        raise ValueError(
+            "daily_production_input_v1.calendar_provider must be non-empty"
+        )
+    inferred = {
+        "input_calendar_sessions": tuple(str(item) for item in sessions),
+        "input_calendar_provider": str(provider),
+    }
+    combined = dict(options)
+    for key, value in inferred.items():
+        if key in combined and combined[key] != value:
+            raise ValueError(
+                f"pipeline_options.{key} conflicts with serialized daily input calendar"
+            )
+        combined[key] = value
+    return combined
 
 
 def _normalize_pipeline_options(

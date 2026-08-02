@@ -8,7 +8,7 @@ import sys
 import pytest
 
 from quantpilot_core.all_a_share_snapshot.contracts import SnapshotConfig
-from quantpilot_core.all_a_share_snapshot.snapshot import SnapshotLoader, build_snapshot
+from quantpilot_core.all_a_share_snapshot.snapshot import SnapshotLoader, build_snapshot, validate_snapshot
 from quantpilot_core.real_data_provider import Adjustment, DailyBarRequest, ProviderError, SnapshotDailyBarProvider
 
 
@@ -84,6 +84,20 @@ def test_snapshot_adapter_caches_calendar_and_reads_each_daily_partition_once(tm
 def test_invalid_snapshot_fails_structurally(tmp_path):
     with pytest.raises(ProviderError, match="invalid all-A-share snapshot"):
         SnapshotDailyBarProvider(tmp_path)
+
+
+def test_snapshot_adapter_can_reuse_an_already_validated_result(tmp_path, monkeypatch):
+    provider = _snapshot(tmp_path)
+    validation = validate_snapshot(tmp_path)
+    import quantpilot_core.real_data_provider.snapshot_adapter as module
+
+    monkeypatch.setattr(
+        module,
+        "validate_snapshot",
+        lambda _root: (_ for _ in ()).throw(AssertionError("unexpected revalidation")),
+    )
+    reused = SnapshotDailyBarProvider(tmp_path, validation_result=validation)
+    assert reused.snapshot_provenance()["snapshot_digest"] == provider.snapshot_provenance()["snapshot_digest"]
 
 
 def _cli_module():
