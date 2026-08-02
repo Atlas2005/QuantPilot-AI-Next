@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from quantpilot_core.all_a_share_snapshot.pit import listed_universe
 from quantpilot_core.continuous_paper import (
     ContinuousPaperCycle,
     ContinuousPaperCycleConfig,
@@ -228,6 +229,54 @@ def test_manifest_cap_filters_pit_cutoff_schema_and_deterministic_order(tmp_path
     assert max(date.fromisoformat(row["date"]) for row in payload["bars"]) == date.fromisoformat(first.decision_session)
     assert payload["information_provenance"]["daily_production_input_v1"]["future_market_rows_serialized"] == 0
     assert payload["advisory_provenance"]["deepseek_live_call"] is False
+
+
+def test_current_candidate_universe_cannot_emit_inactive_historical_code(tmp_path):
+    sessions = _sessions()
+    historical, successor = "300111.SZ", "000001.SZ"
+    stock_rows = tuple(
+        {
+            "ts_code": symbol,
+            "symbol": symbol.partition(".")[0],
+            "list_date": "20000101",
+            "delist_date": "",
+        }
+        for symbol in SYMBOLS
+    )
+    resolution = {
+        historical: {
+            "resolution_status": "resolved",
+            "historical_ts_code": historical,
+            "current_ts_code": successor,
+            "effective_date": "20250101",
+            "historical_valid_from": "20000101",
+            "stable_instrument_id": "a_share_issuer:test-transition",
+        }
+    }
+
+    class TransitionAwareLoader(_Loader):
+        def listed_universe(self, day):
+            return listed_universe(stock_rows, day, resolution)
+
+    loader = TransitionAwareLoader(sessions)
+    result = build_daily_production_input_v1(
+        DailyProductionInputConfig(
+            production_manifest=_manifest(tmp_path / "manifest"),
+            snapshot_root=tmp_path / "snapshot",
+            requested_decision_session=sessions[-2].isoformat(),
+        ),
+        snapshot_loader=loader,
+        bar_provider=_Bars(sessions),
+        snapshot_validation=_validation(sessions),
+    )
+
+    assert historical not in result.selected_symbols
+    assert historical not in result.payload["symbols"]
+    current = {
+        row["ts_code"]
+        for row in loader.listed_universe(sessions[-2].strftime("%Y%m%d"))
+    }
+    assert successor in current and historical not in current
 
 
 def test_payload_round_trips_and_serialized_calendar_binds_continuous_paper(tmp_path):

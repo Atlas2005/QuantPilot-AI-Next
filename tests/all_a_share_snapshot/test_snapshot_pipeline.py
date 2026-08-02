@@ -181,7 +181,7 @@ def test_daily_absent_stock_master_is_blocking_and_records_code(tmp_path: Path):
 def test_unique_historical_alias_preserves_raw_daily_and_adj_factor_codes(tmp_path: Path):
     class Alias(FakeProvider):
         def fetch_stock_basic(self,statuses):
-            return super().fetch_stock_basic(statuses) + [{"ts_code":"302132.SZ","symbol":"302132","name":"中航成飞","market":"Main","exchange":"SZSE","list_status":"L","list_date":"20100827","delist_date":""}]
+            return super().fetch_stock_basic(statuses) + [{"ts_code":"302132.SZ","symbol":"302132","name":"中航成飞","market":"Main","exchange":"SZSE","list_status":"L","list_date":"20231011","delist_date":""}]
         def fetch_daily_by_trade_date(self,d): return [self._bar("600000.SH",d), self._bar("300114.SZ",d)]
         def fetch_adj_factor_by_trade_date(self,d): return [{"ts_code":"600000.SH","trade_date":d,"adj_factor":1.0},{"ts_code":"300114.SZ","trade_date":d,"adj_factor":1.0}]
         def fetch_optional(self,dataset,trade_date=None):
@@ -191,11 +191,15 @@ def test_unique_historical_alias_preserves_raw_daily_and_adj_factor_codes(tmp_pa
             return rows
         def fetch_namechange_by_ts_code(self,code):
             if code == "300114.SZ":
-                self.calls.append(("namechange",code)); return [{"ts_code":code,"name":"中航电测","start_date":"20100827","end_date":"20230201","ann_date":"20100827","change_reason":"x"},{"ts_code":code,"name":"中航成飞","start_date":"20230202","end_date":None,"ann_date":"20230202","change_reason":"x"}]
+                self.calls.append(("namechange",code)); return [{"ts_code":code,"name":"中航电测","start_date":"20100827","end_date":"20231010","ann_date":"20100827","change_reason":"x"},{"ts_code":code,"name":"中航成飞","start_date":"20231011","end_date":None,"ann_date":"20231011","change_reason":"x"}]
             return super().fetch_namechange_by_ts_code(code)
     manifest,p=build(tmp_path,Alias()); loader=SnapshotLoader(tmp_path)
     resolution=manifest["historical_code_resolutions"]["300114.SZ"]
     assert manifest["status"] == "completed" and resolution["current_ts_code"] == "302132.SZ" and resolution["resolution_status"] == "resolved"
+    assert {row["ts_code"] for row in loader.listed_universe("20231010")} >= {"300114.SZ"}
+    assert "302132.SZ" not in {row["ts_code"] for row in loader.listed_universe("20231010")}
+    assert {row["ts_code"] for row in loader.listed_universe("20231011")} >= {"302132.SZ"}
+    assert loader.stable_instrument_identity("300114.SZ") == loader.stable_instrument_identity("302132.SZ")
     assert "300114.SZ" in {row["ts_code"] for row in loader.daily("20231009")} and "300114.SZ" in {row["ts_code"] for row in loader.adj_factor("20231009")}
     assert len([call for call in p.calls if call == ("namechange","300114.SZ")]) == 1 and validate_snapshot(tmp_path).ok
     assert manifest["historical_code_resolution_calls"] == 1
@@ -209,11 +213,11 @@ def test_ambiguous_or_name_only_historical_alias_is_blocking(tmp_path: Path):
     class Ambiguous(FakeProvider):
         def fetch_stock_basic(self,statuses):
             return super().fetch_stock_basic(statuses) + [
-                {"ts_code":"302132.SZ","symbol":"302132","name":"OLD","market":"Main","exchange":"SZSE","list_status":"L","list_date":"20100827","delist_date":""},
-                {"ts_code":"302133.SZ","symbol":"302133","name":"OLD","market":"Main","exchange":"SZSE","list_status":"L","list_date":"20100827","delist_date":""}]
+                {"ts_code":"302132.SZ","symbol":"302132","name":"OLD","market":"Main","exchange":"SZSE","list_status":"L","list_date":"20231011","delist_date":""},
+                {"ts_code":"302133.SZ","symbol":"302133","name":"OLD","market":"Main","exchange":"SZSE","list_status":"L","list_date":"20231011","delist_date":""}]
         def fetch_daily_by_trade_date(self,d): return [self._bar("600000.SH",d), self._bar("300114.SZ",d)]
         def fetch_namechange_by_ts_code(self,code):
-            if code == "300114.SZ": return [{"ts_code":code,"name":"OLD","start_date":"20100827","end_date":None,"ann_date":"20100827","change_reason":"x"}]
+            if code == "300114.SZ": return [{"ts_code":code,"name":"OLD","start_date":"20231011","end_date":None,"ann_date":"20231011","change_reason":"x"}]
             return super().fetch_namechange_by_ts_code(code)
     manifest,_=build(tmp_path,Ambiguous())
     assert manifest["status"] == "incomplete" and manifest["historical_code_resolutions"]["300114.SZ"]["candidate_count"] == 2

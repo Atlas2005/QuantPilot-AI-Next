@@ -1,6 +1,7 @@
 """Builder, validator, and loader for the partitioned all-A-share artifact."""
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 import re
@@ -14,7 +15,9 @@ from quantpilot_core.all_a_share_snapshot.contracts import (
     AllAShareProvider, DEFAULT_BENCHMARK, OPTIONAL_DATASETS, REQUIRED_DATASETS,
     SnapshotConfig, ValidationResult,
 )
-from quantpilot_core.all_a_share_snapshot.pit import listed_universe
+from quantpilot_core.all_a_share_snapshot.pit import (
+    is_historical_code_active, listed_universe, stable_instrument_identity,
+)
 from quantpilot_core.all_a_share_snapshot.storage import (
     FORMAT_VERSION, SCHEMA_VERSION, atomic_json, atomic_write, digest,
     discard_temporary, file_hash, read_table, schema_fingerprint, table_for,
@@ -78,6 +81,7 @@ def _base(config: SnapshotConfig, provider: AllAShareProvider) -> dict[str, Any]
      "mixed_instrument_integration": "external_instrument_master_boundary",
      "outside_universe_rows": {}, "instrument_audit": {}, "unexplained_symbols": {},
      "historical_code_resolutions": {}, "historical_code_resolution_calls": 0,
+     "historical_code_resolution_version": 2,
      "namechange": {"strategy": "per_symbol_shards", "response_cap": NAMECHANGE_RESPONSE_CAP, "complete": False,
                     "shard_size": config.namechange_shard_size, "planned_symbol_count": 0,
                     "completed_symbol_count": 0, "planned_shard_count": 0, "completed_shard_count": 0,
@@ -276,9 +280,52 @@ def _is_external_instrument_code(code: str) -> bool:
             or symbol.startswith(("110", "111", "113", "118", "123", "127", "128", "130")))
 
 
+def _resolution_cache_valid(item: Mapping[str, Any], stocks: Sequence[Mapping[str, Any]]) -> bool:
+    current_codes = {str(row.get("ts_code") or "") for row in stocks}
+    required = (
+        "historical_ts_code", "current_ts_code", "effective_date",
+        "stable_instrument_id", "evidence_source_type", "resolution_method",
+    )
+    return (
+        item.get("resolution_status") == "resolved"
+        and all(str(item.get(field) or "") for field in required)
+        and str(item.get("current_ts_code")) in current_codes
+        and len(str(item.get("effective_date"))) == 8
+        and str(item.get("effective_date")).isdigit()
+    )
+
+
+def _transition_date(value: object) -> str:
+    candidate = _date(value)
+    return candidate if len(candidate) == 8 and candidate.isdigit() else ""
+
+
+def _history_periods(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, str | None]]:
+    periods = []
+    for row in rows:
+        name = str(row.get("name") or "").strip()
+        start = _transition_date(row.get("start_date"))
+        end = _transition_date(row.get("end_date")) or None
+        if name and start:
+            periods.append({"name": name, "start_date": start, "end_date": end})
+    periods.sort(key=lambda item: (str(item["start_date"]), str(item["name"])))
+    return periods[:100]
+
+
+def _stable_transition_identity(historical: str, current: str, effective: str) -> str:
+    token = hashlib.sha256(f"{historical}|{current}|{effective}".encode()).hexdigest()[:24]
+    return f"a_share_issuer:{token}"
+
+
 def _resolve_historical_code(code: str, stocks: Sequence[Mapping[str, Any]], config: SnapshotConfig,
-                             provider: AllAShareProvider, manifest: dict[str, Any], pacer: _CallPacer | None = None) -> Mapping[str, Any]:
-    """Resolve a required historical equity code only from its own name history."""
+                             provider: AllAShareProvider, manifest: dict[str, Any],
+                             occurrence_date: str, pacer: _CallPacer | None = None) -> Mapping[str, Any]:
+    """Resolve a historical code from stock-basic and its own name history.
+
+    The required evidence is a unique same-exchange current security whose
+    stock-basic name occurs in the historical code's authoritative namechange
+    timeline and whose listing/origin date corroborates that timeline.
+    """
     cached = manifest["historical_code_resolutions"].get(code)
     if cached is not None: return cached
     exchange = code.rpartition(".")[2]
@@ -290,21 +337,84 @@ def _resolve_historical_code(code: str, stocks: Sequence[Mapping[str, Any]], con
         manifest["historical_code_resolution_calls"] += 1
         history = _fetch(lambda: provider.fetch_namechange_by_ts_code(code), config, manifest, pacer, endpoint="namechange")
         if len(history) >= NAMECHANGE_RESPONSE_CAP: raise ValueError("response cap reached")
-        names = sorted({str(row.get("name") or "") for row in history if str(row.get("name") or "")})
-        starts = sorted(str(row.get("start_date") or "") for row in history if str(row.get("start_date") or ""))
+        periods = _history_periods(history)
+        names = sorted({str(item["name"]) for item in periods})
+        starts = sorted({str(item["start_date"]) for item in periods})
         earliest = starts[0] if starts else None
-        candidates = [row for row in stocks if str(row.get("ts_code") or "").rpartition(".")[2] == exchange
-                      and str(row.get("name") or "") in names and str(row.get("list_date") or "") == earliest]
-        result = {"historical_ts_code": code, "current_ts_code": str(candidates[0].get("ts_code")) if len(candidates) == 1 else None,
-                  "resolution_status": "resolved" if len(candidates) == 1 else "unresolved_ambiguous_or_no_match",
-                  "exchange_match": bool(candidates), "list_date_match": bool(candidates), "name_history_match": bool(candidates),
-                  "candidate_count": len(candidates), "earliest_history_start_date": earliest, "name_history": names[:20]}
+        candidates = []
+        for stock in stocks:
+            current = str(stock.get("ts_code") or "")
+            current_name = str(stock.get("name") or "").strip()
+            list_date = _transition_date(stock.get("list_date"))
+            matching_starts = sorted(
+                str(item["start_date"]) for item in periods
+                if item["name"] == current_name
+            )
+            if current == code or current.rpartition(".")[2] != exchange or not matching_starts:
+                continue
+            transition_date_match = list_date in matching_starts
+            issuer_origin_match = bool(earliest and list_date == earliest)
+            if not transition_date_match and not issuer_origin_match:
+                continue
+            effective = list_date if transition_date_match else matching_starts[0]
+            if not effective or occurrence_date >= effective:
+                continue
+            method = (
+                "unique_exchange_namechange_effective_date_stock_basic_match"
+                if transition_date_match
+                else "unique_exchange_namechange_issuer_origin_match"
+            )
+            candidates.append((stock, effective, method, current_name))
+        resolved = len(candidates) == 1
+        stock, effective, method, matched_name = candidates[0] if resolved else ({}, None, None, None)
+        current = str(stock.get("ts_code") or "") if resolved else None
+        result = {
+            "historical_code": code,
+            "successor_code": current,
+            "historical_ts_code": code,
+            "current_ts_code": current,
+            "resolution_status": "resolved" if resolved else "unresolved_ambiguous_or_no_match",
+            "stable_instrument_id": _stable_transition_identity(code, current, effective) if resolved else None,
+            "effective_date": effective,
+            "historical_valid_from": (
+                earliest if earliest and effective and earliest < effective
+                else config.start_date
+            ),
+            "evidence_source_type": "tushare_stock_basic_and_namechange",
+            "source_provider": str(provider.provider_name),
+            "resolution_method": method,
+            "exchange_match": bool(candidates),
+            "list_date_match": bool(candidates),
+            "name_history_match": bool(candidates),
+            "candidate_count": len(candidates),
+            "earliest_history_start_date": earliest,
+            "matched_name": matched_name,
+            "name_history": names[:20],
+            "name_history_periods": periods,
+            "affected_datasets": [],
+            "affected_date_range": {"start": None, "end": None},
+        }
     except Exception as exc:
-        result = {"historical_ts_code": code, "current_ts_code": None, "resolution_status": "unresolved_provider_error",
+        result = {"historical_code": code, "successor_code": None,
+                  "historical_ts_code": code, "current_ts_code": None, "resolution_status": "unresolved_provider_error",
                   "exchange_match": False, "list_date_match": False, "name_history_match": False, "candidate_count": 0,
-                  "name_history": [], "reason": _sanitize_reason(exc)}
+                  "name_history": [], "affected_datasets": [],
+                  "affected_date_range": {"start": None, "end": None}, "reason": _sanitize_reason(exc)}
     manifest["historical_code_resolutions"][code] = result
     return result
+
+
+def _record_resolution_use(item: Mapping[str, Any], dataset: str, trade_date: str) -> None:
+    if not isinstance(item, dict):
+        return
+    datasets = {str(value) for value in item.get("affected_datasets", ())}
+    datasets.add(dataset); item["affected_datasets"] = sorted(datasets)
+    affected = dict(item.get("affected_date_range", {}))
+    start, end = str(affected.get("start") or ""), str(affected.get("end") or "")
+    item["affected_date_range"] = {
+        "start": trade_date if not start or trade_date < start else start,
+        "end": trade_date if not end or trade_date > end else end,
+    }
 
 
 def _filter_equity_universe(rows: Sequence[Mapping[str, Any]], pit_codes: set[str], equity_codes: set[str],
@@ -313,8 +423,10 @@ def _filter_equity_universe(rows: Sequence[Mapping[str, Any]], pit_codes: set[st
     for row in rows:
         kind = _instrument_type(row, equity_codes); code = str(row.get("ts_code") or "")
         mapping = resolutions.get(code, {})
-        if mapping.get("resolution_status") == "resolved" and str(mapping.get("current_ts_code")) in pit_codes:
+        trade_date = _date(row.get("trade_date"))
+        if code in pit_codes and is_historical_code_active(mapping, trade_date):
             kind = "historical_equity_alias"
+            _record_resolution_use(mapping, dataset, trade_date)
         # A required equity feed is not allowed to silently redefine an absent
         # stock-master code as a supported external instrument.
         if required_market and kind not in {"a_share_equity", "historical_equity_alias"}: kind = "absent_stock_basic"
@@ -333,6 +445,14 @@ def build_snapshot(config: SnapshotConfig, provider: AllAShareProvider) -> Mappi
         raise ValueError("start_date must be no later than end_date")
     root = Path(config.root); previous = _load(root) or {}; pacer = _CallPacer(config)
     old = {(p.get("dataset"), p.get("trade_date")): p for p in previous.get("partitions", [])}
+    reconciliation_retry_dates = {
+        str(item.get("trade_date"))
+        for item in previous.get("failed_partitions", ())
+        if item.get("dataset") == "daily"
+        and item.get("required", True)
+        and item.get("trade_date")
+        and item.get("examples")
+    }
     manifest = _base(config, provider)
     manifest["historical_code_resolutions"] = dict(previous.get("historical_code_resolutions", {}))
     try:
@@ -343,6 +463,14 @@ def build_snapshot(config: SnapshotConfig, provider: AllAShareProvider) -> Mappi
         else:
             stocks = _deduplicate("stock_basic", _fetch(lambda: provider.fetch_stock_basic(config.list_statuses), config, manifest, pacer, endpoint="stock_basic"))
             _store(root, manifest, "stock_basic", stocks, None)
+        # Unresolved and legacy resolution records must be retried.  Only the
+        # complete v2 provenance contract is safe to reuse without a provider
+        # call on a resumed build.
+        manifest["historical_code_resolutions"] = {
+            str(code): dict(item)
+            for code, item in manifest["historical_code_resolutions"].items()
+            if isinstance(item, Mapping) and _resolution_cache_valid(item, stocks)
+        }
         all_codes = {str(row.get("ts_code") or "") for row in stocks}
         manifest["exchanges"] = sorted({str(x.get("exchange")) for x in stocks if x.get("exchange")})
         manifest["boards"] = sorted({str(x.get("market")) for x in stocks if x.get("market")})
@@ -368,16 +496,20 @@ def build_snapshot(config: SnapshotConfig, provider: AllAShareProvider) -> Mappi
         if not sessions: raise ValueError("official trade calendar has no open sessions")
         manifest["official_session_count"] = len(sessions); manifest["actual_date_range"] = {"start": sessions[0], "end": sessions[-1]}
         manifest["calendar_exchanges"] = sorted({str(x.get("exchange")) for x in calendar if x.get("exchange")})
-        pit_codes = {d: {str(r.get("ts_code")) for r in listed_universe(stocks, d)} for d in sessions}
         for d in sessions:
             for dataset, method in (("daily", provider.fetch_daily_by_trade_date), ("adj_factor", provider.fetch_adj_factor_by_trade_date)):
                 entry = old.get((dataset, d))
-                if entry and _partition_valid(root, entry, dataset, d): _store(root, manifest, dataset, (), d, entry); continue
+                if d not in reconciliation_retry_dates and entry and _partition_valid(root, entry, dataset, d):
+                    _store(root, manifest, dataset, (), d, entry); continue
                 provider_rows = _fetch(lambda method=method, d=d: method(d), config, manifest, pacer, endpoint=dataset)
                 if dataset == "daily":
                     for code in sorted({str(row.get("ts_code") or "") for row in provider_rows} - all_codes - {""}):
-                        _resolve_historical_code(code, stocks, config, provider, manifest, pacer)
-                rows, audit = _filter_equity_universe(provider_rows, pit_codes[d], all_codes, dataset, dataset == "daily", manifest["historical_code_resolutions"])
+                        _resolve_historical_code(code, stocks, config, provider, manifest, d, pacer)
+                pit_codes = {
+                    str(row.get("ts_code") or "")
+                    for row in listed_universe(stocks, d, manifest["historical_code_resolutions"])
+                }
+                rows, audit = _filter_equity_universe(provider_rows, pit_codes, all_codes, dataset, dataset == "daily", manifest["historical_code_resolutions"])
                 if audit["counts"].get("absent_stock_basic", 0):
                     manifest["failed_partitions"].append({"dataset": dataset, "trade_date": d, "required": True,
                         "exception_type": "ProviderDataError", "exception_category": "deterministic_or_provider",
@@ -406,14 +538,18 @@ def build_snapshot(config: SnapshotConfig, provider: AllAShareProvider) -> Mappi
                 for d in sessions:
                     try:
                         entry = old.get((dataset, d))
-                        if entry and _partition_valid(root, entry, dataset, d):
+                        if d not in reconciliation_retry_dates and entry and _partition_valid(root, entry, dataset, d):
                             _store(root, manifest, dataset, (), d, entry); continue
                         provider_rows = _fetch(lambda dataset=dataset, d=d: provider.fetch_optional(dataset, d), config, manifest, pacer, endpoint=dataset)
                         # Validate optional records before equity filtering so a
                         # malformed suspend event cannot be mistaken for a
                         # legitimate empty response.
                         _deduplicate(dataset, provider_rows)
-                        rows, audit = _filter_equity_universe(provider_rows, pit_codes[d], all_codes, dataset, False, manifest["historical_code_resolutions"])
+                        pit_codes = {
+                            str(row.get("ts_code") or "")
+                            for row in listed_universe(stocks, d, manifest["historical_code_resolutions"])
+                        }
+                        rows, audit = _filter_equity_universe(provider_rows, pit_codes, all_codes, dataset, False, manifest["historical_code_resolutions"])
                         _store(root, manifest, dataset, _deduplicate(dataset, rows), d, audit=audit)
                     except Exception as exc:
                         failed = True
@@ -539,18 +675,24 @@ def validate_snapshot(root: str | Path) -> ValidationResult:
             if (dataset, d) not in tables: errors.append(f"missing required official {dataset} session: {d}")
     stock_rows = tables.get(("stock_basic", None), []); stock_codes = {str(r.get("ts_code") or "") for r in stock_rows}
     resolutions = manifest.get("historical_code_resolutions", {})
-    def resolved_current(code: str) -> str | None:
-        item = resolutions.get(code, {})
-        return str(item.get("current_ts_code")) if item.get("resolution_status") == "resolved" else None
     for (dataset, date), rows in tables.items():
         if dataset in {"benchmark", "calendar", "stock_basic"}: continue
         for row in rows:
             code = str(row.get("ts_code") or "")
-            if code not in stock_codes and resolved_current(code) not in stock_codes: errors.append(f"symbol outside stock_basic universe: {dataset}"); break
+            if code in stock_codes:
+                continue
+            item = resolutions.get(code, {})
+            row_date = _date(row.get("trade_date"))
+            if (str(item.get("current_ts_code") or "") not in stock_codes
+                    or (row_date and not is_historical_code_active(item, row_date))):
+                errors.append(f"symbol outside stock_basic universe: {dataset}"); break
     for d in sessions:
         daily = {str(r["ts_code"]) for r in tables.get(("daily", d), [])}
-        pit = {str(r.get("ts_code")) for r in listed_universe(stock_rows, d)}
-        if any(code not in pit and resolved_current(code) not in pit for code in daily): errors.append(f"daily symbols outside PIT universe: {d}")
+        pit_rows = listed_universe(stock_rows, d, resolutions)
+        pit = {str(r.get("ts_code")) for r in pit_rows}
+        if not daily <= pit: errors.append(f"daily symbols outside PIT universe: {d}")
+        identities = [stable_instrument_identity(code, resolutions) for code in pit]
+        if len(identities) != len(set(identities)): errors.append(f"duplicate issuer identity in PIT universe: {d}")
         if not daily <= {str(r.get("ts_code")) for r in tables.get(("adj_factor", d), [])}: errors.append(f"daily coverage missing from adj_factor: {d}")
         for dataset in ("daily_basic", "limits"):
             if manifest.get("capabilities", {}).get(dataset) == "available":
@@ -588,7 +730,16 @@ def validate_snapshot(root: str | Path) -> ValidationResult:
             errors.append("namechange combined table inconsistent with shards")
     if manifest.get("unexplained_symbols", {}).get("daily", {}).get("count", 0): errors.append("required daily symbols absent from stock_basic")
     for code, item in resolutions.items():
-        if item.get("resolution_status") == "resolved" and (not item.get("current_ts_code") or item.get("current_ts_code") not in stock_codes):
+        if item.get("resolution_status") != "resolved":
+            continue
+        required = (
+            "historical_ts_code", "current_ts_code", "effective_date",
+            "stable_instrument_id", "evidence_source_type", "resolution_method",
+        )
+        if (any(not str(item.get(field) or "") for field in required)
+                or item.get("historical_ts_code") != code
+                or item.get("current_ts_code") not in stock_codes
+                or not str(item.get("effective_date")).isdigit()):
             errors.append(f"invalid historical code resolution: {code}")
     if manifest.get("status") == "completed" and (_required_failures(manifest) or errors): errors.append("completed status inconsistent with required failures")
     return ValidationResult(not errors, tuple(errors), tuple(warnings), checked, manifest)
@@ -605,4 +756,7 @@ class SnapshotLoader:
     def adj_factor(self, trade_date: str): return self._one("adj_factor", trade_date)
     def optional(self, dataset: str, trade_date: str | None = None): return self._one(dataset, trade_date)
     def benchmark(self): return self._one("benchmark")
-    def listed_universe(self, trade_date: str): return listed_universe(self.stock_master(), trade_date)
+    def listed_universe(self, trade_date: str):
+        return listed_universe(self.stock_master(), trade_date, self.manifest.get("historical_code_resolutions", {}))
+    def stable_instrument_identity(self, ts_code: str) -> str:
+        return stable_instrument_identity(ts_code, self.manifest.get("historical_code_resolutions", {}))
