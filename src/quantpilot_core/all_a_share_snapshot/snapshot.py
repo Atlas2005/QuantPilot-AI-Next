@@ -24,6 +24,15 @@ from quantpilot_core.all_a_share_snapshot.storage import (
 )
 
 NAMECHANGE_RESPONSE_CAP = 10_000
+HISTORICAL_CODE_RESOLUTION_VERSION = 3
+HISTORICAL_CODE_RESOLUTION_SOURCE = "tushare_stock_basic_namechange_and_duplicate_market_rows"
+ECONOMIC_FIELDS = {
+    "daily": ("open", "high", "low", "close", "pre_close", "change", "pct_chg", "vol", "amount"),
+    "adj_factor": ("adj_factor",),
+    "daily_basic": ("close", "turnover_rate", "pe", "pb", "total_mv"),
+    "limits": ("up_limit", "down_limit"),
+    "suspend": ("suspend_timing", "suspend_type"),
+}
 STRUCTURAL_KEYS = {
     "stock_basic": ("ts_code",), "calendar": ("exchange", "cal_date"),
     "daily": ("ts_code", "trade_date"), "daily_basic": ("ts_code", "trade_date"),
@@ -81,7 +90,7 @@ def _base(config: SnapshotConfig, provider: AllAShareProvider) -> dict[str, Any]
      "mixed_instrument_integration": "external_instrument_master_boundary",
      "outside_universe_rows": {}, "instrument_audit": {}, "unexplained_symbols": {},
      "historical_code_resolutions": {}, "historical_code_resolution_calls": 0,
-     "historical_code_resolution_version": 2,
+     "historical_code_resolution_version": HISTORICAL_CODE_RESOLUTION_VERSION,
      "namechange": {"strategy": "per_symbol_shards", "response_cap": NAMECHANGE_RESPONSE_CAP, "complete": False,
                     "shard_size": config.namechange_shard_size, "planned_symbol_count": 0,
                     "completed_symbol_count": 0, "planned_shard_count": 0, "completed_shard_count": 0,
@@ -284,10 +293,14 @@ def _resolution_cache_valid(item: Mapping[str, Any], stocks: Sequence[Mapping[st
     current_codes = {str(row.get("ts_code") or "") for row in stocks}
     required = (
         "historical_ts_code", "current_ts_code", "effective_date",
-        "stable_instrument_id", "evidence_source_type", "resolution_method",
+        "stable_instrument_id", "stable_instrument_identity", "source", "evidence_source_type",
+        "resolution_method", "compared_canonical_fields",
     )
     return (
         item.get("resolution_status") == "resolved"
+        and item.get("resolution_version") == HISTORICAL_CODE_RESOLUTION_VERSION
+        and item.get("source") == HISTORICAL_CODE_RESOLUTION_SOURCE
+        and item.get("evidence_source_type") == HISTORICAL_CODE_RESOLUTION_SOURCE
         and all(str(item.get(field) or "") for field in required)
         and str(item.get("current_ts_code")) in current_codes
         and len(str(item.get("effective_date"))) == 8
@@ -317,82 +330,184 @@ def _stable_transition_identity(historical: str, current: str, effective: str) -
     return f"a_share_issuer:{token}"
 
 
-def _resolve_historical_code(code: str, stocks: Sequence[Mapping[str, Any]], config: SnapshotConfig,
-                             provider: AllAShareProvider, manifest: dict[str, Any],
-                             occurrence_date: str, pacer: _CallPacer | None = None) -> Mapping[str, Any]:
-    """Resolve a historical code from stock-basic and its own name history.
+def _same_value(left: object, right: object) -> bool:
+    if left is None or right is None:
+        return left is None and right is None
+    try:
+        if left != left and right != right:  # NaN values are equal evidence here.
+            return True
+    except Exception:
+        pass
+    return bool(left == right)
 
-    The required evidence is a unique same-exchange current security whose
-    stock-basic name occurs in the historical code's authoritative namechange
-    timeline and whose listing/origin date corroborates that timeline.
+
+def _matching_economic_fields(dataset: str, left: Mapping[str, Any],
+                              right: Mapping[str, Any]) -> tuple[str, ...] | None:
+    fields = ECONOMIC_FIELDS.get(dataset, ())
+    if not fields or any(field not in left or field not in right for field in fields):
+        return None
+    return fields if all(_same_value(left[field], right[field]) for field in fields) else None
+
+
+def _successor_timeline(stock: Mapping[str, Any], history: Sequence[Mapping[str, Any]],
+                        occurrence_date: str) -> Mapping[str, Any] | None:
+    current_name = str(stock.get("name") or "").strip()
+    list_date = _transition_date(stock.get("list_date"))
+    periods = _history_periods(history)
+    if not current_name or not list_date or list_date > occurrence_date:
+        return None
+    current_periods = [period for period in periods if period["name"] == current_name]
+    if len(current_periods) != 1 or current_periods[0]["end_date"] is not None:
+        return None
+    effective = str(current_periods[0]["start_date"])
+    historical = [
+        period for period in periods
+        if period["name"] != current_name
+        and period["end_date"] is not None
+        and str(period["start_date"]) <= occurrence_date <= str(period["end_date"])
+        and str(period["end_date"]) < effective
+    ]
+    if occurrence_date >= effective or not historical:
+        return None
+    valid_from = min(str(period["start_date"]) for period in historical)
+    return {
+        "effective_date": effective,
+        "historical_valid_from": valid_from,
+        "current_name": current_name,
+        "name_history": sorted({str(period["name"]) for period in periods})[:20],
+        "name_history_periods": periods,
+    }
+
+
+def _bounded_dates(item: Mapping[str, Any], key: str, trade_date: str) -> list[str]:
+    dates = {str(value) for value in item.get(key, ()) if _transition_date(value)}
+    dates.add(trade_date)
+    return sorted(dates)[-100:]
+
+
+def _record_duplicate_observation(item: Mapping[str, Any], trade_date: str,
+                                  dataset: str, fields: Sequence[str]) -> None:
+    if not isinstance(item, dict):
+        return
+    dates = _bounded_dates(item, "observed_duplicate_dates", trade_date)
+    item["observed_duplicate_dates"] = dates
+    previous = item.get("observed_duplicate_date_range", {})
+    previous_start = _transition_date(previous.get("start")) if isinstance(previous, Mapping) else ""
+    previous_end = _transition_date(previous.get("end")) if isinstance(previous, Mapping) else ""
+    item["observed_duplicate_date_range"] = {
+        "start": min(value for value in (previous_start, trade_date) if value),
+        "end": max(value for value in (previous_end, trade_date) if value),
+    }
+    item["compared_canonical_fields"] = sorted(
+        {str(value) for value in item.get("compared_canonical_fields", ())} | set(fields)
+    )
+    by_dataset = dict(item.get("compared_canonical_fields_by_dataset", {}))
+    by_dataset[dataset] = list(fields)
+    item["compared_canonical_fields_by_dataset"] = by_dataset
+
+
+def _resolve_historical_code(code: str, provider_rows: Sequence[Mapping[str, Any]], dataset: str,
+                             stocks: Sequence[Mapping[str, Any]], config: SnapshotConfig,
+                             provider: AllAShareProvider, manifest: dict[str, Any],
+                             occurrence_date: str, namechange_cache: dict[str, Sequence[Mapping[str, Any]]],
+                             pacer: _CallPacer | None = None) -> Mapping[str, Any]:
+    """Resolve an old code from duplicate market rows and successor history.
+
+    Tushare can emit both an old security code and its current alias before a
+    code transition, while ``stock_basic`` contains only the current code.
+    Candidate discovery therefore starts with an identical same-exchange row
+    in the dated market response.  Name history is then queried on that
+    current candidate, never on the absent historical code.
     """
     cached = manifest["historical_code_resolutions"].get(code)
-    if cached is not None: return cached
+    if cached is not None and cached.get("resolution_status") in {
+        "resolved", "unresolved_external_instrument",
+    }:
+        return cached
     exchange = code.rpartition(".")[2]
     if _is_external_instrument_code(code):
         result = {"historical_ts_code": code, "current_ts_code": None, "resolution_status": "unresolved_external_instrument",
-                  "exchange_match": False, "list_date_match": False, "name_history_match": False, "candidate_count": 0, "name_history": []}
+                  "exchange_match": False, "list_date_match": False, "name_history_match": False,
+                  "economic_payload_match": False, "candidate_count": 0, "name_history": []}
         manifest["historical_code_resolutions"][code] = result; return result
     try:
-        manifest["historical_code_resolution_calls"] += 1
-        history = _fetch(lambda: provider.fetch_namechange_by_ts_code(code), config, manifest, pacer, endpoint="namechange")
-        if len(history) >= NAMECHANGE_RESPONSE_CAP: raise ValueError("response cap reached")
-        periods = _history_periods(history)
-        names = sorted({str(item["name"]) for item in periods})
-        starts = sorted({str(item["start_date"]) for item in periods})
-        earliest = starts[0] if starts else None
-        candidates = []
+        historical_rows = [row for row in provider_rows if str(row.get("ts_code") or "") == code]
+        candidates: list[tuple[Mapping[str, Any], Mapping[str, Any], tuple[str, ...], Mapping[str, Any]]] = []
         for stock in stocks:
             current = str(stock.get("ts_code") or "")
-            current_name = str(stock.get("name") or "").strip()
-            list_date = _transition_date(stock.get("list_date"))
-            matching_starts = sorted(
-                str(item["start_date"]) for item in periods
-                if item["name"] == current_name
+            if current == code or current.rpartition(".")[2] != exchange:
+                continue
+            current_rows = [row for row in provider_rows if str(row.get("ts_code") or "") == current]
+            matched = next(
+                ((old_row, current_row, fields)
+                 for old_row in historical_rows
+                 for current_row in current_rows
+                 if (fields := _matching_economic_fields(dataset, old_row, current_row))),
+                None,
             )
-            if current == code or current.rpartition(".")[2] != exchange or not matching_starts:
+            if matched is None:
                 continue
-            transition_date_match = list_date in matching_starts
-            issuer_origin_match = bool(earliest and list_date == earliest)
-            if not transition_date_match and not issuer_origin_match:
+            if current not in namechange_cache:
+                manifest["historical_code_resolution_calls"] += 1
+                history = _fetch(
+                    lambda current=current: provider.fetch_namechange_by_ts_code(current),
+                    config, manifest, pacer, endpoint="namechange",
+                )
+                if len(history) >= NAMECHANGE_RESPONSE_CAP:
+                    raise ValueError("response cap reached")
+                namechange_cache[current] = history
+            timeline = _successor_timeline(stock, namechange_cache[current], occurrence_date)
+            if timeline is None:
                 continue
-            effective = list_date if transition_date_match else matching_starts[0]
-            if not effective or occurrence_date >= effective:
-                continue
-            method = (
-                "unique_exchange_namechange_effective_date_stock_basic_match"
-                if transition_date_match
-                else "unique_exchange_namechange_issuer_origin_match"
-            )
-            candidates.append((stock, effective, method, current_name))
+            old_row, current_row, fields = matched
+            candidates.append((stock, timeline, fields, current_row))
         resolved = len(candidates) == 1
-        stock, effective, method, matched_name = candidates[0] if resolved else ({}, None, None, None)
+        stock, timeline, fields, _ = candidates[0] if resolved else ({}, {}, (), {})
         current = str(stock.get("ts_code") or "") if resolved else None
+        effective = str(timeline.get("effective_date") or "") if resolved else None
+        identity = _stable_transition_identity(code, current, effective) if resolved else None
         result = {
             "historical_code": code,
             "successor_code": current,
             "historical_ts_code": code,
             "current_ts_code": current,
             "resolution_status": "resolved" if resolved else "unresolved_ambiguous_or_no_match",
-            "stable_instrument_id": _stable_transition_identity(code, current, effective) if resolved else None,
+            "resolution_version": HISTORICAL_CODE_RESOLUTION_VERSION,
+            "stable_instrument_id": identity,
+            "stable_instrument_identity": identity,
             "effective_date": effective,
-            "historical_valid_from": (
-                earliest if earliest and effective and earliest < effective
-                else config.start_date
-            ),
-            "evidence_source_type": "tushare_stock_basic_and_namechange",
+            "historical_valid_from": timeline.get("historical_valid_from") if resolved else None,
+            "source": HISTORICAL_CODE_RESOLUTION_SOURCE,
+            "evidence_source_type": HISTORICAL_CODE_RESOLUTION_SOURCE,
             "source_provider": str(provider.provider_name),
-            "resolution_method": method,
+            "resolution_method": "unique_same_exchange_duplicate_economic_payload_and_successor_namechange_v1" if resolved else None,
             "exchange_match": bool(candidates),
             "list_date_match": bool(candidates),
             "name_history_match": bool(candidates),
+            "economic_payload_match": bool(candidates),
             "candidate_count": len(candidates),
-            "earliest_history_start_date": earliest,
-            "matched_name": matched_name,
-            "name_history": names[:20],
-            "name_history_periods": periods,
+            "candidate_codes": sorted(str(item[0].get("ts_code") or "") for item in candidates)[:20],
+            "matched_name": timeline.get("current_name") if resolved else None,
+            "name_history": timeline.get("name_history", []) if resolved else [],
+            "name_history_periods": timeline.get("name_history_periods", []) if resolved else [],
+            "compared_canonical_fields": list(fields),
+            "compared_canonical_fields_by_dataset": {dataset: list(fields)} if resolved else {},
+            "issuer_origin_evidence": {
+                "stock_basic_list_date": _transition_date(stock.get("list_date")) if resolved else None,
+                "observed_duplicate_date": occurrence_date if resolved else None,
+                "list_date_no_later_than_observation": bool(resolved),
+            },
+            "observed_duplicate_dates": [occurrence_date] if resolved else [],
+            "observed_duplicate_date_range": (
+                {"start": occurrence_date, "end": occurrence_date}
+                if resolved else {"start": None, "end": None}
+            ),
             "affected_datasets": [],
             "affected_date_range": {"start": None, "end": None},
+            "suppressed_duplicate_alias_counts_by_dataset_date": {},
+            "suppressed_duplicate_alias_row_count": 0,
+            "normalized_alias_counts_by_dataset_date": {},
+            "normalized_alias_row_count": 0,
         }
     except Exception as exc:
         result = {"historical_code": code, "successor_code": None,
@@ -402,6 +517,76 @@ def _resolve_historical_code(code: str, stocks: Sequence[Mapping[str, Any]], con
                   "affected_date_range": {"start": None, "end": None}, "reason": _sanitize_reason(exc)}
     manifest["historical_code_resolutions"][code] = result
     return result
+
+
+def _set_transition_count(item: Mapping[str, Any], field: str, dataset: str,
+                          trade_date: str, count: int) -> None:
+    if not isinstance(item, dict):
+        return
+    key = f"{dataset}:{trade_date}"
+    counts = {str(name): int(value) for name, value in item.get(field, {}).items()}
+    counts[key] = count
+    item[field] = dict(sorted(counts.items()))
+    total_field = (
+        "suppressed_duplicate_alias_row_count"
+        if field.startswith("suppressed_") else "normalized_alias_row_count"
+    )
+    item[total_field] = sum(item[field].values())
+
+
+def _apply_code_transition_policy(rows: Sequence[Mapping[str, Any]], dataset: str,
+                                  resolutions: Mapping[str, Mapping[str, Any]]) -> tuple[list[Mapping[str, Any]], Mapping[str, int]]:
+    """Emit one code per stable issuer without requiring both aliases.
+
+    An identical undesired alias is suppressed when both aliases exist.  If a
+    companion dataset emits only the undesired alias, its code is normalized
+    to the PIT-valid alias.  Conflicting duplicate economics fail closed.
+    """
+    current_to_resolution = {
+        str(item.get("current_ts_code") or ""): item
+        for item in resolutions.values()
+        if item.get("resolution_status") == "resolved"
+    }
+    index: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for row in rows:
+        index.setdefault((str(row.get("ts_code") or ""), _date(row.get("trade_date"))), []).append(row)
+    output: list[Mapping[str, Any]] = []
+    counts = {"suppressed_duplicate_alias": 0, "normalized_alias_code": 0}
+    per_resolution: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        code = str(row.get("ts_code") or "")
+        trade_date = _date(row.get("trade_date"))
+        item = resolutions.get(code) or current_to_resolution.get(code)
+        if not item or item.get("resolution_status") != "resolved":
+            output.append(dict(row)); continue
+        historical = str(item.get("historical_ts_code") or "")
+        current = str(item.get("current_ts_code") or "")
+        desired = historical if is_historical_code_active(item, trade_date) else current
+        if code == desired:
+            output.append(dict(row))
+            _record_resolution_use(item, dataset, trade_date)
+            continue
+        desired_rows = index.get((desired, trade_date), [])
+        if desired_rows:
+            if not any(_matching_economic_fields(dataset, row, desired_row) for desired_row in desired_rows):
+                raise ValueError(f"conflicting historical-code aliases: {dataset}:{trade_date}")
+            counts["suppressed_duplicate_alias"] += 1
+            _record_duplicate_observation(item, trade_date, dataset, ECONOMIC_FIELDS.get(dataset, ()))
+            bucket = per_resolution.setdefault(id(item), {"item": item, "suppressed": 0, "normalized": 0})
+            bucket["suppressed"] += 1
+            continue
+        normalized = dict(row); normalized["ts_code"] = desired; output.append(normalized)
+        counts["normalized_alias_code"] += 1
+        _record_resolution_use(item, dataset, trade_date)
+        bucket = per_resolution.setdefault(id(item), {"item": item, "suppressed": 0, "normalized": 0})
+        bucket["normalized"] += 1
+    for bucket in per_resolution.values():
+        item = bucket["item"]
+        _set_transition_count(item, "suppressed_duplicate_alias_counts_by_dataset_date",
+                              dataset, _date(rows[0].get("trade_date")) if rows else "", bucket["suppressed"])
+        _set_transition_count(item, "normalized_alias_counts_by_dataset_date",
+                              dataset, _date(rows[0].get("trade_date")) if rows else "", bucket["normalized"])
+    return output, counts
 
 
 def _record_resolution_use(item: Mapping[str, Any], dataset: str, trade_date: str) -> None:
@@ -464,7 +649,7 @@ def build_snapshot(config: SnapshotConfig, provider: AllAShareProvider) -> Mappi
             stocks = _deduplicate("stock_basic", _fetch(lambda: provider.fetch_stock_basic(config.list_statuses), config, manifest, pacer, endpoint="stock_basic"))
             _store(root, manifest, "stock_basic", stocks, None)
         # Unresolved and legacy resolution records must be retried.  Only the
-        # complete v2 provenance contract is safe to reuse without a provider
+        # complete duplicate-row v3 provenance contract is safe to reuse without a provider
         # call on a resumed build.
         manifest["historical_code_resolutions"] = {
             str(code): dict(item)
@@ -476,6 +661,7 @@ def build_snapshot(config: SnapshotConfig, provider: AllAShareProvider) -> Mappi
         manifest["boards"] = sorted({str(x.get("market")) for x in stocks if x.get("market")})
         statuses = {s: sum(1 for x in stocks if str(x.get("list_status")) == s) for s in config.list_statuses}
         manifest["symbol_counts"] = {"total": len(all_codes - {""}), "by_status": statuses, "listed": statuses.get("L", 0), "delisted": statuses.get("D", 0)}
+        namechange_cache: dict[str, Sequence[Mapping[str, Any]]] = {}
 
         old_calendar = old.get(("calendar", None))
         if old_calendar and _partition_valid(root, old_calendar, "calendar", None):
@@ -504,12 +690,23 @@ def build_snapshot(config: SnapshotConfig, provider: AllAShareProvider) -> Mappi
                 provider_rows = _fetch(lambda method=method, d=d: method(d), config, manifest, pacer, endpoint=dataset)
                 if dataset == "daily":
                     for code in sorted({str(row.get("ts_code") or "") for row in provider_rows} - all_codes - {""}):
-                        _resolve_historical_code(code, stocks, config, provider, manifest, d, pacer)
+                        _resolve_historical_code(
+                            code, provider_rows, dataset, stocks, config, provider,
+                            manifest, d, namechange_cache, pacer,
+                        )
+                original_provider_count = len(provider_rows)
+                provider_rows, transition_counts = _apply_code_transition_policy(
+                    provider_rows, dataset, manifest["historical_code_resolutions"]
+                )
                 pit_codes = {
                     str(row.get("ts_code") or "")
                     for row in listed_universe(stocks, d, manifest["historical_code_resolutions"])
                 }
                 rows, audit = _filter_equity_universe(provider_rows, pit_codes, all_codes, dataset, dataset == "daily", manifest["historical_code_resolutions"])
+                audit = dict(audit); audit["counts"] = dict(audit["counts"])
+                audit["provider_row_count"] = original_provider_count
+                for key, value in transition_counts.items():
+                    audit["counts"][key] = audit["counts"].get(key, 0) + value
                 if audit["counts"].get("absent_stock_basic", 0):
                     manifest["failed_partitions"].append({"dataset": dataset, "trade_date": d, "required": True,
                         "exception_type": "ProviderDataError", "exception_category": "deterministic_or_provider",
@@ -545,11 +742,19 @@ def build_snapshot(config: SnapshotConfig, provider: AllAShareProvider) -> Mappi
                         # malformed suspend event cannot be mistaken for a
                         # legitimate empty response.
                         _deduplicate(dataset, provider_rows)
+                        original_provider_count = len(provider_rows)
+                        provider_rows, transition_counts = _apply_code_transition_policy(
+                            provider_rows, dataset, manifest["historical_code_resolutions"]
+                        )
                         pit_codes = {
                             str(row.get("ts_code") or "")
                             for row in listed_universe(stocks, d, manifest["historical_code_resolutions"])
                         }
                         rows, audit = _filter_equity_universe(provider_rows, pit_codes, all_codes, dataset, False, manifest["historical_code_resolutions"])
+                        audit = dict(audit); audit["counts"] = dict(audit["counts"])
+                        audit["provider_row_count"] = original_provider_count
+                        for key, value in transition_counts.items():
+                            audit["counts"][key] = audit["counts"].get(key, 0) + value
                         _store(root, manifest, dataset, _deduplicate(dataset, rows), d, audit=audit)
                     except Exception as exc:
                         failed = True
@@ -734,11 +939,17 @@ def validate_snapshot(root: str | Path) -> ValidationResult:
             continue
         required = (
             "historical_ts_code", "current_ts_code", "effective_date",
-            "stable_instrument_id", "evidence_source_type", "resolution_method",
+            "stable_instrument_id", "stable_instrument_identity", "source", "evidence_source_type",
+            "resolution_method", "compared_canonical_fields",
         )
         if (any(not str(item.get(field) or "") for field in required)
+                or item.get("resolution_version") != HISTORICAL_CODE_RESOLUTION_VERSION
+                or item.get("source") != HISTORICAL_CODE_RESOLUTION_SOURCE
+                or item.get("evidence_source_type") != HISTORICAL_CODE_RESOLUTION_SOURCE
                 or item.get("historical_ts_code") != code
                 or item.get("current_ts_code") not in stock_codes
+                or item.get("stable_instrument_identity") != item.get("stable_instrument_id")
+                or len(str(item.get("effective_date"))) != 8
                 or not str(item.get("effective_date")).isdigit()):
             errors.append(f"invalid historical code resolution: {code}")
     if manifest.get("status") == "completed" and (_required_failures(manifest) or errors): errors.append("completed status inconsistent with required failures")
