@@ -35,6 +35,17 @@ class ProviderDataError(ProviderError):
     """Raised when provider output cannot be normalized safely."""
 
 
+class ProviderArgumentError(ProviderError):
+    """Raised when a request is invalid before any plugin or transport call.
+
+    Distinct from :class:`ProviderDataError`: this class means the request
+    itself (symbols, fields, time window) was rejected during local
+    validation, never that provider output failed to normalize. Consumers can
+    count it as an invalid-argument skip without treating it as a connection
+    failure.
+    """
+
+
 @dataclass(frozen=True)
 class DailyBarRequest:
     symbol: str

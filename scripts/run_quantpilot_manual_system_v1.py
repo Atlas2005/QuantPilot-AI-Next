@@ -130,6 +130,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.phase == "acceptance" and not result.get("automated_checks_passed"):
             return 3
         return 0
+    except KeyboardInterrupt:
+        print(
+            json.dumps(
+                {
+                    "status": "cancelled",
+                    "phase": args.phase,
+                    "broker_calls": 0,
+                    "order_submission_calls": 0,
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+            )
+        )
+        return 130
     except Exception as exc:
         secret = os.environ.get("DEEPSEEK_API_KEY")
         print(

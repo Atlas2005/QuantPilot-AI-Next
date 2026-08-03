@@ -107,6 +107,36 @@ $report = Get-Content -LiteralPath ".cache\quantpilot_manual_system_v1\after_clo
 股票的一分钟普通 K 线，公式应显示买、持、弱、卖、失效和入场/失效/目标价位。
 标记数据来自同一份持久事件日志，历史基线不会重复弹出警报。
 
+公式生成器与通达信 V6.06 永久兼容：所有标识符长度不超过 15 个字符
+（失效线使用 `INV_LINE`，不再生成超长的 `INVALIDATION_LINE`）；`DRAWTEXT`
+只输出固定文字 `买 / 持 / 弱 / 卖 / 失效`，不再生成 `NUMTOSTR` 字符串拼接；
+`SIGNALS_TQ(1,0)` 到 `SIGNALS_TQ(16,0)` 字段映射和
+`ENTRY_LOW_LINE / ENTRY_HIGH_LINE / INV_LINE / TARGET1_LINE` 输出不变。
+安装说明见生成的 `INSTALL_AND_VERIFY.txt`。
+
+## 运行时稳定性
+
+- TQ 插件会拒绝空参数调用（控制台输出"入参不能为空"并丢弃连接）。所有
+  plugin-boundary 调用在到达 `tqcenter` 前先校验参数：live historical prime
+  未提供 `--start-time/--end-time` 时，从 `manual_plan.json` 推导
+  `start=决策日 09:30`、`end=执行日当前已完成分钟`（可注入时钟，盘中重启不会
+  固定为 15:00），绝不以空时间参数调用 `get_market_data`；显式时间必须同时
+  提供、为 14 位 `YYYYMMDDHHMMSS` 且 `start <= end`，只提供一个直接抛结构化
+  请求错误。插件边界请求错误使用窄异常 `ProviderArgumentError`（与输出
+  规范化失败 `ProviderDataError` 区分），collector 只把它计为 invalid
+  argument，不触发重连。
+- 单个无效 symbol、单次空行情、午间休市或无新 bar 均为正常 no-data 状态，
+  只记录统计，不关闭 adapter、不重建连接。
+- 只有真实 provider 失败才触发有界重连：连续失败达到阈值后按退避重试，
+  重连有上限并记录 `reconnect_attempt_count / reconnect_success_count`，
+  恢复后重置连续失败计数；`collector` 报告新增
+  `invalid_argument_count / no_data_count / provider_failure_count /
+  symbols_skipped_count` 审计字段。
+- 同一 `system-dir` 的 intraday 模式同一时刻只允许一个写入实例：第二个实例
+  快速失败并报告 owner PID；崩溃遗留的陈旧锁会在下一次启动时自动恢复。
+- `Ctrl+C` 是正常取消：CLI 输出 `status=cancelled` 并以退出码 130 退出，
+  不打印完整 traceback；PowerShell 包装器把 130 识别为用户取消而不是失败。
+
 `send_bt_data` 返回 `ErrorId=0` 只表示传输被接受。只有用户在真实 Windows
 通达信普通 K 线上观察到标记，才能把可视叠加从
 `pending_windows_visual_confirmation` 视为通过；未通过时，QPTY、`send_warn`

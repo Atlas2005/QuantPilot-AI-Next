@@ -20,6 +20,7 @@ from quantpilot_core.data_provider_normalization import canonicalize_a_share_sym
 from quantpilot_core.real_data_provider.contracts import (
     NormalizedIntradayBar,
     NormalizedLevel1Event,
+    ProviderArgumentError,
     ProviderDataError,
     ProviderDependencyError,
     ProviderError,
@@ -299,8 +300,12 @@ class TDXLevel1Provider:
     def get_market_snapshot(self, symbols: Sequence[str]) -> tuple[NormalizedLevel1Event, ...]:
         api = self._require_api()
         requested = _canonical_symbols(symbols)
-        if not requested:
-            raise ValueError("symbols must contain at least one symbol")
+        _validate_plugin_query_arguments(
+            operation="get_market_snapshot",
+            symbols=requested,
+            collection_phase="live_snapshot_poll",
+            reason=_require_non_empty_snapshot_fields(self._snapshot_fields),
+        )
         received_at = _shanghai_timestamp(self._clock())
         events: list[NormalizedLevel1Event] = []
         for symbol in requested:
@@ -369,10 +374,17 @@ class TDXLevel1Provider:
 
         api = self._require_api()
         requested = _canonical_symbols(symbols)
-        if not requested:
-            raise ValueError("symbols must contain at least one symbol")
+        _validate_plugin_query_arguments(
+            operation="get_market_data",
+            symbols=requested,
+            collection_phase="historical_prime",
+            reason=_require_non_empty_time_window(start_time, end_time),
+        )
         if period != "1m":
-            raise ValueError("TDX historical intraday bars support period='1m' only")
+            raise ProviderArgumentError(
+                "TDX get_market_data rejected during historical_prime: "
+                "period must be '1m' only"
+            )
         requested_fields = tuple(str(field).strip() for field in fields if str(field).strip())
         _require_historical_minute_fields(requested_fields)
         get_market_data = getattr(api, "get_market_data", None)
@@ -400,8 +412,12 @@ class TDXLevel1Provider:
     ) -> Any:
         api = self._require_api()
         requested = _canonical_symbols(symbols)
-        if not requested:
-            raise ValueError("symbols must contain at least one symbol")
+        _validate_plugin_query_arguments(
+            operation="subscribe_hq",
+            symbols=requested,
+            collection_phase="subscription",
+            reason=None,
+        )
         if not callable(callback):
             raise TypeError("callback must be callable")
         callback_id = _register_subscription_callback(callback, self._callback_diagnostics)
@@ -980,7 +996,56 @@ def _sanitize_exception_message(value: Any) -> str:
 
 
 def _canonical_symbols(symbols: Sequence[str]) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(canonicalize_tdx_level1_symbol(symbol) for symbol in symbols if str(symbol).strip()))
+    output: list[str] = []
+    for symbol in symbols:
+        text = str(symbol).strip()
+        if not text:
+            continue
+        try:
+            output.append(canonicalize_tdx_level1_symbol(text))
+        except ProviderDataError as exc:
+            raise ProviderArgumentError(str(exc)) from exc
+    return tuple(dict.fromkeys(output))
+
+
+def _validate_plugin_query_arguments(
+    *,
+    operation: str,
+    symbols: Sequence[str],
+    collection_phase: str,
+    reason: str | None,
+) -> None:
+    """Reject invalid plugin-boundary arguments before they reach tqcenter.
+
+    The TDX TQ plugin prints ``入参不能为空`` and drops its connection when a
+    call arrives with empty arguments. Validating here converts that opaque
+    plugin storm into a structured, per-symbol contained ProviderArgumentError
+    carrying operation, symbol, collection phase, and reason.
+    """
+
+    if not symbols:
+        raise ProviderArgumentError(
+            f"TDX {operation} skipped during {collection_phase}: "
+            "no valid symbols supplied (raw symbols were empty)"
+        )
+    if reason is not None:
+        raise ProviderArgumentError(
+            f"TDX {operation} skipped during {collection_phase}: {reason} "
+            f"for symbols {', '.join(symbols)}"
+        )
+
+
+def _require_non_empty_time_window(start_time: str, end_time: str) -> str | None:
+    if not str(start_time or "").strip() or not str(end_time or "").strip():
+        return "start_time and end_time must be non-empty"
+    return None
+
+
+def _require_non_empty_snapshot_fields(fields: Sequence[str]) -> str | None:
+    for field in fields:
+        if not str(field or "").strip():
+            return "snapshot field names must be non-empty"
+    return None
 
 
 def canonicalize_tdx_level1_symbol(value: Any) -> str:

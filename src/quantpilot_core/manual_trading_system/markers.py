@@ -40,14 +40,14 @@ EXIT_SIG     := SIGNALS_TQ(16,0);
 VALID := SIGNAL_VALID = 1 AND MATERIAL = 1;
 ENTRY_LOW_LINE: IF(VALID, ENTRY_LOW, DRAWNULL), COLORCYAN, DOTLINE;
 ENTRY_HIGH_LINE: IF(VALID, ENTRY_HIGH, DRAWNULL), COLORCYAN, DOTLINE;
-INVALIDATION_LINE: IF(VALID, INVALIDATION, DRAWNULL), COLORGREEN, DOTLINE;
+INV_LINE: IF(VALID, INVALIDATION, DRAWNULL), COLORGREEN, DOTLINE;
 TARGET1_LINE: IF(VALID, TARGET1, DRAWNULL), COLORRED, DOTLINE;
 DRAWICON(VALID AND ENTRY_SIG = 1, LOW * 0.99, 1);
 DRAWICON(VALID AND EXIT_SIG = 1, HIGH * 1.01, 2);
-DRAWTEXT(VALID AND PRED_STATE = 1, LOW * 0.98, '买 ' + NUMTOSTR(ENTRY_PROB, 0) + '%'), COLORRED;
-DRAWTEXT(VALID AND PRED_STATE = 2, LOW * 0.98, '持 ' + NUMTOSTR(CONT_PROB, 0) + '%'), COLORYELLOW;
+DRAWTEXT(VALID AND PRED_STATE = 1, LOW * 0.98, '买'), COLORRED;
+DRAWTEXT(VALID AND PRED_STATE = 2, LOW * 0.98, '持'), COLORYELLOW;
 DRAWTEXT(VALID AND PRED_STATE = 3, HIGH * 1.02, '弱'), COLORGRAY;
-DRAWTEXT(VALID AND PRED_STATE = 4, HIGH * 1.02, '卖 ' + NUMTOSTR(EXIT_PROB, 0) + '%'), COLORGREEN;
+DRAWTEXT(VALID AND PRED_STATE = 4, HIGH * 1.02, '卖'), COLORGREEN;
 DRAWTEXT(VALID AND PRED_STATE = 5, HIGH * 1.02, '失效'), COLORGREEN;
 """
 
@@ -61,6 +61,15 @@ INSTALL_README = """QuantPilot TDX marker bundle
 4. Open a QPTY symbol on the ordinary one-minute chart and apply the formula.
 5. Confirm 买/持/弱/卖/失效 occur at the timestamps in marker_events.csv.
 6. Confirm entry, invalidation, and target levels match the same ledger row.
+
+TongDaXin V6.06 compatibility:
+- Every formula identifier is at most 15 characters (INV_LINE replaces the
+  previously over-long INVALIDATION_LINE).
+- DRAWTEXT labels are fixed text only: 买 / 持 / 弱 / 卖 / 失效. The dynamic
+  NUMTOSTR string concatenation is not supported by the V6.06 formula
+  environment and is no longer generated.
+- SIGNALS_TQ(1,0)..(16,0) column mapping and the ENTRY_LOW_LINE /
+  ENTRY_HIGH_LINE / INV_LINE / TARGET1_LINE outputs are unchanged.
 
 The JSON status remains pending_windows_visual_confirmation until a human
 observes the ordinary chart. ErrorId=0 is transport acceptance only.

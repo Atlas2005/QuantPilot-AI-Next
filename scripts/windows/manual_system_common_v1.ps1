@@ -20,8 +20,13 @@ function Invoke-QPManualSystem([string[]]$Arguments) {
     Push-Location $root
     try {
         & $python $script @Arguments
-        if ($LASTEXITCODE -ne 0) {
-            throw "QuantPilot manual system failed with exit code $LASTEXITCODE."
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -eq 130) {
+            Write-Host "QuantPilot manual system cancelled by user (Ctrl+C)."
+            exit 130
+        }
+        if ($exitCode -ne 0) {
+            throw "QuantPilot manual system failed with exit code $exitCode."
         }
     }
     finally {

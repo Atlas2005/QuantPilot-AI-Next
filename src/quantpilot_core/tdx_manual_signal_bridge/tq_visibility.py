@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence, overload
 
-from quantpilot_core.real_data_provider import canonicalize_tdx_level1_symbol
+from quantpilot_core.real_data_provider import (
+    ProviderDataError,
+    canonicalize_tdx_level1_symbol,
+)
 from quantpilot_core.tdx_manual_signal_bridge.tq_publisher import (
     normalize_tq_response,
     publish_to_tq,
@@ -132,7 +135,10 @@ def publish_transition_warnings(
     """Publish only visible lifecycle transitions through ``send_warn``."""
 
     resolved = _resolve_api(api)
-    warnings = build_transition_warning_payloads(records)
+    warnings, skipped = build_transition_warning_payloads(
+        records,
+        include_skip_diagnostics=True,
+    )
     results = [
         _invoke_visibility_api(resolved, "send_warn", warning)
         for warning in warnings
@@ -144,6 +150,8 @@ def publish_transition_warnings(
         "states": [warning["state"] for warning in warnings],
         "symbols": [warning["stock_code"] for warning in warnings],
         "results": results,
+        "skipped_warning_count": len(skipped),
+        "skipped_warning_diagnostics": list(skipped),
         "broker_or_order_api_calls": False,
     }
 
@@ -169,21 +177,74 @@ def build_after_close_message(
     return text[:500]
 
 
+@overload
 def build_transition_warning_payloads(
     records: Sequence[Mapping[str, Any]],
-) -> tuple[dict[str, Any], ...]:
+) -> tuple[dict[str, Any], ...]: ...
+
+
+@overload
+def build_transition_warning_payloads(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    include_skip_diagnostics: Literal[True],
+) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]: ...
+
+
+def build_transition_warning_payloads(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    include_skip_diagnostics: bool = False,
+) -> tuple[dict[str, Any], ...] | tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+    """Build visible transition payloads, auditing any skipped record.
+
+    Records with empty or invalid symbols, or without a timestamp, are never
+    sent to the TQ plugin (it rejects empty arguments), but they are not
+    silently dropped: with ``include_skip_diagnostics=True`` the function
+    returns ``(payloads, skipped_diagnostics)``, where each diagnostic
+    carries the signal id, raw symbol, timestamp presence, and reason.
+    """
+
     output: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
     seen: set[str] = set()
     for record in records:
         state = str(record.get("state", "")).upper()
         if state not in VISIBLE_WARNING_STATES:
             continue
-        symbol = canonicalize_tdx_level1_symbol(record.get("symbol", ""))
+        raw_symbol = str(record.get("symbol") or "").strip()
+        signal_id = str(record.get("signal_id") or "")
         timestamp = str(
             record.get("timestamp")
             or record.get("decision_timestamp")
             or ""
         )
+        if not raw_symbol:
+            skipped.append({
+                "signal_id": signal_id,
+                "raw_symbol": "",
+                "has_timestamp": bool(timestamp),
+                "reason": "empty_symbol",
+            })
+            continue
+        try:
+            symbol = canonicalize_tdx_level1_symbol(raw_symbol)
+        except ProviderDataError:
+            skipped.append({
+                "signal_id": signal_id,
+                "raw_symbol": raw_symbol,
+                "has_timestamp": bool(timestamp),
+                "reason": "invalid_symbol",
+            })
+            continue
+        if not timestamp:
+            skipped.append({
+                "signal_id": signal_id,
+                "raw_symbol": raw_symbol,
+                "has_timestamp": False,
+                "reason": "empty_timestamp",
+            })
+            continue
         signal_id = str(record.get("signal_id") or f"{symbol}:{timestamp}:{state}")
         if signal_id in seen:
             continue
@@ -206,6 +267,8 @@ def build_transition_warning_payloads(
                 "reason": reason[:500],
             }
         )
+    if include_skip_diagnostics:
+        return tuple(output), tuple(skipped)
     return tuple(output)
 
 

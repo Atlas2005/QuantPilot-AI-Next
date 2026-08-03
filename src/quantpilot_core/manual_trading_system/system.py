@@ -31,6 +31,7 @@ from quantpilot_core.quant_firm import (
 from quantpilot_core.real_data_provider import (
     LiveLevel1Collector,
     NormalizedIntradayBar,
+    ProviderArgumentError,
     TDXLevel1Provider,
     canonicalize_tdx_level1_symbol,
 )
@@ -51,6 +52,7 @@ from quantpilot_core.manual_trading_system.markers import (
     write_json_atomic,
     write_text_atomic,
 )
+from quantpilot_core.manual_trading_system.runtime_lock import SystemDirLock
 
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
@@ -412,13 +414,43 @@ def run_intraday(
     provider: Any | None = None,
     tq_publisher: Any | None = None,
     collector_factory: Callable[..., Any] = LiveLevel1Collector,
+    clock: Callable[[], datetime] | None = None,
 ) -> Mapping[str, Any]:
-    """Start Level-1 monitoring without an account, database, or paper cycle."""
+    """Start Level-1 monitoring without an account, database, or paper cycle.
+
+    One system directory allows a single live intraday writer at a time.
+    ``clock`` is injectable so the live historical prime window can be tested
+    deterministically; replay and historical scenarios must pass explicit
+    ``--start-time/--end-time`` instead of relying on the wall clock.
+    """
 
     if config.duration_seconds < 0:
         raise ValueError("duration_seconds must be non-negative")
     if config.history_count <= 0:
         raise ValueError("history_count must be positive")
+    root = Path(config.system_dir)
+    lock = SystemDirLock(root)
+    lock.acquire()
+    try:
+        return _run_intraday_locked(
+            config,
+            provider=provider,
+            tq_publisher=tq_publisher,
+            collector_factory=collector_factory,
+            clock=clock,
+        )
+    finally:
+        lock.release()
+
+
+def _run_intraday_locked(
+    config: IntradayConfig,
+    *,
+    provider: Any | None = None,
+    tq_publisher: Any | None = None,
+    collector_factory: Callable[..., Any] = LiveLevel1Collector,
+    clock: Callable[[], datetime] | None = None,
+) -> Mapping[str, Any]:
     root = Path(config.system_dir)
     plan = _require_mapping(_load_json(root / "manual_plan.json"), "manual_plan.json")
     symbols = experience_plan_symbols(plan)
@@ -435,11 +467,13 @@ def run_intraday(
     try:
         resilient.initialize()
         initialized = True
+        now = (clock or (lambda: datetime.now(SHANGHAI_TZ)))()
+        history_times = _history_time_window(config, plan, now)
         history = list(_fetch_history_by_symbol(
             base_provider,
             symbols,
-            start_time=config.start_time,
-            end_time=config.end_time,
+            start_time=history_times["start_time"],
+            end_time=history_times["end_time"],
             count=config.history_count,
             errors=history_errors,
         ))
@@ -485,8 +519,8 @@ def run_intraday(
             poll_interval_seconds=float(config.poll_interval_seconds),
             shadow=True,
         )
+        initialized = False  # collector.run owns provider shutdown (its finally always closes)
         collector_report = collector.run(float(config.duration_seconds))
-        initialized = False  # collector owns provider shutdown
         report = {
             "schema_version": MANUAL_SYSTEM_VERSION,
             "phase": "intraday",
@@ -850,6 +884,105 @@ def _manual_experience_plan(
         },
         "broker_or_order_api_calls": False,
     }
+
+
+def _history_time_window(
+    config: IntradayConfig,
+    plan: Mapping[str, Any],
+    now: datetime,
+) -> Mapping[str, str]:
+    """Return a concrete plugin-boundary time window for the history fetch.
+
+    The TQ plugin rejects empty ``start_time``/``end_time`` arguments with an
+    opaque console message and drops the connection; never send empty time
+    arguments to ``get_market_data``.
+
+    Live prime design: ``start`` is the decision session 09:30 (prior context)
+    and ``end`` is the execution session's latest completed trading minute as
+    of the injectable clock — pre-open it is the decision session 15:00 (never
+    a future execution minute), lunch it is 11:30, and after close it is the
+    execution session 15:00. Explicit ``--start-time/--end-time`` (replay/
+    historical use) must be provided together, be 14-digit
+    ``YYYYMMDDHHMMSS``, and satisfy ``start <= end``; providing only one is a
+    structured request error.
+    """
+
+    start_time = str(config.start_time or "").strip()
+    end_time = str(config.end_time or "").strip()
+    if start_time or end_time:
+        if not (start_time and end_time):
+            raise ProviderArgumentError(
+                "intraday history window requires both start_time and end_time "
+                "(got start_time=%r end_time=%r)" % (start_time, end_time)
+            )
+        _require_tdx_timestamp_format(start_time)
+        _require_tdx_timestamp_format(end_time)
+        if start_time > end_time:
+            raise ProviderArgumentError(
+                "intraday history start_time must not be later than end_time "
+                f"(start_time={start_time} end_time={end_time})"
+            )
+        return {"start_time": start_time, "end_time": end_time}
+    decision_date = _compact_session_date(plan.get("decision_session"))
+    execution_date = _compact_session_date(plan.get("target_session"))
+    derived_start = f"{decision_date}093000" if decision_date else ""
+    derived_end = _live_historical_end(execution_date, decision_date, now)
+    return {
+        "start_time": derived_start,
+        "end_time": derived_end,
+    }
+
+
+def _live_historical_end(
+    execution_date: str,
+    decision_date: str,
+    now: datetime,
+) -> str:
+    """Latest completed trading minute of the execution session as of ``now``.
+
+    A-share session model: 09:30-11:30 morning, 13:00-15:00 afternoon, lunch
+    11:30-13:00. Returns:
+
+    - pre-open (before execution 09:30): the decision session 15:00, never a
+      future execution-session minute;
+    - morning/afternoon: the latest completed wall-clock minute;
+    - lunch: 11:30 (the last completed morning minute), never a lunch or
+      future minute;
+    - after close: the execution session 15:00.
+    """
+
+    shanghai_now = now.astimezone(SHANGHAI_TZ) if now.tzinfo is not None else now.replace(tzinfo=SHANGHAI_TZ)
+    current_minute = shanghai_now.strftime("%Y%m%d%H%M") + "00"
+    if not execution_date:
+        return current_minute
+    now_compact = shanghai_now.strftime("%Y%m%d%H%M%S")
+    session_open = f"{execution_date}093000"
+    morning_close = f"{execution_date}113000"
+    afternoon_open = f"{execution_date}130000"
+    session_close = f"{execution_date}150000"
+    if now_compact < session_open:
+        if decision_date:
+            return f"{decision_date}150000"
+        return current_minute
+    if now_compact < morning_close:
+        return current_minute
+    if now_compact < afternoon_open:
+        return morning_close
+    if now_compact < session_close:
+        return current_minute
+    return session_close
+
+
+def _require_tdx_timestamp_format(value: str) -> None:
+    if not re.fullmatch(r"\d{14}", value):
+        raise ProviderArgumentError(
+            f"intraday history time must be 14-digit YYYYMMDDHHMMSS (got {value!r})"
+        )
+
+
+def _compact_session_date(session: Any) -> str:
+    date_part = str(session or "").strip()[:10]
+    return date_part.replace("-", "").replace("/", "")
 
 
 def _fetch_history_by_symbol(

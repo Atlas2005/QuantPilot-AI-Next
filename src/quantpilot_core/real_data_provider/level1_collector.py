@@ -12,6 +12,8 @@ from quantpilot_core.real_data_provider.contracts import (
     Level1MarketDataProvider,
     NormalizedIntradayBar,
     NormalizedLevel1Event,
+    ProviderArgumentError,
+    ProviderDataError,
     ProviderError,
 )
 from quantpilot_core.real_data_provider.intraday_aggregation import MinuteBarAggregator
@@ -59,6 +61,13 @@ class Level1CollectorReport:
     unsubscribe_error_type: str | None
     sanitized_unsubscribe_error: str | None
     shadow: bool
+    invalid_argument_count: int = 0
+    no_data_count: int = 0
+    provider_failure_count: int = 0
+    reconnect_attempt_count: int = 0
+    reconnect_success_count: int = 0
+    symbols_skipped_count: int = 0
+    last_sanitized_provider_error: str | None = None
 
     def as_dict(self) -> Mapping[str, Any]:
         return asdict(self)
@@ -78,6 +87,11 @@ class LiveLevel1Collector:
         poll_interval_seconds: float = 1.0,
         shadow: bool = False,
         monotonic: Any = None,
+        max_consecutive_retries: int = 3,
+        retry_backoff_seconds: float = 1.0,
+        retry_backoff_cap_seconds: float = 30.0,
+        max_reconnect_attempts: int = 3,
+        reconnect_backoff_seconds: float = 5.0,
     ) -> None:
         normalized = tuple(
             dict.fromkeys(
@@ -97,6 +111,11 @@ class LiveLevel1Collector:
         self.storage_backend = storage_backend or _storage_backend_name(sink)
         self.poll_interval_seconds = float(poll_interval_seconds)
         self.shadow = bool(shadow)
+        self.max_consecutive_retries = max(1, int(max_consecutive_retries))
+        self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
+        self.retry_backoff_cap_seconds = max(self.retry_backoff_seconds, float(retry_backoff_cap_seconds))
+        self.max_reconnect_attempts = max(0, int(max_reconnect_attempts))
+        self.reconnect_backoff_seconds = max(0.0, float(reconnect_backoff_seconds))
         self._monotonic = monotonic or time.monotonic
         self._stop = threading.Event()
         self._refresh_lock = threading.Lock()
@@ -124,6 +143,14 @@ class LiveLevel1Collector:
         self._unsubscribe_succeeded = False
         self._unsubscribe_error_type: str | None = None
         self._sanitized_unsubscribe_error: str | None = None
+        self._invalid_argument_count = 0
+        self._no_data_count = 0
+        self._provider_failure_count = 0
+        self._reconnect_attempt_count = 0
+        self._reconnect_success_count = 0
+        self._symbols_skipped_count = 0
+        self._consecutive_failures = 0
+        self._last_sanitized_provider_error: str | None = None
 
     @property
     def events(self) -> tuple[NormalizedLevel1Event, ...]:
@@ -144,7 +171,16 @@ class LiveLevel1Collector:
             raise RuntimeError("collector cannot be restarted after shutdown")
         self.provider.initialize()
         self._running = True
-        self.refresh(self.symbols, count_as_change=False)
+        # The initial snapshot uses the same classification, backoff, and
+        # connection recovery as the poll loop: request errors skip without
+        # touching the connection, no-data continues, and real provider
+        # failures retry with backoff until the recovery budget is exhausted,
+        # at which point the original error is raised instead of running on.
+        self._initial_refresh()
+        if self._subscription is None:
+            self._subscribe()
+
+    def _subscribe(self) -> None:
         self._subscription_attempted = True
         try:
             self._subscription = self.provider.subscribe_hq(self.symbols, self._on_refresh_notification)
@@ -179,11 +215,104 @@ class LiveLevel1Collector:
                 now = self._monotonic()
                 if now >= next_poll:
                     self._polling_count += 1
-                    self.refresh(self.symbols)
-                    next_poll = now + self.poll_interval_seconds
+                    self._refresh_with_resilience()
+                    next_poll = self._monotonic() + self.poll_interval_seconds
         finally:
             self.shutdown()
         return self.report()
+
+    def _initial_refresh(self) -> None:
+        """Bounded initial snapshot with the same classification as polling.
+
+        Loops with backoff until the first successful poll, or until the
+        recovery budget is exhausted, in which case the original provider
+        error is raised. Only ``ProviderArgumentError`` counts as an invalid
+        argument; any other error propagates to the caller. No-data never
+        retries and never touches the connection.
+        """
+
+        while True:
+            try:
+                events = self.refresh(self.symbols, count_as_change=False)
+            except ProviderArgumentError as exc:
+                self._invalid_argument_count += 1
+                self._last_sanitized_provider_error = sanitize_tdx_error_message(str(exc))
+                return
+            except ProviderError as exc:
+                self._provider_failure_count += 1
+                self._consecutive_failures += 1
+                self._last_sanitized_provider_error = sanitize_tdx_error_message(str(exc))
+                delay = min(
+                    self.retry_backoff_seconds * (2 ** (self._consecutive_failures - 1)),
+                    self.retry_backoff_cap_seconds,
+                )
+                if self._consecutive_failures >= self.max_consecutive_retries:
+                    if self._reconnect_attempt_count >= self.max_reconnect_attempts:
+                        raise exc  # recovery budget exhausted: fail clearly
+                    self._maybe_reconnect()
+                    delay = self.reconnect_backoff_seconds
+                self._stop.wait(delay)
+                continue
+            self._consecutive_failures = 0
+            if not events:
+                self._no_data_count += 1
+            return
+
+    def _refresh_with_resilience(self) -> None:
+        """Poll with bounded backoff and connection recovery.
+
+        No-data polls are normal and never reconnect. Only the narrow
+        ``ProviderArgumentError`` counts as an invalid argument and is
+        skipped without touching the connection; any other error propagates
+        to the caller. A real provider failure triggers bounded backoff and,
+        after consecutive retries, a bounded reconnect (close + initialize +
+        re-subscribe).
+        """
+
+        try:
+            events = self.refresh(self.symbols)
+        except ProviderArgumentError as exc:
+            self._invalid_argument_count += 1
+            self._last_sanitized_provider_error = sanitize_tdx_error_message(str(exc))
+            return
+        except ProviderError as exc:
+            self._provider_failure_count += 1
+            self._consecutive_failures += 1
+            self._last_sanitized_provider_error = sanitize_tdx_error_message(str(exc))
+            delay = min(
+                self.retry_backoff_seconds * (2 ** (self._consecutive_failures - 1)),
+                self.retry_backoff_cap_seconds,
+            )
+            if self._consecutive_failures >= self.max_consecutive_retries:
+                self._maybe_reconnect()
+                delay = self.reconnect_backoff_seconds
+            self._stop.wait(delay)
+            return
+        self._consecutive_failures = 0
+        if not events:
+            self._no_data_count += 1
+
+    def _maybe_reconnect(self) -> None:
+        if self._reconnect_attempt_count >= self.max_reconnect_attempts:
+            return
+        self._reconnect_attempt_count += 1
+        try:
+            self.provider.close()
+        except Exception as exc:
+            self._last_sanitized_provider_error = sanitize_tdx_error_message(str(exc))
+        # The previous subscription belonged to the closed connection.
+        self._subscription = None
+        try:
+            self.provider.initialize()
+            self._consecutive_failures = 0
+            self._reconnect_success_count += 1
+            try:
+                self._subscribe()
+            except Exception as exc:
+                # Polling fallback remains usable when re-subscription fails.
+                self._last_sanitized_provider_error = sanitize_tdx_error_message(str(exc))
+        except Exception as exc:
+            self._last_sanitized_provider_error = sanitize_tdx_error_message(str(exc))
 
     def refresh(
         self,
@@ -193,7 +322,15 @@ class LiveLevel1Collector:
     ) -> tuple[NormalizedLevel1Event, ...]:
         requested = tuple(symbols or self.symbols)
         with self._refresh_lock:
-            events = self.provider.get_market_snapshot(requested)
+            valid: list[str] = []
+            for symbol in requested:
+                try:
+                    valid.append(canonicalize_tdx_level1_symbol(symbol))
+                except ProviderDataError:
+                    # Truly invalid input is counted per symbol and skipped;
+                    # no-data polls must never inflate this counter.
+                    self._symbols_skipped_count += 1
+            events = self.provider.get_market_snapshot(valid) if valid else ()
             self._snapshot_count += 1
             accepted: list[NormalizedLevel1Event] = []
             completed_bars: list[NormalizedIntradayBar] = []
@@ -295,6 +432,13 @@ class LiveLevel1Collector:
             unsubscribe_error_type=self._unsubscribe_error_type,
             sanitized_unsubscribe_error=self._sanitized_unsubscribe_error,
             shadow=self.shadow,
+            invalid_argument_count=self._invalid_argument_count,
+            no_data_count=self._no_data_count,
+            provider_failure_count=self._provider_failure_count,
+            reconnect_attempt_count=self._reconnect_attempt_count,
+            reconnect_success_count=self._reconnect_success_count,
+            symbols_skipped_count=self._symbols_skipped_count,
+            last_sanitized_provider_error=self._last_sanitized_provider_error,
         )
 
     def _on_refresh_notification(self, payload: Mapping[str, Any]) -> None:

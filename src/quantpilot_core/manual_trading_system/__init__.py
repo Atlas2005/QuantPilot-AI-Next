@@ -8,6 +8,10 @@ from quantpilot_core.manual_trading_system.markers import (
     write_json_atomic,
     write_text_atomic,
 )
+from quantpilot_core.manual_trading_system.runtime_lock import (
+    RuntimeLockError,
+    SystemDirLock,
+)
 from quantpilot_core.manual_trading_system.system import (
     AfterCloseConfig,
     EndOfDayConfig,
@@ -25,6 +29,8 @@ __all__ = [
     "FORMULA_NAME",
     "MARKER_SCHEMA_VERSION",
     "PersistentMarkerPublisher",
+    "RuntimeLockError",
+    "SystemDirLock",
     "install_marker_bundle",
     "write_json_atomic",
     "write_text_atomic",

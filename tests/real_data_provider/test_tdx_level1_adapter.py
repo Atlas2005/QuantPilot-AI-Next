@@ -814,8 +814,18 @@ class _CollectorProvider:
 
 
 def test_snapshot_deduplication_failure_has_distinct_operation_stage(monkeypatch) -> None:
-    provider = _CollectorProvider(((_event(),),))
-    collector = LiveLevel1Collector(provider, ("000001.SZ",))
+    # Four snapshots keep every retry failing so the initial refresh exhausts
+    # its recovery budget and re-raises the original error; use tiny bounds.
+    provider = _CollectorProvider(((_event(),), (_event(),), (_event(),), (_event(),)))
+    collector = LiveLevel1Collector(
+        provider,
+        ("000001.SZ",),
+        max_consecutive_retries=2,
+        retry_backoff_seconds=0.001,
+        retry_backoff_cap_seconds=0.005,
+        max_reconnect_attempts=1,
+        reconnect_backoff_seconds=0.001,
+    )
 
     def fail_event_key(_event):
         raise ValueError("deduplication key failure")
@@ -828,6 +838,9 @@ def test_snapshot_deduplication_failure_has_distinct_operation_stage(monkeypatch
 
     details = captured.value.as_dict()
     assert details["operation_stage"] == "snapshot_deduplication"
+    assert collector.report().reconnect_attempt_count == 1
+    assert collector.report().reconnect_success_count == 1
+    assert collector.report().provider_failure_count == 4
     assert details["requested_symbol"] == "000001.SZ"
     assert details["api_call_completed"] is True
     assert details["raw_result_type"] == "dict"
