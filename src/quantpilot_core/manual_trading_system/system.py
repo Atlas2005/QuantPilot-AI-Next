@@ -215,6 +215,7 @@ def run_after_close(
     evidence = _advisory_evidence(validated)
     desk_outputs: list[Mapping[str, Any]] = []
     physical_calls = 0
+    desk_orchestration_attempts = 0
     estimated_cost = 0.0
     actual_models: set[str] = set()
     successful_desks = 0
@@ -227,10 +228,8 @@ def run_after_close(
                 "physical_call": False,
             })
             continue
-        if config.live_ai:
-            # Preserve the existing ActiveShadow accounting semantics: a live
-            # provider invocation counts even when the provider later fails.
-            physical_calls += 1
+        desk_orchestration_attempts += 1
+        calls_before = _physical_model_call_count(agent)
         try:
             prior_desk_evidence = tuple(
                 {
@@ -260,24 +259,49 @@ def run_after_close(
             )
             payload = _jsonable(output)
             fallback = bool(payload.get("is_fallback", False))
-            status = "fallback" if fallback else "succeeded"
-            if not fallback:
+            call_delta = max(
+                0,
+                _physical_model_call_count(agent) - calls_before,
+            )
+            physical_call = bool(call_delta) and not fallback
+            if physical_call:
+                physical_calls += call_delta
+            model = str(payload.get("used_model") or "").strip()
+            usage = payload.get("raw_response_usage")
+            valid_real_response = bool(
+                physical_call
+                and not fallback
+                and model
+                and model != "deterministic_fallback"
+                and isinstance(usage, Mapping)
+            )
+            status = (
+                "fallback"
+                if fallback
+                else "succeeded"
+                if valid_real_response
+                else "unverified_non_transport_response"
+            )
+            if valid_real_response:
                 successful_desks += 1
-                model = str(payload.get("used_model") or "")
-                if model:
-                    actual_models.add(model)
+                actual_models.add(model)
                 estimated_cost += _estimated_output_cost(payload, now)
             desk_outputs.append({
                 "role": role.value,
                 "status": status,
-                "physical_call": bool(config.live_ai),
+                "physical_call": physical_call,
                 "output": payload,
             })
         except Exception as exc:
+            call_delta = max(
+                0,
+                _physical_model_call_count(agent) - calls_before,
+            )
+            physical_calls += call_delta
             desk_outputs.append({
                 "role": role.value,
                 "status": "failed",
-                "physical_call": bool(config.live_ai),
+                "physical_call": bool(call_delta),
                 "error_type": type(exc).__name__,
                 "sanitized_error": _sanitize_error(exc, secret),
             })
@@ -317,6 +341,7 @@ def run_after_close(
             "live_enabled": bool(config.live_ai),
             "process_credential_present": bool(secret),
             "desk_count": len(ALL_DESKS),
+            "desk_orchestration_attempts": desk_orchestration_attempts,
             "successful_desk_count": successful_desks,
             "failed_or_fallback_desk_count": len(ALL_DESKS) - successful_desks,
             "physical_model_calls": physical_calls,
@@ -936,6 +961,14 @@ def _estimated_output_cost(payload: Mapping[str, Any], now: datetime) -> float:
                       cache_hit_input_tokens=cache_hits),
         is_peak=is_peak_bjt(now),
     )
+
+
+def _physical_model_call_count(agent: Any) -> int:
+    value = getattr(agent, "physical_model_calls", 0)
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _load_holdings(path: str | Path | None) -> Mapping[str, Mapping[str, Any]]:

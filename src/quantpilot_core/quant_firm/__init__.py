@@ -47,8 +47,10 @@ from quantpilot_core.quant_firm.deepseek_advisory import (
     DeepSeekAdvisoryOutput,
     DeepSeekAdvisoryRole,
     DeepSeekClientConfig,
+    DeepSeekStructuredEvidenceClient,
     QuantFirmDeepSeekModelPolicy,
     QuantFirmDeepSeekModelSelection,
+    create_live_structured_evidence_client,
     run_deepseek_advisory_fallback,
 )
 from quantpilot_core.quant_firm.learning import (
@@ -96,8 +98,10 @@ __all__ = [
     "DeepSeekAdvisoryOutput",
     "DeepSeekAdvisoryRole",
     "DeepSeekClientConfig",
+    "DeepSeekStructuredEvidenceClient",
     "QuantFirmDeepSeekModelPolicy",
     "QuantFirmDeepSeekModelSelection",
+    "create_live_structured_evidence_client",
     "AgentDecision",
     "AgentRecommendation",
     "AttributionRecord",

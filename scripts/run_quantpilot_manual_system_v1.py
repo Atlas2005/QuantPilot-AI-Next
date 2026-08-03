@@ -60,7 +60,9 @@ def _add_after_close_arguments(
     parser.add_argument("--system-dir", default=DEFAULT_SYSTEM_DIR)
     parser.add_argument("--tdx-user-dir", required=True)
     parser.add_argument(
+        "--enable-live-ai",
         "--live-ai",
+        dest="live_ai",
         action=argparse.BooleanOptionalAction,
         default=live_ai_default,
         help="Use the seven live DeepSeek advisory calls (enabled by default).",
@@ -124,7 +126,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     acceptance, Path(args.system_dir) / "windows_acceptance.json"
                 )
                 result = {**acceptance, "acceptance_report_path": acceptance_path}
-        print(json.dumps({"status": "ok", **result}, ensure_ascii=False, sort_keys=True))
+        print(json.dumps({"status": "ok", **result}, ensure_ascii=True, sort_keys=True))
         if args.phase == "acceptance" and not result.get("automated_checks_passed"):
             return 3
         return 0
@@ -140,7 +142,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "broker_calls": 0,
                     "order_submission_calls": 0,
                 },
-                ensure_ascii=False,
+                ensure_ascii=True,
                 sort_keys=True,
             )
         )

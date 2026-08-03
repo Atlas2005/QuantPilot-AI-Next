@@ -134,6 +134,26 @@ def test_after_close_plan_uses_existing_order_for_user_block_and_message() -> No
     assert report["broker_or_order_api_calls"] is False
 
 
+def test_real_send_message_msg_str_signature_is_bound_by_keyword() -> None:
+    class _MsgStrApi(_VisibilityApi):
+        def __init__(self) -> None:
+            super().__init__()
+            self.msg_str_calls = []
+
+        def send_message(self, msg_str: str):
+            self.call_order.append("send_message")
+            self.msg_str_calls.append(msg_str)
+            return {"ErrorId": 0, "Msg": "ok"}
+
+    api = _MsgStrApi()
+    report = publish_experience_plan_visibility(_plan(), api=api)
+    assert len(api.msg_str_calls) == 1
+    assert "000002.SZ" in api.msg_str_calls[0]
+    assert report["send_message"]["argument_names"] == ["msg_str"]
+    assert report["send_message"]["succeeded"] is True
+    assert report["visibility_success"] is True
+
+
 def test_custom_block_code_name_and_show_are_separate_and_configurable() -> None:
     api = _VisibilityApi()
 

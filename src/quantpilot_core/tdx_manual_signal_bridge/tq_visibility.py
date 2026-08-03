@@ -441,7 +441,7 @@ def _canonical_kwargs(method_name: str, values: Mapping[str, Any]) -> dict[str, 
             "show": values["show"],
         }
     if method_name == "send_message":
-        return {"message": values["message"]}
+        return {"msg_str": values["message"]}
     if method_name == "send_warn":
         return {
             "stock_code": values["stock_code"],
@@ -476,7 +476,7 @@ def _semantic_key(method_name: str, parameter_name: str) -> str | None:
         if normalized in {"show", "display", "visible", "open"}:
             return "show"
     elif method_name == "send_message":
-        if normalized in {"message", "msg", "content", "text", "info"}:
+        if normalized in {"message", "msg", "msgstr", "content", "text", "info"}:
             return "message"
     elif method_name == "send_warn":
         if normalized in {"stockcode", "code", "symbol", "securitycode"}:

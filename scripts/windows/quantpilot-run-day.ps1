@@ -11,7 +11,7 @@ $arguments = @(
     "run-day", "--production-input", $ProductionInput,
     "--tdx-user-dir", $TdxUserDir, "--system-dir", $SystemDir,
     "--duration", [string]$Duration,
-    "--tq-block-code", "QPTY", "--tq-block-name", "QP候选"
+    "--enable-live-ai"
 )
 if ($Holdings) { $arguments += @("--holdings", $Holdings) }
 Invoke-QPManualSystem $arguments

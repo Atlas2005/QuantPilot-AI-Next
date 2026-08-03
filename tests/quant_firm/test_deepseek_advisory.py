@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import builtins
+from types import SimpleNamespace
 
 import pytest
+import quantpilot_core.quant_firm.deepseek_advisory as advisory_module
 
 from quantpilot_core.deepseek_multi_agent import DEEPSEEK_V4_FLASH, DEEPSEEK_V4_PRO
 from quantpilot_core.quant_firm import (
@@ -11,6 +13,7 @@ from quantpilot_core.quant_firm import (
     DeepSeekAdvisoryOutput,
     DeepSeekAdvisoryRole,
     DeepSeekClientConfig,
+    DeepSeekStructuredEvidenceClient,
     QuantFirmDeepSeekModelPolicy,
     run_deepseek_advisory_fallback,
     run_quant_firm_decision_cycle,
@@ -165,6 +168,108 @@ def test_missing_key_path_does_not_import_openai(monkeypatch: pytest.MonkeyPatch
     )
 
     assert output.is_fallback is True
+
+
+def test_live_agent_uses_existing_structured_http_client_by_default() -> None:
+    agent = DeepSeekAdvisoryAgent(DeepSeekClientConfig(enable_live_call=True))
+    assert isinstance(agent.live_client, DeepSeekStructuredEvidenceClient)
+    assert agent.physical_model_calls == 0
+
+
+def test_live_agent_uses_transport_model_usage_and_physical_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "process-secret")
+
+    class _Transport:
+        def __init__(self) -> None:
+            self.physical_request_count = 0
+            self.requests = []
+
+        def __call__(self, request):
+            self.requests.append(request)
+            self.physical_request_count += 1
+            return {
+                "content": "real transport response",
+                "model": "deepseek-runtime-model",
+                "usage": {"prompt_tokens": 41, "completion_tokens": 9},
+                "finish_reason": "stop",
+            }
+
+    transport = _Transport()
+    agent = DeepSeekAdvisoryAgent(
+        DeepSeekClientConfig(enable_live_call=True),
+        live_client=transport,
+    )
+    output = agent.advise(
+        rich_advisory_input(DeepSeekAdvisoryRole.RESEARCH_DESK)
+    )
+    assert agent.physical_model_calls == 1
+    assert output.is_fallback is False
+    assert output.used_model == "deepseek-runtime-model"
+    assert output.raw_response_usage == {"prompt_tokens": 41, "completion_tokens": 9}
+    assert transport.requests[0]["reasoning_mode"] == "medium"
+
+
+def test_existing_structured_client_counts_only_chat_completion_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "process-secret")
+    requests = []
+
+    class _Completions:
+        def create(self, **kwargs):
+            requests.append(kwargs)
+            return SimpleNamespace(
+                model="deepseek-response-model",
+                choices=[SimpleNamespace(
+                    message=SimpleNamespace(content="transport content"),
+                    finish_reason="stop",
+                )],
+                usage=SimpleNamespace(
+                    prompt_tokens=12,
+                    prompt_cache_hit_tokens=2,
+                    prompt_cache_miss_tokens=10,
+                    completion_tokens=3,
+                ),
+            )
+
+    fake_module = SimpleNamespace(
+        OpenAI=lambda **_kwargs: SimpleNamespace(
+            chat=SimpleNamespace(completions=_Completions())
+        )
+    )
+    monkeypatch.setattr(advisory_module, "import_module", lambda _name: fake_module)
+    client = DeepSeekStructuredEvidenceClient(
+        DeepSeekClientConfig(enable_live_call=True)
+    )
+    response = client({
+        "model": "deepseek-request-model",
+        "messages": [{"role": "user", "content": "evidence"}],
+        "reasoning_mode": "low",
+        "enable_thinking": False,
+    })
+    assert client.physical_request_count == 1
+    assert len(requests) == 1
+    assert response["model"] == "deepseek-response-model"
+    assert response["usage"]["prompt_tokens"] == 12
+
+
+def test_structured_client_dependency_failure_is_not_a_physical_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "process-secret")
+
+    def missing(_name):
+        raise ImportError("runtime missing")
+
+    monkeypatch.setattr(advisory_module, "import_module", missing)
+    client = DeepSeekStructuredEvidenceClient(
+        DeepSeekClientConfig(enable_live_call=True)
+    )
+    with pytest.raises(RuntimeError, match="runtime is unavailable"):
+        client({"model": "m", "messages": []})
+    assert client.physical_request_count == 0
 
 
 def test_each_advisory_role_builds_role_specific_fallback_output() -> None:

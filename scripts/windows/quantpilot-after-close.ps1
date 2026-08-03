@@ -9,7 +9,7 @@ param(
 $arguments = @(
     "after-close", "--production-input", $ProductionInput,
     "--tdx-user-dir", $TdxUserDir, "--system-dir", $SystemDir,
-    "--tq-block-code", "QPTY", "--tq-block-name", "QP候选"
+    "--enable-live-ai"
 )
 if ($DeepSeekModel) { $arguments += @("--deepseek-model", $DeepSeekModel) }
 Invoke-QPManualSystem $arguments

@@ -17,6 +17,10 @@ Level1 和盘中预测状态连成一条不接券商、不下单的 Windows 工�
 .\scripts\windows\quantpilot-after-close.ps1 -ProductionInput "D:\QuantPilotData\production_input_2026-08-03.json"
 ```
 
+包装器会显式传入 `--enable-live-ai`。只有现有
+`DeepSeekStructuredEvidenceClient` 真正进入 `chat.completions.create` 后才计为一次
+physical model call；确定性 fallback、离线结果和缺少客户端依赖的失败都计为零。
+
 次日开盘前启动 Level1 监控（默认四小时）：
 
 ```powershell
@@ -58,6 +62,15 @@ Level1 和盘中预测状态连成一条不接券商、不下单的 Windows 工�
 - `intraday/current_states.json`
 - `intraday_report.json`
 - `end_of_day_report.json` / `.md`
+
+Windows PowerShell 5.1 读取报告时必须显式指定 UTF-8：
+
+```powershell
+$report = Get-Content -LiteralPath ".cache\quantpilot_manual_system_v1\after_close_report.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+```
+
+仓库内 PowerShell 包装器只含 ASCII 字符；`QP候选` 由 Python 参数默认值提供。CLI
+的单行机器输出会把非 ASCII 字符转义，因此 PowerShell 5.1 可以稳定解析。
 
 这条人工工作流不读取账户能力、费率、Continuous Paper、PostgreSQL、Grafana、
 测试存储或订单权限。

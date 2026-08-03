@@ -6,7 +6,7 @@ import os
 from importlib import import_module
 from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from quantpilot_core.deepseek_multi_agent.runtime_contracts import (
     DEEPSEEK_V4_FLASH,
@@ -136,6 +136,7 @@ class DeepSeekStructuredEvidenceClient:
 
     def __init__(self, config: DeepSeekClientConfig | None = None) -> None:
         self.config = config or DeepSeekClientConfig(enable_live_call=True)
+        self.physical_request_count = 0
 
     def __call__(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
         credential = os.environ.get(self.config.api_key_env)
@@ -150,6 +151,7 @@ class DeepSeekStructuredEvidenceClient:
             base_url=self.config.base_url,
             timeout=self.config.timeout_seconds,
         )
+        self.physical_request_count += 1
         response = client.chat.completions.create(
             model=request["model"],
             messages=request["messages"],
@@ -162,6 +164,7 @@ class DeepSeekStructuredEvidenceClient:
         return {
             "content": choice.message.content,
             "finish_reason": choice.finish_reason,
+            "model": str(getattr(response, "model", "") or request["model"]),
             "usage": {
                 "prompt_tokens": getattr(usage, "prompt_tokens", 0),
                 "prompt_cache_hit_tokens": getattr(usage, "prompt_cache_hit_tokens", 0),
@@ -171,10 +174,12 @@ class DeepSeekStructuredEvidenceClient:
         }
 
 
-def create_live_structured_evidence_client() -> DeepSeekStructuredEvidenceClient:
+def create_live_structured_evidence_client(
+    config: DeepSeekClientConfig | None = None,
+) -> DeepSeekStructuredEvidenceClient:
     """Return the approved Quant Firm structured-response adapter for the CLI."""
 
-    return DeepSeekStructuredEvidenceClient()
+    return DeepSeekStructuredEvidenceClient(config)
 
 
 @dataclass(frozen=True)
@@ -347,9 +352,27 @@ ROLE_GUIDANCE: Mapping[DeepSeekAdvisoryRole, _RoleGuidance] = {
 class DeepSeekAdvisoryAgent:
     """Build advisory-only DeepSeek prompts and deterministic fallbacks."""
 
-    def __init__(self, config: DeepSeekClientConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: DeepSeekClientConfig | None = None,
+        *,
+        live_client: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
+    ) -> None:
         self.config = config or DeepSeekClientConfig()
         self.model_policy = QuantFirmDeepSeekModelPolicy.from_environment()
+        self.live_client = live_client or create_live_structured_evidence_client(
+            self.config
+        )
+
+    @property
+    def physical_model_calls(self) -> int:
+        """Requests that reached the real chat-completions call boundary."""
+
+        value = getattr(self.live_client, "physical_request_count", 0)
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return 0
 
     def advise(self, advisory_input: DeepSeekAdvisoryInput) -> DeepSeekAdvisoryOutput:
         """Return live DeepSeek advice only when explicitly enabled and keyed."""
@@ -359,7 +382,7 @@ class DeepSeekAdvisoryAgent:
         api_key = os.environ.get(self.config.api_key_env)
         if not self.config.enable_live_call or not api_key:
             return self._fallback(advisory_input, prompt, model_selection)
-        return self._live_advisory(advisory_input, prompt, api_key, model_selection)
+        return self._live_advisory(advisory_input, prompt, model_selection)
 
     def build_prompt(self, advisory_input: DeepSeekAdvisoryInput) -> str:
         """Construct a role-specific advisory-only prompt."""
@@ -432,19 +455,8 @@ class DeepSeekAdvisoryAgent:
         self,
         advisory_input: DeepSeekAdvisoryInput,
         prompt: str,
-        api_key: str,
         model_selection: QuantFirmDeepSeekModelSelection,
     ) -> DeepSeekAdvisoryOutput:
-        try:
-            openai_module = import_module("openai")
-        except ImportError:
-            return self._fallback(advisory_input, prompt, model_selection)
-
-        client = openai_module.OpenAI(
-            api_key=api_key,
-            base_url=self.config.base_url,
-            timeout=self.config.timeout_seconds,
-        )
         request: dict[str, Any] = {
             "model": model_selection.model,
             "messages": [
@@ -454,12 +466,19 @@ class DeepSeekAdvisoryAgent:
                 },
                 {"role": "user", "content": prompt},
             ],
+            "reasoning_mode": model_selection.reasoning_effort,
+            "enable_thinking": model_selection.enable_thinking,
         }
-        request["reasoning_effort"] = model_selection.reasoning_effort
-        request["extra_body"] = {"enable_thinking": model_selection.enable_thinking}
-        response = client.chat.completions.create(**request)
-        raw = response.choices[0].message.content or ""
-        usage = _response_usage(response)
+        response = self.live_client(request)
+        if not isinstance(response, Mapping):
+            raise RuntimeError("DeepSeek live transport returned a non-object response")
+        raw = str(response.get("content") or "")
+        model = str(response.get("model") or "").strip()
+        usage = response.get("usage")
+        if not model:
+            raise RuntimeError("DeepSeek live transport response omitted model")
+        if not isinstance(usage, Mapping):
+            raise RuntimeError("DeepSeek live transport response omitted usage")
         fallback = self._fallback(advisory_input, prompt, model_selection)
         return DeepSeekAdvisoryOutput(
             role=advisory_input.role,
@@ -474,7 +493,7 @@ class DeepSeekAdvisoryAgent:
             tool_integration_notes=fallback.tool_integration_notes
             + ("live_deepseek_chat_completions_used",),
             confidence=fallback.confidence,
-            used_model=model_selection.model,
+            used_model=model,
             is_fallback=False,
             raw_model_response=raw,
             raw_response_usage=usage,

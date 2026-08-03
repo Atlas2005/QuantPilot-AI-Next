@@ -23,12 +23,16 @@ from quantpilot_core.manual_trading_system import (
     run_end_of_day,
     run_intraday,
 )
-from quantpilot_core.quant_firm import DeepSeekAdvisoryOutput
+from quantpilot_core.quant_firm import (
+    DeepSeekAdvisoryAgent,
+    DeepSeekClientConfig,
+)
 from quantpilot_core.real_data_provider import (
     NormalizedIntradayBar,
     ProviderName,
 )
 from quantpilot_core.tdx_manual_signal_bridge import tq_visibility
+import scripts.run_quantpilot_manual_system_v1 as manual_cli
 from scripts.run_quantpilot_manual_system_v1 import _parser
 
 
@@ -88,38 +92,46 @@ def _production_input(path: Path, *, symbols: tuple[str, ...] = ("000001.SZ", "6
     return path
 
 
-def _advisory(role: Any, *, model: str = "deepseek-v4-flash") -> DeepSeekAdvisoryOutput:
-    return DeepSeekAdvisoryOutput(
-        role=role,
-        advisory_summary=f"{role.value} reviewed every deterministic candidate",
-        evidence_used=("quant_firm_decision_report_summary",),
-        failure_explanation="none",
-        strategy_mutation_rationale="none",
-        parameter_tuning_suggestions=(),
-        research_directions=(),
-        regime_notes=(),
-        risk_notes=("manual review",),
-        tool_integration_notes=("advisory only",),
-        confidence=0.8,
-        used_model=model,
-        is_fallback=False,
-        raw_model_response="reviewed",
-        raw_response_usage={"prompt_tokens": 100, "completion_tokens": 20},
-    )
-
-
-class _Agent:
+class _FakeRealTransport:
     def __init__(self, *, failing_roles: set[str] | None = None, secret: str | None = None) -> None:
         self.failing_roles = failing_roles or set()
         self.secret = secret
-        self.calls = []
+        self.calls: list[Mapping[str, Any]] = []
+        self.physical_request_count = 0
 
-    def advise(self, value: Any) -> DeepSeekAdvisoryOutput:
-        self.calls.append(value)
-        if value.role.value in self.failing_roles:
+    def __call__(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.calls.append(request)
+        self.physical_request_count += 1
+        prompt = str(request["messages"][1]["content"])
+        role = next(
+            role
+            for role in (
+                "investment_committee", "research_desk", "information_desk",
+                "backtest_desk", "portfolio_desk", "execution_simulation_desk",
+                "learning_desk",
+            )
+            if f"Role: {role}" in prompt
+        )
+        if role in self.failing_roles:
             detail = f" authorization={self.secret}" if self.secret else ""
             raise RuntimeError(f"provider failure{detail}")
-        return _advisory(value.role)
+        return {
+            "content": f"real response for {role}",
+            "finish_reason": "stop",
+            "model": "deepseek-v4-flash",
+            "usage": {
+                "prompt_tokens": 100,
+                "prompt_cache_hit_tokens": 10,
+                "completion_tokens": 20,
+            },
+        }
+
+
+def _live_agent(transport: _FakeRealTransport) -> DeepSeekAdvisoryAgent:
+    return DeepSeekAdvisoryAgent(
+        DeepSeekClientConfig(enable_live_call=True),
+        live_client=transport,
+    )
 
 
 def test_after_close_runs_seven_live_desks_writes_first_and_preserves_qpty_symbols(
@@ -128,7 +140,8 @@ def test_after_close_runs_seven_live_desks_writes_first_and_preserves_qpty_symbo
     monkeypatch.setenv("DEEPSEEK_API_KEY", "process-only-secret")
     input_path = _production_input(tmp_path / "input dir" / "production input.json")
     root = tmp_path / "system dir with spaces"
-    agent = _Agent(failing_roles={"backtest_desk"})
+    transport = _FakeRealTransport(failing_roles={"backtest_desk"})
+    agent = _live_agent(transport)
     publication_calls = []
 
     def publish(plan: Mapping[str, Any], report_path: str) -> Mapping[str, Any]:
@@ -150,17 +163,25 @@ def test_after_close_runs_seven_live_desks_writes_first_and_preserves_qpty_symbo
         clock=lambda: datetime(2026, 8, 3, 16, 0, tzinfo=SHANGHAI),
     )
 
-    assert len(agent.calls) == 7
+    assert len(transport.calls) == 7
     assert report["deepseek"]["physical_model_calls"] == 7
     assert report["deepseek"]["successful_desk_count"] == 6
     assert report["deepseek"]["status"] == "partial_desk_success"
     assert report["deepseek"]["actual_models"] == ["deepseek-v4-flash"]
+    assert all(
+        item["output"]["raw_response_usage"]["prompt_tokens"] == 100
+        for item in report["deepseek"]["desks"]
+        if item["status"] == "succeeded"
+    )
     assert report["final_watchlist"] == ["000001.SZ", "600519.SH"]
     assert [item["manual_decision"] for item in report["candidate_decisions"]] == ["WAIT", "WAIT"]
     assert publication_calls == [["000001.SZ", "600519.SH"]]
     assert report["tdx_publication"]["published_symbols"] == report["final_watchlist"]
     assert report["durable_report_existed_before_tdx_publication"] is True
     assert Path(report["durable_report_path"]).is_file()
+    report_bytes = Path(report["durable_report_path"]).read_bytes()
+    parsed_utf8_report = json.loads(report_bytes.decode("utf-8"))
+    assert parsed_utf8_report["tdx_publication"]["block_name"] == "QP候选"
     assert report["broker_calls"] == report["order_submission_calls"] == 0
 
 
@@ -172,13 +193,15 @@ def test_missing_key_or_all_desk_failure_never_erases_watchlist(
     root = tmp_path / ("all fail" if fail_all else "key absent")
     if fail_all:
         monkeypatch.setenv("DEEPSEEK_API_KEY", "secret-value")
-        agent = _Agent(failing_roles={role for role in (
+        transport = _FakeRealTransport(failing_roles={role for role in (
             "investment_committee", "research_desk", "information_desk", "backtest_desk",
             "portfolio_desk", "execution_simulation_desk", "learning_desk",
         )}, secret="secret-value")
+        agent = _live_agent(transport)
     else:
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        agent = _Agent()
+        transport = _FakeRealTransport()
+        agent = _live_agent(transport)
     report = run_after_close(
         AfterCloseConfig(input_path, root, live_ai=True), advisory_agent=agent
     )
@@ -195,9 +218,46 @@ def test_missing_key_or_all_desk_failure_never_erases_watchlist(
         assert "secret-value" not in persisted
         assert "<redacted>" in persisted
     else:
-        assert not agent.calls
+        assert not transport.calls
         assert report["deepseek"]["physical_model_calls"] == 0
         assert report["deepseek"]["status"] == "credential_unavailable_watchlist_retained"
+
+
+def test_seven_real_transport_responses_are_counted_and_costed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "process-secret")
+    transport = _FakeRealTransport()
+    report = run_after_close(
+        AfterCloseConfig(_production_input(tmp_path / "input.json"), tmp_path / "system", live_ai=True),
+        advisory_agent=_live_agent(transport),
+        clock=lambda: datetime(2026, 8, 3, 16, 0, tzinfo=SHANGHAI),
+    )
+    assert transport.physical_request_count == 7
+    assert report["deepseek"]["physical_model_calls"] == 7
+    assert report["deepseek"]["successful_desk_count"] == 7
+    assert report["deepseek"]["actual_models"] == ["deepseek-v4-flash"]
+    assert report["deepseek"]["estimated_api_cost_usd"] > 0
+    assert all(item["physical_call"] is True for item in report["deepseek"]["desks"])
+
+
+def test_deterministic_fallback_never_counts_as_physical_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "present-but-client-offline")
+    fallback_agent = DeepSeekAdvisoryAgent(
+        DeepSeekClientConfig(enable_live_call=False)
+    )
+    report = run_after_close(
+        AfterCloseConfig(_production_input(tmp_path / "input.json"), tmp_path / "system", live_ai=True),
+        advisory_agent=fallback_agent,
+    )
+    assert report["deepseek"]["physical_model_calls"] == 0
+    assert report["deepseek"]["successful_desk_count"] == 0
+    assert report["deepseek"]["actual_models"] == []
+    assert report["deepseek"]["estimated_api_cost_usd"] == 0.0
+    assert all(item["status"] == "fallback" for item in report["deepseek"]["desks"])
+    assert all(item["physical_call"] is False for item in report["deepseek"]["desks"])
 
 
 def test_minimal_input_rejects_future_rows_without_account_fee_or_manifest_gates(tmp_path: Path) -> None:
@@ -458,11 +518,50 @@ def test_cli_has_all_daily_actions_and_explicit_qpty_defaults() -> None:
     assert after.tq_block_code == "QPTY"
     assert after.tq_block_name == "QP候选"
     assert after.live_ai is True
+    explicitly_enabled = parser.parse_args([
+        "after-close", "--production-input", r"D:\Data\input.json",
+        "--tdx-user-dir", r"D:\tongdaxin\PYPlugins\user", "--enable-live-ai",
+    ])
+    assert explicitly_enabled.live_ai is True
     for phase in ("intraday", "end-of-day"):
         args = [phase]
         if phase == "intraday":
             args += ["--tdx-user-dir", r"D:\tongdaxin\PYPlugins\user"]
         assert parser.parse_args(args).phase == phase
+
+
+def test_cli_stdout_is_ascii_json_safe_for_windows_powershell_51(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        manual_cli,
+        "_run_after",
+        lambda _args: {"phase": "after-close", "block_name": "QP候选"},
+    )
+    exit_code = manual_cli.main([
+        "after-close", "--production-input", r"D:\Data\input.json",
+        "--tdx-user-dir", r"D:\tongdaxin\PYPlugins\user",
+    ])
+    stdout = capsys.readouterr().out
+    assert exit_code == 0
+    assert stdout.isascii()
+    assert json.loads(stdout)["block_name"] == "QP候选"
+
+
+def test_windows_wrappers_are_ascii_and_json_reads_force_utf8() -> None:
+    wrapper_root = Path("scripts/windows")
+    wrappers = tuple(sorted(wrapper_root.glob("*.ps1")))
+    assert wrappers
+    for path in wrappers:
+        raw = path.read_bytes()
+        assert raw.isascii(), f"PowerShell 5.1-unsafe source encoding: {path}"
+        text = raw.decode("ascii")
+        for line in text.splitlines():
+            if "Get-Content" in line:
+                assert "-Encoding UTF8" in line
+    common = (wrapper_root / "manual_system_common_v1.ps1").read_text(encoding="ascii")
+    assert "Get-Content -LiteralPath $Path -Raw -Encoding UTF8" in common
+    assert "ConvertFrom-Json" in common
 
 
 def test_acceptance_never_turns_transport_into_visual_proof(tmp_path: Path) -> None:

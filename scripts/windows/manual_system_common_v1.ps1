@@ -5,6 +5,11 @@ function Get-QPManualRepositoryRoot {
     return [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 }
 
+function Read-QPManualJson([string]$Path) {
+    $jsonText = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 -ErrorAction Stop
+    return $jsonText | ConvertFrom-Json -ErrorAction Stop
+}
+
 function Invoke-QPManualSystem([string[]]$Arguments) {
     $root = Get-QPManualRepositoryRoot
     $python = Join-Path $root ".venv\Scripts\python.exe"
