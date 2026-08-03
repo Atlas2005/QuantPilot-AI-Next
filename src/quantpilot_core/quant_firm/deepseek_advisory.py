@@ -349,6 +349,18 @@ ROLE_GUIDANCE: Mapping[DeepSeekAdvisoryRole, _RoleGuidance] = {
 }
 
 
+JSON_OUTPUT_CONTRACT_LINES = (
+    "Structured JSON output requirements:",
+    "Return exactly one valid JSON object.",
+    "The response must be JSON only.",
+    "Do not use Markdown code fences.",
+    "Do not include prose before or after the JSON object.",
+    'Use the JSON object keys: "advisory_summary", "evidence_used", "failure_explanation",'
+    " \"strategy_mutation_rationale\", \"parameter_tuning_suggestions\", \"research_directions\","
+    ' "regime_notes", "risk_notes", "tool_integration_notes", "confidence".',
+)
+
+
 class DeepSeekAdvisoryAgent:
     """Build advisory-only DeepSeek prompts and deterministic fallbacks."""
 
@@ -412,6 +424,9 @@ class DeepSeekAdvisoryAgent:
                 "parameter tuning suggestions, research directions, regime notes, risk notes, and tool integration notes.",
             ]
         )
+        # Shared JSON-mode contract. DeepSeek requires the literal word "json" in
+        # the provider-visible messages whenever response_format json_object is used.
+        lines.extend(JSON_OUTPUT_CONTRACT_LINES)
         structured_schema = _announcement_structured_schema(advisory_input)
         if structured_schema:
             lines.extend(structured_schema)
@@ -462,7 +477,7 @@ class DeepSeekAdvisoryAgent:
             "messages": [
                 {
                     "role": "system",
-                    "content": "You provide advisory-only quant research review. Never execute trades.",
+                    "content": "You provide advisory-only quant research review. Never execute trades. Return structured JSON advisory output only.",
                 },
                 {"role": "user", "content": prompt},
             ],

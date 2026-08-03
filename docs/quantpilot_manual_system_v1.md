@@ -8,8 +8,29 @@ Level1 和盘中预测状态连成一条不接券商、不下单的 Windows 工�
 ## 每日三个动作
 
 在仓库根目录运行。API 密钥只从当前进程的 `DEEPSEEK_API_KEY` 读取；不要把密钥
-写入命令、JSON 或 PowerShell 文件。更新代码后先按现有 Windows 安装方式执行一次
-`python -m pip install -e ".[windows-runtime]"`，确保既有 DeepSeek 客户端依赖可用。
+写入命令、JSON、PowerShell 文件、日志、Markdown、测试快照或 Git。更新代码后，
+在项目 `.venv` 内执行一次
+
+```powershell
+python -m pip install -e ".[windows-runtime,live-ai]"
+```
+
+只跑 AI 分析时可简化安装 `python -m pip install -e ".[live-ai]"`；两种方式都只
+写入项目 `.venv`，不要手动安装到全局 Python。`live-ai` extra 提供
+OpenAI-compatible 传输 SDK，支持并验证的范围为 `openai>=1.109.1,<2`（1.109.1
+是实际完成离线测试和安装验证的版本；当前代码使用 `reasoning_effort`、
+`extra_body` 和 `response_format`，更早的 1.x 不在支持范围）。`openai` 包仅是
+DeepSeek 的 OpenAI-compatible transport SDK，不是独立 Provider。已手动安装的
+2.x 不属于当前正式支持范围（尚未证明成功响应和 usage 解析完整兼容），正式安装
+extra 时可能被降级到 1.109.1 系。
+
+实际 AI Provider 是 DeepSeek：`openai` Python 包只作为兼容传输 SDK，
+`base_url` 仍指向 `https://api.deepseek.com`，模型仍是 DeepSeek V4，从不切换
+OpenAI endpoint。请求使用 `response_format={"type": "json_object"}`；DeepSeek
+要求 Provider 实际收到的 system/user message 中包含字面量 `json`（不区分大小写），
+否则在生成前返回 400。七个 Desk 共用 `DeepSeekAdvisoryAgent.build_prompt` 中的
+同一段 `JSON_OUTPUT_CONTRACT_LINES` 结构化输出契约，统一要求：返回恰好一个有效
+JSON 对象、响应只含 JSON、不用 Markdown 代码围栏、JSON 前后不含散文。
 
 盘后分析并发布 `QPTY / QP候选`：
 
@@ -101,6 +122,18 @@ $report = Get-Content -LiteralPath ".cache\quantpilot_manual_system_v1\after_clo
 
 机器可读输出要求真实模型调用、至少一个成功桌、真实模型名、已落盘 AI 报告、非空
 候选、QPTY 发布成功、盘中服务已启动、标记适配器已初始化，且券商和下单调用均为
-零。全部自动检查通过时 `automated_checks_passed=true`；在用户真正看到普通 K 线
-标记前，整体 `accepted` 仍为 `false` 且状态为
+零。正确验收证据（来自 `after_close_report.json` 的 `deepseek` 节）：
+
+- `physical_model_calls > 0`
+- `successful_desk_count > 0`
+- `actual_deepseek_models` 非空
+- `broker_calls == 0`
+- `order_submission_calls == 0`
+
+其中 `physical_model_calls` 只统计真正执行到 `chat.completions.create` 的请求：
+Provider 返回 400/401/403/404/429/5xx 时该 Desk 计为 `failed`、`physical_call`
+为 true，且不计入成功桌；import、配置或传输前失败计为零；确定性 fallback 不计
+为 physical call，也不伪装成 DeepSeek 成功结果。全部自动检查通过时
+`automated_checks_passed=true`；在用户真正看到普通 K 线标记前，整体 `accepted`
+仍为 `false` 且状态为
 `automated_runtime_passed_chart_observation_pending`，绝不由 `ErrorId=0` 推断可见。

@@ -217,6 +217,7 @@ def test_missing_key_or_all_desk_failure_never_erases_watchlist(
         )
         assert "secret-value" not in persisted
         assert "<redacted>" in persisted
+        assert report["broker_calls"] == report["order_submission_calls"] == 0
     else:
         assert not transport.calls
         assert report["deepseek"]["physical_model_calls"] == 0
@@ -239,6 +240,85 @@ def test_seven_real_transport_responses_are_counted_and_costed(
     assert report["deepseek"]["actual_models"] == ["deepseek-v4-flash"]
     assert report["deepseek"]["estimated_api_cost_usd"] > 0
     assert all(item["physical_call"] is True for item in report["deepseek"]["desks"])
+    assert all(item["status"] == "succeeded" for item in report["deepseek"]["desks"])
+    assert all(item["output"]["is_fallback"] is False for item in report["deepseek"]["desks"])
+    assert all(item["output"]["used_model"] == "deepseek-v4-flash" for item in report["deepseek"]["desks"])
+    assert all(
+        item["output"]["raw_response_usage"]["completion_tokens"] == 20
+        for item in report["deepseek"]["desks"]
+    )
+
+
+def test_provider_bad_request_error_is_failed_physical_call_with_redaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class BadRequestError(RuntimeError):
+        pass
+
+    class _BadRequestTransport:
+        def __init__(self) -> None:
+            self.physical_request_count = 0
+
+        def __call__(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
+            self.physical_request_count += 1
+            raise BadRequestError(
+                "400 Prompt must contain the word 'json' in some form to use "
+                "'response_format' of type 'json_object'. authorization=process-secret"
+            )
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "process-secret")
+    input_path = _production_input(tmp_path / "production.json")
+    root = tmp_path / "provider 400"
+    transport = _BadRequestTransport()
+    report = run_after_close(
+        AfterCloseConfig(input_path, root, live_ai=True),
+        advisory_agent=_live_agent(transport),
+    )
+    assert transport.physical_request_count == 7
+    assert report["deepseek"]["physical_model_calls"] == 7
+    assert report["deepseek"]["successful_desk_count"] == 0
+    assert report["deepseek"]["actual_models"] == []
+    assert all(item["status"] == "failed" for item in report["deepseek"]["desks"])
+    assert all(item["physical_call"] is True for item in report["deepseek"]["desks"])
+    assert all(
+        "process-secret" not in item["sanitized_error"]
+        for item in report["deepseek"]["desks"]
+    )
+    assert all(
+        "<redacted>" in item["sanitized_error"]
+        for item in report["deepseek"]["desks"]
+    )
+    assert report["final_watchlist"] == ["000001.SZ", "600519.SH"]
+    assert report["watchlist_preserved"] is True
+    assert report["broker_calls"] == report["order_submission_calls"] == 0
+
+
+def test_pre_transport_failure_never_counts_as_physical_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _OfflineTransport:
+        def __init__(self) -> None:
+            self.physical_request_count = 0
+
+        def __call__(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
+            raise RuntimeError("missing optional client dependency before transport")
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "process-secret")
+    report = run_after_close(
+        AfterCloseConfig(
+            _production_input(tmp_path / "production.json"),
+            tmp_path / "system",
+            live_ai=True,
+        ),
+        advisory_agent=_live_agent(_OfflineTransport()),
+    )
+    assert report["deepseek"]["physical_model_calls"] == 0
+    assert report["deepseek"]["successful_desk_count"] == 0
+    assert all(item["status"] == "failed" for item in report["deepseek"]["desks"])
+    assert all(item["physical_call"] is False for item in report["deepseek"]["desks"])
+    assert report["final_watchlist"] == ["000001.SZ", "600519.SH"]
+    assert report["watchlist_preserved"] is True
+    assert report["broker_calls"] == report["order_submission_calls"] == 0
 
 
 def test_deterministic_fallback_never_counts_as_physical_call(

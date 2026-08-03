@@ -7,6 +7,7 @@ import pytest
 import quantpilot_core.quant_firm.deepseek_advisory as advisory_module
 
 from quantpilot_core.deepseek_multi_agent import DEEPSEEK_V4_FLASH, DEEPSEEK_V4_PRO
+from quantpilot_core.quant_firm.deepseek_advisory import JSON_OUTPUT_CONTRACT_LINES
 from quantpilot_core.quant_firm import (
     DeepSeekAdvisoryAgent,
     DeepSeekAdvisoryInput,
@@ -243,14 +244,26 @@ def test_existing_structured_client_counts_only_chat_completion_boundary(
     client = DeepSeekStructuredEvidenceClient(
         DeepSeekClientConfig(enable_live_call=True)
     )
+    expected_messages = [
+        {
+            "role": "user",
+            "content": "Return exactly one valid JSON object containing the evidence.",
+        }
+    ]
     response = client({
         "model": "deepseek-request-model",
-        "messages": [{"role": "user", "content": "evidence"}],
+        "messages": expected_messages,
         "reasoning_mode": "low",
         "enable_thinking": False,
     })
     assert client.physical_request_count == 1
     assert len(requests) == 1
+    assert requests[0]["messages"] == expected_messages
+    assert any(
+        "json" in str(message.get("content", "")).lower()
+        for message in requests[0]["messages"]
+    )
+    assert requests[0]["response_format"] == {"type": "json_object"}
     assert response["model"] == "deepseek-response-model"
     assert response["usage"]["prompt_tokens"] == 12
 
@@ -282,6 +295,59 @@ def test_each_advisory_role_builds_role_specific_fallback_output() -> None:
         assert output.research_directions
         assert output.risk_notes
         assert output.confidence > 0
+
+
+def test_all_seven_desks_share_one_json_output_contract() -> None:
+    for role in DeepSeekAdvisoryRole:
+        prompt = DeepSeekAdvisoryAgent().build_prompt(rich_advisory_input(role))
+
+        assert all(line in prompt for line in JSON_OUTPUT_CONTRACT_LINES)
+
+
+def test_shared_json_contract_specifies_single_object_json_only_no_fence_no_prose() -> None:
+    prompt = DeepSeekAdvisoryAgent().build_prompt(
+        rich_advisory_input(DeepSeekAdvisoryRole.RESEARCH_DESK)
+    )
+
+    assert "Return exactly one valid JSON object." in prompt
+    assert "The response must be JSON only." in prompt
+    assert "Do not use Markdown code fences." in prompt
+    assert "Do not include prose before or after the JSON object." in prompt
+    assert "```" not in prompt
+
+
+def test_live_request_messages_contain_json_word_for_every_role(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "process-secret")
+
+    class _Transport:
+        def __init__(self) -> None:
+            self.requests = []
+            self.physical_request_count = 0
+
+        def __call__(self, request):
+            self.requests.append(request)
+            self.physical_request_count += 1
+            return {
+                "content": "real transport response",
+                "model": "deepseek-runtime-model",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+                "finish_reason": "stop",
+            }
+
+    transport = _Transport()
+    agent = DeepSeekAdvisoryAgent(
+        DeepSeekClientConfig(enable_live_call=True),
+        live_client=transport,
+    )
+    for role in DeepSeekAdvisoryRole:
+        output = agent.advise(rich_advisory_input(role))
+        assert output.is_fallback is False
+    assert len(transport.requests) == len(list(DeepSeekAdvisoryRole))
+    for request in transport.requests:
+        messages = [str(item.get("content", "")) for item in request["messages"]]
+        assert any("json" in message.lower() for message in messages)
 
 
 def test_prompt_includes_mature_framework_evidence_and_execution_exclusions() -> None:
