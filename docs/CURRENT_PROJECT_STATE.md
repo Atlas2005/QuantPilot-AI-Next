@@ -1,94 +1,117 @@
 # Current Project State
 
-## Project
+- Status date: 2026-08-15
+- Chinese overview: [README.md](../README.md)
+- English overview: [README.en.md](../README.en.md)
 
-QuantPilot-AI-Next / QuantPilot-AI 2.0.
+## Verdict
 
-## Current Phase
+QuantPilot-AI-Next is an implemented A-share quant research, paper-trading, and manual decision-support platform. It is no longer an early planning skeleton. It is also not a proven-profitable or autonomous live-trading product.
 
-INFO1: A-share Securities-Firm-Style Information Layer, implemented by Codex and pending ChatGPT closure review.
+The previous version of this document was materially stale: it described an early information-layer phase and claimed that real data, provider adapters, model calls, and broker boundaries did not exist. The repository has since implemented all of those controlled capabilities. Those historical prohibitions must not be used to describe the current code.
 
-## Current Contents
+## Authoritative branch state
 
-Step 0A through Phase 7F are completed.
+| Layer | Ref | Evidence-backed state |
+|---|---|---|
+| Default merged baseline | `main`; functional baseline `8c232f2` | Merged through PR #130; public and covered by CI |
+| Completed feature baseline | `feat/tdx-prediction-integration-v1` at `3e76235` | Implements the TDX prediction and manual workflow; 15 post-baseline commits; not merged into `main` |
+| Latest paused WIP | `fix/tdx-runtime-stability-v1` at `baf992c` | Adds runtime-stability fixes; must pass code review and Windows acceptance before merge |
 
-INFO1 adds narrow normalized information-layer schemas, deterministic in-memory pandas normalizers, registry tools, tests, and docs for future securities-firm-style information agents.
+The full local suite at the WIP checkpoint completed with `2170 passed, 6 skipped` on 2026-08-15. The project-suspension record reports the same totals at the August 3 checkpoint. Passing tests are implementation evidence, not trading-readiness or profitability evidence.
 
-R1 adds profit-first integration architecture docs, a multi-agent target architecture, Market Reality Sandbox architecture, Capital-Aware Fast Compounding Mode, an open-source replacement strategy, upstream dependency intelligence target, a 30-day Capital-Test MVP plan, a machine-readable integration reset matrix, and standard-library validation helpers.
+## Merged capabilities on `main`
 
-R1.1 adds enforceable open-source integration guardrails through a machine-readable decision table, standard-library loader/validator, tests, and documentation.
+- Core contracts, registries, integration policies, and A-share market-reality rules.
+- TuShare and BaoStock data adapters, provider fallback/cross-checking, real trading calendars, and TDX Level1 market data.
+- Full-A-share snapshots, PIT handling, tradability metadata, and provider/data validation.
+- Deterministic and ML factor research, walk-forward/OOS evaluation, after-cost baselines, turnover optimization, and attribution.
+- Qlib, VectorBT, and RQAlpha adapter/evaluation work behind optional dependency boundaries.
+- Executable-candidate sizing, cost, tradability, fill simulation, paper ledger, multi-day replay, daily evaluation, and continuous paper operation.
+- DeepSeek multi-agent contracts, information/research roles, bounded runtime routing, and shadow/advisory integration.
+- Windows runtime bootstrap, DPAPI secret handling, Docker-backed control-center services, Runtime Doctor, and lifecycle scripts.
+- QMT built-in read-only snapshot bridge, TDX manual signal bridge, and TDX Level1 adapter.
 
-R1 was architecture reset, not full external integration.
+## Implemented after the current `main` baseline
 
-R2 adds a Market Reality Sandbox contract and validation layer for A-share trading reality, capital/account constraints, sandbox order drafts, fill assumptions, costs, slippage, provider failure, data latency, and timestamp audit assumptions.
+The completed feature checkpoint `3e76235` adds:
 
-R3 adds a Provider-Sandbox Fixture Bridge that converts explicitly local mock/fixture/probe provider snapshots into sandbox fixture inputs after validation.
+- TDX prediction replay and live-shadow integration.
+- Walk-forward-trained probability provider and evaluation hardening.
+- Human-experience plans, markers, QPTY visibility, and TQ protocol repairs.
+- Daily production input from validated full-A PIT data.
+- Historical A-share code-transition reconciliation and Windows-safe atomic snapshot writes.
+- A three-part manual system for after-close analysis, intraday monitoring, and end-of-day recording.
+- Real DeepSeek seven-desk calls with physical-call accounting and a strict JSON output contract.
 
-R4 adds a Controlled Provider Probe Execution Gate that decides whether mock, dry-run, or controlled provider probe requests are allowed and whether their output can later be considered for R3 bridge conversion.
+The WIP checkpoint `baf992c` additionally addresses:
 
-R5 adds a local mock-only run that connects R4 gate request, R4 gate decision, R3 provider probe snapshot, R3 bridge conversion, and R2 `SandboxFixtureInput`.
+- single-instance runtime locking;
+- reconnect-storm suppression;
+- clean Ctrl+C shutdown;
+- empty TQ arguments;
+- TDX V6.06 formula compatibility.
 
-R6 adds a controlled provider adapter probe plan and validator that define the review evidence required before any future provider adapter probe can be submitted to the R4 gate.
+These WIP changes are not accepted release functionality until the Windows checks pass.
 
-R7 adds a real A-share small-sample data gate and manifest validator that define the metadata required before a future small-sample dataset can enter sandbox replay preparation.
+## Evidence for progress
 
-INFO1 covers news, macro and policy, social sentiment, northbound and foreign-capital holdings, stabilization and ETF-flow clues, public fund holdings, shareholder snapshots, dividends, valuation, concepts and themes, margin trading, money flow, and announcements as normalized in-memory information substrates.
+- The latest code is 16 implementation/fix commits beyond the code baseline currently shown on `main`.
+- The latest complete local suite passes 2170 tests with 6 skips.
+- The code contains explicit real-data, A-share rule, walk-forward/OOS, cost, paper, model-budget, Windows runtime, TDX, and QMT read-only boundaries.
+- A 2026-08-03 live holdout was archived and classified as `live_holdout=true`.
 
-The repository is still not trading-ready.
+## Evidence against readiness
 
-No data source is approved.
+- The archived holdout used `decision_source=deterministic_baseline` and `deepseek_mode=cached_evidence_only`; it is not proof that live DeepSeek decisions improve returns.
+- One holdout day is statistically inadequate and must not be retrospectively tuned.
+- The latest runtime branch remains explicitly blocked on final review and Windows acceptance.
+- Automated live order execution is not part of the accepted default path.
+- No release/tag exists, and the repository has no explicit license file.
+- No available evidence establishes durable out-of-sample profitability after fees, slippage, regime changes, and operational failures.
 
-No manual provider probe was run during implementation.
+## Current decision
 
-No real data was fetched.
+The correct label is: **advanced research / continuous paper / manual decision support; paused pending Windows runtime acceptance**.
 
-No real alpha is proven.
+Do not label the project as any of the following:
 
-No external analytics package is installed.
+- production-ready;
+- proven profitable;
+- autonomous live trading;
+- safe for unattended real-capital execution;
+- a stable versioned SDK.
 
-No final backtest engine is selected.
+## Resume order
 
-No production adapter exists.
+1. Review `fix/tdx-runtime-stability-v1` and its suspension checkpoint.
+2. Run `scripts/windows/quantpilot-single-instance-smoke.ps1` on the intended Windows/TDX runtime.
+3. Run a short intraday acceptance and verify reconnect, shutdown, locking, formulas, and QPTY visibility.
+4. Merge only after the review and Windows evidence pass.
+5. Rerun the full Linux and Windows CI matrix.
+6. Accumulate multi-regime, non-retrospectively-tuned paper/holdout evidence.
+7. Evaluate promotion using after-cost return, maximum drawdown, turnover, stability, and benchmark-relative performance.
+8. Keep any real-order or capital-test work in a separate, explicitly approved, hard-limited phase.
 
-No broker/order/live path exists.
+## Stop conditions
 
-No R1 candidate is approved for installation, raw data fetching, broker connection, live trading, or real order execution.
+Stop promotion or capital discussion if any of the following occurs:
 
-R2 does not add real data, broker integration, live trading, order execution, or full backtest/risk/factor/calendar/accounting engines.
+- point-in-time leakage or untraceable data;
+- no persistent after-cost edge;
+- drawdown beyond a predefined risk threshold;
+- unstable provider, Windows runtime, TDX, QMT, database, or orchestration behavior;
+- model decisions that cannot be reproduced or audited;
+- secret/account data entering Git, logs, reports, or model prompts;
+- any path that bypasses explicit human approval or broker safety boundaries.
 
-R3 uses local mock/fixture/probe data only. It does not add real market data ingestion, broker integration, live trading, order execution, or a self-built data provider.
+## Related documents
 
-R4 does not fetch real market data, call provider APIs, add broker integration, live trading, order execution, or reinvent data providers.
-
-R5 uses local mock fixtures only. It does not fetch real market data, call provider APIs, add broker integration, live trading, order execution, write production data assets, or reinvent data providers.
-
-R6 uses a local mock plan fixture only. It does not fetch real market data, call provider APIs, implement a provider adapter, add broker integration, live trading, order execution, write production data assets, or reinvent data providers.
-
-R7 uses a local mock manifest fixture only. It does not fetch or include real market data, call provider APIs, implement data provider adapters, add broker integration, live trading, order execution, write production data assets, or reinvent data providers.
-
-INFO1 uses tiny in-memory pandas fixtures only. It does not fetch data, add network/API/token handling, call model services, run training workflows, expand legacy replay, or create orders or trade instructions.
-
-Future modules must check mature open-source candidates before self-building generic infrastructure. R7 stays data-gate/manifest/validation focused and keeps AkShare, Baostock, Tushare, and similar projects as adapter candidates.
-
-## Current Prohibitions
-
-- do not fetch market data unless a later approved manual probe explicitly allows it
-- do not call external APIs during automated validation
-- do not install or uninstall packages
-- do not add external dependencies to `pyproject.toml`
-- do not create provider clients or API token handling in `src/`
-- do not write real data files under tracked paths
-- do not commit raw provider data
-- do not run real factor validation
-- do not claim alpha, profitability, or statistical significance
-- do not run real backtests
-- do not implement strategy tournament
-- do not implement production adapters
-- do not implement model, broker, live order, or agent workflows
-- do not mark anything trading-ready
-- do not claim profitability
-- do not copy old v2 source code
-
-## Next Expected Action
-
-ChatGPT should perform INFO1 module closure review. The next phase should remain review-gated. Do not move to real data ingestion, dependency installation, provider API calls, broker connectivity, live trading, order execution, production data assets, or profitability claims until explicitly approved.
+- [Chinese project overview](../README.md)
+- [English project overview](../README.en.md)
+- [Windows runtime](windows_runtime.md)
+- [Project positioning](PROJECT_POSITIONING.md)
+- [Success metrics](SUCCESS_METRICS.md)
+- [Profit-first integration architecture](PROFIT_FIRST_INTEGRATION_ARCHITECTURE.md)
+- [A-share market rules](A_SHARE_MARKET_RULES.md)
+- [Historical roadmap](QUANTPILOT_AI_2_0_ROADMAP.md)
