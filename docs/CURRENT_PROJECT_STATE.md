@@ -1,7 +1,8 @@
 # Current Project State
 
 - Status date: 2026-08-15
-- Chinese overview: [README.md](../README.md)
+- Bilingual overview: [README.md](../README.md)
+- Chinese overview: [README.zh-CN.md](../README.zh-CN.md)
 - English overview: [README.en.md](../README.en.md)
 
 ## Verdict
@@ -107,7 +108,8 @@ Stop promotion or capital discussion if any of the following occurs:
 
 ## Related documents
 
-- [Chinese project overview](../README.md)
+- [Bilingual project overview](../README.md)
+- [Chinese project overview](../README.zh-CN.md)
 - [English project overview](../README.en.md)
 - [Windows runtime](windows_runtime.md)
 - [Project positioning](PROJECT_POSITIONING.md)

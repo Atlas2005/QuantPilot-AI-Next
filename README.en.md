@@ -1,6 +1,6 @@
 # QuantPilot-AI-Next
 
-[简体中文](README.md) · [English](README.en.md)
+[Overview / 总览](README.md) · [简体中文](README.zh-CN.md) · [English](README.en.md)
 
 [![CI](https://github.com/Atlas2005/QuantPilot-AI-Next/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Atlas2005/QuantPilot-AI-Next/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)

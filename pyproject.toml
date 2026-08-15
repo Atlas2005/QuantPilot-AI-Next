@@ -8,6 +8,14 @@ version = "0.0.1"
 description = "A-share AI quant research, paper-trading, and manual decision-support platform."
 readme = "README.md"
 requires-python = ">=3.11"
+keywords = [
+    "a-share",
+    "ai-agents",
+    "deepseek",
+    "paper-trading",
+    "quantitative-finance",
+    "walk-forward",
+]
 dependencies = []
 
 [project.optional-dependencies]
